@@ -124,8 +124,9 @@ def start_b():
     sdk = os.environ.get("ANDROID_SDK_ROOT") or os.environ.get("ANDROID_HOME")
     if not sdk:
         raise RuntimeError("ANDROID_SDK_ROOT not configured")
-    image = "system-images;android-35;google_apis;x86_64"
-    record("Preparing second Android 15 AVD...")
+    api_level = int(os.environ.get("ANDROID_TEST_API", "35"))
+    image = f"system-images;android-{api_level};google_apis;x86_64"
+    record(f"Preparing second Android {api_level - 20} AVD (API {api_level})...")
     r = run(["avdmanager", "create", "avd", "--force", "--name", "phone_b",
              "--package", image, "--device", "pixel_5"], timeout=90)
     if r.returncode:
