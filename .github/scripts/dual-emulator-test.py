@@ -362,6 +362,56 @@ try:
     if count < 2:
         raise RuntimeError("B did not record a second video handshake after reconnect")
     record("PASS: B viewing app reconnected to A after foreground restart")
+
+    # Screen-only continuity: changes originate on test emulator A itself.
+    # The viewer on B must not inject any touch/key event into A.
+    # Dismiss only a local Android fullscreen help tooltip on B, if present.
+    for tip_attempt in range(3):
+        b_root = dump_ui(B, f"b-local-fullscreen-tip-{tip_attempt}.xml")
+        got_it = next((n for n in b_root.iter("node")
+                       if n.attrib.get("text", "").strip().lower() == "got it"),
+                      None) if b_root is not None else None
+        if got_it is None:
+            break
+        if not tap(B, got_it):
+            raise RuntimeError("B's local fullscreen tutorial could not be dismissed")
+        record("Dismissed Android fullscreen tutorial on viewer B (local UI only)")
+        time.sleep(3)
+
+    # The YouTube first-run dialog can be replaced by normal Android settings.
+    shell(A, "am", "force-stop", "com.google.android.youtube")
+    time.sleep(2)
+    screenshot(B, "b-continuity-before.png")
+    previous_b = file_digest("b-continuity-before.png")
+    transitions = [
+        ("settings", "android.settings.SETTINGS"),
+        ("wifi", "android.settings.WIFI_SETTINGS"),
+        ("display", "android.settings.DISPLAY_SETTINGS"),
+    ]
+    successful_updates = 0
+    for label, action in transitions:
+        record(f"A local emulator opening {label} page; viewer B remains read-only")
+        outcome = shell(A, "am", "start", "-W", "-a", action, timeout=45)
+        if outcome.returncode != 0 or "Error:" in outcome.stdout:
+            raise RuntimeError(f"A could not open {label}: " + (outcome.stdout + outcome.stderr)[-900:])
+        time.sleep(9)
+        screenshot(A, f"a-continuity-{label}.png")
+        screenshot(B, f"b-continuity-{label}.png")
+        a_size = (OUT / f"a-continuity-{label}.png").stat().st_size
+        b_hash = file_digest(f"b-continuity-{label}.png")
+        b_size = (OUT / f"b-continuity-{label}.png").stat().st_size
+        changed_b = b_hash not in ("MISSING", previous_b)
+        record(f"Screen continuity {label}: A png={a_size} bytes, B png={b_size} bytes, B updated={changed_b}")
+        if a_size < 3000 or b_size < 3000:
+            raise RuntimeError(f"Invalid screenshot generated during {label}")
+        successful_updates += int(changed_b)
+        previous_b = b_hash
+
+    record(f"B screen changes across 3 A-side transitions: {successful_updates}/3")
+    if successful_updates != len(transitions):
+        raise RuntimeError("Read-only viewer did not display a changed frame after every A-side page transition")
+    record("PASS: B screen updated through three A-side page transitions without viewer controlling A")
+    record("Screenshot hashes confirm visible changes, not precise frame latency or pixel-for-pixel equality.")
 except Exception as err:
     record("FAIL: " + repr(err))
     collect()
