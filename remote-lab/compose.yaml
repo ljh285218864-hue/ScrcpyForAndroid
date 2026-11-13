@@ -1,0 +1,67 @@
+name: android-live-lab
+
+x-emulator: &emulator
+  build:
+    context: .
+  image: android15-novnc-lab:local
+  devices:
+    - /dev/kvm:/dev/kvm
+  shm_size: '2gb'
+  restart: unless-stopped
+  networks:
+    - lab
+
+services:
+  phone_a:
+    <<: *emulator
+    container_name: live-lab-a
+    environment:
+      AVD_NAME: phone_a
+      ADB_BRIDGE: 'true'
+    volumes:
+      - a_data:/data
+    expose:
+      - '6080'
+      - '5558'
+
+  phone_b:
+    <<: *emulator
+    container_name: live-lab-b
+    environment:
+      AVD_NAME: phone_b
+      ADB_BRIDGE: 'false'
+    volumes:
+      - b_data:/data
+    expose:
+      - '6080'
+
+  web:
+    image: caddy:2.10
+    container_name: live-lab-web
+    restart: unless-stopped
+    depends_on:
+      - phone_a
+      - phone_b
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      VIEW_DOMAIN: ${VIEW_DOMAIN:?set VIEW_DOMAIN in .env}
+      VIEW_PASSWORD_HASH: ${VIEW_PASSWORD_HASH:?set VIEW_PASSWORD_HASH in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./web:/srv/portal:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - lab
+
+networks:
+  lab:
+    driver: bridge
+
+volumes:
+  a_data:
+  b_data:
+  caddy_data:
+  caddy_config:
