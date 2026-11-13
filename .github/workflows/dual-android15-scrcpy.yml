@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/dual-android15-scrcpy.yml'
       - '.github/scripts/dual-emulator-test.py'
+      - '.github/scripts/analyze-mirror-frames.py'
 
 permissions:
   contents: read
@@ -66,6 +67,16 @@ jobs:
           ram-size: 2048M
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           script: python3 .github/scripts/dual-emulator-test.py
+
+      - name: Set up Python image comparison environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify A-to-B screenshot content fidelity
+        run: |
+          python -m pip install --disable-pip-version-check Pillow==11.3.0
+          python .github/scripts/analyze-mirror-frames.py dual-emulator-results
 
       - name: Upload both emulator logs and screenshots
         if: always()
