@@ -196,7 +196,10 @@ def fill_field(device, field_id, value, label):
     shell(device, "input", "text", value)
     root = dump_ui(device, f"{label}-{field_id}-typed.xml")
     entered = find_node(root, resource_id=field_id)
-    if entered is None or entered.attrib.get("text", "").strip() != value:
+    # Password-style Android EditText can hide the code from UIAutomator.
+    # The actual cryptographic handshake, not a masked text node, verifies it.
+    if entered is None or (field_id != "editText_wake_key"
+                           and entered.attrib.get("text", "").strip() != value):
         raise RuntimeError(f"{label}: {field_id} text did not match")
     shell(device, "input", "keyevent", "KEYCODE_BACK")
 
