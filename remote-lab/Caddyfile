@@ -1,0 +1,25 @@
+{$VIEW_DOMAIN} {
+    encode zstd gzip
+
+    # Protect dashboard, WebSocket streams and both Android consoles.
+    basic_auth {
+        viewer {$VIEW_PASSWORD_HASH}
+    }
+
+    @a path /a/*
+    handle @a {
+        uri strip_prefix /a
+        reverse_proxy phone_a:6080
+    }
+
+    @b path /b/*
+    handle @b {
+        uri strip_prefix /b
+        reverse_proxy phone_b:6080
+    }
+
+    handle {
+        root * /srv/portal
+        file_server
+    }
+}
