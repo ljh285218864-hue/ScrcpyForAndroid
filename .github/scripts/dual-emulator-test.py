@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import threading
+import socket
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -17,6 +18,7 @@ OUT.mkdir(exist_ok=True)
 A = "emulator-5554"
 B = "emulator-5556"
 HOST = "10.0.2.2:5555"  # Android emulator B -> GitHub runner -> emulator A local ADB port
+WAKE_HOST = "10.0.2.2:10055"  # Private authenticated LAN wake endpoint forwarded to A
 PKG = "org.client.scrcpy"
 summary = []
 
@@ -170,6 +172,76 @@ def simulate_owner_approval():
         time.sleep(3)
     record("No ADB authorization dialog found in emulator A; may already be authorized or connection unsuccessful")
 
+
+def find_visible_control(device, resource_id, label, *, scroll_down=True, attempts=11):
+    for turn in range(attempts):
+        tree = dump_ui(device, f"{label}-find-{resource_id}-{turn}.xml")
+        node = find_node(tree, resource_id=resource_id)
+        if node is not None:
+            return node
+        if scroll_down:
+            shell(device, "input", "swipe", "500", "1750", "500", "550", "400")
+        else:
+            shell(device, "input", "swipe", "500", "550", "500", "1750", "400")
+        time.sleep(0.6)
+    raise RuntimeError(f"{label}: {resource_id} not visible after scrolling")
+
+def fill_field(device, field_id, value, label):
+    node = find_visible_control(device, field_id, label)
+    if not tap(device, node):
+        raise RuntimeError(f"{label}: failed to tap {field_id}")
+    shell(device, "input", "keyevent", "123")
+    for _ in range(70):
+        shell(device, "input", "keyevent", "67")
+    shell(device, "input", "text", value)
+    root = dump_ui(device, f"{label}-{field_id}-typed.xml")
+    entered = find_node(root, resource_id=field_id)
+    if entered is None or entered.attrib.get("text", "").strip() != value:
+        raise RuntimeError(f"{label}: {field_id} text did not match")
+    shell(device, "input", "keyevent", "KEYCODE_BACK")
+
+def start_owner_wake_listener():
+    install_a = adb(A, "install", "-r", str(apk), timeout=120)
+    if install_a.returncode:
+        raise RuntimeError("Failed to install A owner app: " + install_a.stdout[-700:])
+    shell(A, "am", "start", "-W", "-n", PKG + "/.MainActivity")
+    time.sleep(4)
+    root = wait_for_viewer_home(A, label="owner-wake-app")
+    more = find_node(root, resource_id="btn_more_settings")
+    if not tap(A, more):
+        raise RuntimeError("A: failed to open wake settings")
+    time.sleep(1)
+    on = find_visible_control(A, "button_wake_listen_on", "owner-wake-enable")
+    if not tap(A, on):
+        raise RuntimeError("A: failed to opt in to LAN wake listening")
+    record("A owner explicitly opted into LAN wake listening")
+    token = None
+    for retry in range(16):
+        result = shell(A, "run-as", PKG, "cat", "shared_prefs/wake_lan_test.xml")
+        match = re.search(r'<string name="temporary_code">([0-9a-f]{32})</string>', result.stdout)
+        if match:
+            token = match.group(1)
+            break
+        time.sleep(0.5)
+    if token is None:
+        raise RuntimeError("A wake code not generated after explicit activation")
+    # Never log or upload the secret code. Only return it to synthetic B.
+    adb(A, "forward", "tcp:10055", "tcp:10055", timeout=20)
+    # A bad proof must be rejected; B may start scrcpy only after a good proof.
+    with socket.create_connection(("127.0.0.1", 10055), timeout=8) as raw:
+        raw.settimeout(8)
+        stream = raw.makefile("rwb", buffering=0)
+        stream.write(b"HELLO 0123456789abcdef\\n")
+        response = stream.readline()
+        if not response.startswith(b"CHALLENGE "):
+            raise RuntimeError("A wake server did not issue a challenge")
+        stream.write(b"AUTH " + b"0" * 64 + b"\\n")
+        denied = stream.readline().strip()
+        if denied != b"DENIED":
+            raise RuntimeError("A wake listener accepted an invalid authentication proof")
+    record("PASS: incorrect wake proof rejected by emulator A")
+    return token
+
 def collect():
     for device, name in ((A, "a"), (B, "b")):
         try:
@@ -193,6 +265,7 @@ try:
         shell(device, "svc", "power", "stayon", "true")
         shell(device, "settings", "put", "system", "screen_off_timeout", "600000")
     apk = next(Path("app/build/outputs/apk/scrcpy/debug").glob("*.apk"))
+    wake_token = start_owner_wake_listener()
     install = adb(B, "install", "-r", str(apk), timeout=120)
     if install.returncode:
         raise RuntimeError("Failed to install B app: " + (install.stdout + install.stderr)[-1200:])
@@ -226,6 +299,16 @@ try:
     if typed_address != HOST:
         raise RuntimeError(f"Remote address input mismatch: expected {HOST}, got {typed_address!r}")
 
+    # Configure test-only A<->B authenticated wake from the B viewer UI.
+    more = find_node(root, resource_id="btn_more_settings")
+    if not tap(B, more):
+        more = find_visible_control(B, "btn_more_settings", "viewer-wake-more", scroll_down=False)
+        if not tap(B, more):
+            raise RuntimeError("B: could not expand wake settings")
+    fill_field(B, "editText_wake_host", WAKE_HOST, "viewer-wake-host")
+    fill_field(B, "editText_wake_key", wake_token, "viewer-wake-key")
+    record("B configured A's authenticated LAN wake endpoint; code kept out of logs")
+
     # Hide the soft keyboard before tapping Start. The UI hierarchy can still
     # list an underlying button even when the IME covers its coordinates.
     # The earlier test accidentally tapped the 'y' key over the Start button.
@@ -244,6 +327,8 @@ try:
         shell(B, "input", "swipe", "500", "1500", "500", "450", "350")
         root = dump_ui(B, f"b-scrolled-{attempt}.xml")
         start = find_node(root, resource_id="button_start")
+    if start is None:
+        start = find_visible_control(B, "button_start", "viewer-wake-start")
     if not tap(B, start):
         raise RuntimeError("B Start control missing from UI hierarchy")
     record("B Start button tapped with soft keyboard dismissed; waiting for local ADB scrcpy connection")
@@ -265,6 +350,10 @@ try:
     if handshake:
         record("Handshake: " + handshake.group(0))
     record("Screenshots and per-device logs are available in the workflow artifact.")
+    a_logcat = (OUT / "a-logcat.txt").read_text(encoding="utf-8", errors="replace")
+    if "Authorized LAN wake request accepted" not in a_logcat:
+        raise RuntimeError("A did not log an authenticated wake acceptance")
+    record("PASS: A authenticated B's wake request before B started viewing")
     if not handshake:
         raise RuntimeError("No scrcpy video handshake; review both logcat files and device screenshots")
     record("PASS: dual Android 15 emulators established a scrcpy video handshake.")
