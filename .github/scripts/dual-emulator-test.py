@@ -311,11 +311,21 @@ try:
         raise RuntimeError(f"Remote address input mismatch: expected {HOST}, got {typed_address!r}")
 
     # Configure test-only A<->B authenticated wake from the B viewer UI.
-    more = find_node(root, resource_id="btn_more_settings")
-    if not tap(B, more):
-        more = find_visible_control(B, "btn_more_settings", "viewer-wake-more", scroll_down=False)
+    # First dismiss the IME: it overlays the More Settings button coordinates.
+    shell(B, "input", "keyevent", "KEYCODE_BACK")
+    time.sleep(1.5)
+    for attempt in range(4):
+        root = dump_ui(B, f"viewer-wake-more-{attempt}.xml")
+        more = find_node(root, resource_id="btn_more_settings")
+        if more is None:
+            more = find_visible_control(B, "btn_more_settings", "viewer-wake-more", scroll_down=False)
+        if "▲" in more.attrib.get("text", ""):
+            break
         if not tap(B, more):
-            raise RuntimeError("B: could not expand wake settings")
+            raise RuntimeError("B: could not tap More Settings")
+        time.sleep(1)
+    else:
+        raise RuntimeError("B: More Settings could not expand")
     fill_field(B, "editText_wake_host", WAKE_HOST, "viewer-wake-host")
     fill_field(B, "editText_wake_key", wake_token, "viewer-wake-key")
     record("B configured A's authenticated LAN wake endpoint; code kept out of logs")
