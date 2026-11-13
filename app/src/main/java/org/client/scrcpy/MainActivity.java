@@ -264,23 +264,9 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (savedInstanceState != null) {
             Log.i("Scrcpy", "outState: " + savedInstanceState.getBoolean("from_save_instance"));
         }
-        // 从销毁状态恢复
-        if (savedInstanceState == null || !savedInstanceState.getBoolean("from_save_instance", false)) {
-            // 初次进入 app
-            if (getIntent() != null && getIntent().getExtras() != null) {
-                headlessMode = getIntent().getExtras().getBoolean(START_REMOTE, headlessMode);
-            }
-        }
-        if (headlessMode && first_time) {
-            getAttributes();
-            connectScrcpyServer(PreUtils.get(this, Constant.CONTROL_REMOTE_ADDR, ""));
-        }
-        if (headlessMode) {
-            View scrollView = findViewById(R.id.main_scroll_view);
-            if (scrollView != null) {
-                scrollView.setVisibility(View.INVISIBLE);
-            }
-        }
+        // Never start a hidden/headless viewing session from an intent.
+        // The viewer is visible and must be started by the user.
+        headlessMode = false;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             backInvokedCallback = this::handleBackPressed;
             getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
@@ -344,48 +330,11 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                 connectScrcpyServer(serverAdr);
             }
         });
-        Button rebootButton = findViewById(R.id.button_reboot);
-        if (rebootButton != null) {
-            rebootButton.setOnClickListener(v -> confirmRebootRemoteDevice());
-        }
-        Button powerOffButton = findViewById(R.id.button_power_off);
-        if (powerOffButton != null) {
-            powerOffButton.setOnClickListener(v -> confirmPowerOffRemoteDevice());
-        }
-        Button shareLogButton = findViewById(R.id.button_share_log);
+        // No reboot/power-off controls in this read-only application.\n        Button shareLogButton = findViewById(R.id.button_share_log);
         if (shareLogButton != null) {
             shareLogButton.setOnClickListener(v -> shareSessionLog());
         }
-        Button adbTerminalButton = findViewById(R.id.button_adb_terminal);
-        if (adbTerminalButton != null) {
-            adbTerminalButton.setOnClickListener(v -> {
-                EditText hostEdit = findViewById(R.id.editText_server_host);
-                String currentHost = hostEdit == null ? "" : hostEdit.getText().toString().trim();
-                AdbTerminalDialog dialog = new AdbTerminalDialog(this, currentHost, ipWithPort -> {
-                    if (hostEdit != null && !TextUtils.isEmpty(ipWithPort)) {
-                        hostEdit.setText(ipWithPort);
-                    }
-                });
-                dialog.show();
-            });
-        }
-        Button adbShellButton = findViewById(R.id.button_adb_shell);
-        if (adbShellButton != null) {
-            adbShellButton.setOnClickListener(v -> {
-                // 进入 ADB 命令行前，必须彻底停止 scrcpy/USB 会话：
-                // 关闭 usbAdb（释放 USB 设备与 7008 端口）、停止 scrcpy 服务、
-                // 解绑服务并清除 resumeScrcpy。
-                // 否则 USB 设备被旧会话占用，AdbShellActivity 会再次弹授权，
-                // 且从命令行返回后 onResume/onStart 会自动恢复 scrcpy 画面。
-                cleanupUsbSessionForShell();
-                EditText hostEdit = findViewById(R.id.editText_server_host);
-                String device = hostEdit == null ? "" : hostEdit.getText().toString().trim();
-                Intent shellIntent = new Intent(this, AdbShellActivity.class);
-                shellIntent.putExtra(AdbShellActivity.EXTRA_DEVICE, device);
-                startActivity(shellIntent);
-            });
-        }
-        btnMoreSettings.setOnClickListener(v -> {
+        // No ADB terminal or shell is reachable from the viewer UI.\n        btnMoreSettings.setOnClickListener(v -> {
             AutoTransition autoTransition = new AutoTransition();
             TransitionManager.beginDelayedTransition(scrollView, autoTransition);
 

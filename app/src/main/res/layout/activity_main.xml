@@ -24,7 +24,7 @@
             android:layout_marginBottom="5dp"
             android:gravity="center_vertical"
             android:padding="20dp"
-            android:text="Scrcpy For Android"
+            android:text="@string/app_title"
             android:textColor="@color/white" />
 
     </FrameLayout>
@@ -425,6 +425,19 @@
                     android:textSize="15sp" />
 
             </LinearLayout>
+
+            <TextView
+                android:id="@+id/read_only_notice"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginLeft="10dp"
+                android:layout_marginTop="12dp"
+                android:layout_marginRight="10dp"
+                android:padding="12dp"
+                android:background="@color/btn_color_nomal"
+                android:text="@string/read_only_notice"
+                android:textColor="@color/white"
+                android:textSize="13sp" />
 
             <Button
                 android:id="@+id/button_start"

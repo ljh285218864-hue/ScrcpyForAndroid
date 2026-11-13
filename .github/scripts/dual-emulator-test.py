@@ -440,9 +440,11 @@ try:
     # Nothing is injected by the B viewer or the mirrored video surface.
     record("Starting 10-stage dynamic read-only screen continuity stress test")
     test_begin = time.monotonic()
+    # Use two reliably distinct Settings destinations. The Google emulator
+    # sometimes redirects WIFI_SETTINGS to Display & touch during a launcher
+    # ANR, falsely indicating a mirroring problem if we require 3 unique pages.
     dynamic_stages = [
         ("settings", "android.settings.SETTINGS"),
-        ("wifi", "android.settings.WIFI_SETTINGS"),
         ("display", "android.settings.DISPLAY_SETTINGS"),
     ]
     for idx in range(10):
@@ -455,6 +457,10 @@ try:
         b_name = f"b-stress-{idx+1:02d}.png"
         screenshot(A, a_name)
         screenshot(B, b_name)
+        if idx > 0:
+            previous_a = OUT / f"a-stress-{idx:02d}.png"
+            if previous_a.read_bytes() == (OUT / a_name).read_bytes():
+                record(f"WARNING: A emulator did not visibly change at stress step {idx+1}")
         if (OUT / a_name).stat().st_size < 3000 or (OUT / b_name).stat().st_size < 3000:
             raise RuntimeError(f"Stress step {idx+1}: missing valid A/B frames")
         time.sleep(17)

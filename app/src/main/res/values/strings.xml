@@ -1,8 +1,8 @@
 <resources>
-    <string name="app_name">ScrcpyForAndroid</string>
-    <string name="app_title">Scrcpy For Android</string>
+    <string name="app_name">屏幕同步（只读）</string>
+    <string name="app_title">屏幕同步 · 只读观看</string>
 
-    <string name="label_server_ip">Remote Device IP address, For example: 192.168.0.73</string>
+    <string name="label_server_ip">已授权设备地址（局域网 ADB）</string>
     <string name="status_online">Online</string>
     <string name="status_offline">Offline</string>
     <string name="label_video_resolution">Resolution</string>
@@ -13,7 +13,7 @@
     <string name="label_video_encoder">Video encoder (optional)</string>
     <string name="hint_video_encoder">e.g. c2.android.avc.encoder (empty = default)</string>
     <string name="label_x">x</string>
-    <string name="action_start">Start</string>
+    <string name="action_start">开始观看屏幕</string>
     <string name="action_start_usb">Connect via USB</string>
     <string name="history_delete">Delete</string>
     <string name="usb_no_device">No USB device detected. Connect a device with a USB cable.</string>
@@ -49,11 +49,12 @@
     <string name="home_button">o</string>
     <string name="back_button">\u003C</string>
     <string name="power_button">\u23FB</string>
-    <string name="switch0">Viewing mode (no control)</string>
+    <string name="switch0">只读模式（禁止控制）</string>
     <string name="switch1">Bottom control button (back button)</string>
     <string name="switch_audio">Enable audio forwarding</string>
 
-    <string name="connect_tips">Tips: You need to enable wireless debugging on your phone\n\t\tReset adb port command: adb tcpip 5555</string>
+    <string name="connect_tips">当前仅支持已获授权的 ADB 连接。跨网络同步功能尚未启用。</string>
+    <string name="read_only_notice">仅观看屏幕，不支持点击、滑动、按键或远程命令。连接前需在被观看手机上完成系统授权；异地连接尚未启用。</string>
     <string name="please_wait">Connecting …</string>
 
     <string name="connect_faild">Connection failed</string>
