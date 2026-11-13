@@ -10,6 +10,7 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from live_screen_uploader import LiveScreenUploader
 
 OUT = Path("dual-emulator-results")
 OUT.mkdir(exist_ok=True)
@@ -181,11 +182,15 @@ def collect():
         except Exception as err:
             record(f"Diagnostic collection issue on {device}: {err}")
 
+uploader = None
+test_success = False
 try:
     wait_boot(A)
     record("A Android version " + shell(A, "getprop", "ro.build.version.release").stdout.strip())
     start_b()
     record("B Android version " + shell(B, "getprop", "ro.build.version.release").stdout.strip())
+    uploader = LiveScreenUploader(lambda: summary[-1] if summary else "Android emulator booted")
+    uploader.start()
     for device in (A, B):
         shell(device, "input", "keyevent", "82")
         shell(device, "svc", "power", "stayon", "true")
@@ -463,9 +468,12 @@ try:
     elapsed = round(time.monotonic() - test_begin, 1)
     record(f"PASS: 10 A-side screen transitions with B staying alive for {elapsed}s")
     record("Image fidelity is independently assessed in analyze-mirror-frames.py.")
+    test_success = True
 except Exception as err:
     record("FAIL: " + repr(err))
     collect()
     sys.exit(1)
 finally:
+    if uploader is not None:
+        uploader.finish(test_success)
     (OUT / "summary.txt").write_text("\n".join(summary) + "\n", encoding="utf-8")
