@@ -243,6 +243,14 @@ def start_owner_wake_listener():
         if denied != b"DENIED":
             raise RuntimeError("A wake listener accepted an invalid authentication proof")
     record("PASS: incorrect wake proof rejected by emulator A")
+    # A's owner has opted into a visible connected-device foreground service.
+    # Put the app UI in the background and verify the request listener remains.
+    shell(A, "input", "keyevent", "KEYCODE_HOME")
+    time.sleep(2)
+    activity_services = shell(A, "dumpsys", "activity", "services", PKG, timeout=20).stdout
+    if "WakeLanService" not in activity_services:
+        raise RuntimeError("A wake listener did not remain active after Home")
+    record("PASS: A wake receiver remains active with its app UI in background")
     return token
 
 def collect():
