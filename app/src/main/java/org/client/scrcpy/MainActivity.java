@@ -575,8 +575,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (usbLabel != null) {
             editTextServerHost.setText(usbLabel);
         }
-        aSwitch0.setChecked(PreUtils.get(context, Constant.CONTROL_NO, false));
-        aSwitch1.setChecked(PreUtils.get(context, Constant.CONTROL_NAV, false));
+        // Read-only fork: enforce a locked no-control preference.
+        PreUtils.put(context, Constant.CONTROL_NO, true);
+        PreUtils.put(context, Constant.CONTROL_NAV, false);
+        aSwitch0.setChecked(true);
+        aSwitch0.setEnabled(false);
+        aSwitch1.setChecked(false);
+        aSwitch1.setEnabled(false);
         audioForwardSwitch.setChecked(PreUtils.get(context, Constant.AUDIO_FORWARD, true));
 
         setSpinner(R.array.options_bitrate_keys, R.id.spinner_video_bitrate, Constant.PREFERENCE_SPINNER_BITRATE);
@@ -609,75 +614,23 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
 
     @SuppressLint("ClickableViewAccessibility")
     public void set_display_nd_touch() {
-        DisplayMetrics metrics = new DisplayMetrics();
-        if (ViewConfiguration.get(context).hasPermanentMenuKey()) {
-            getWindowManager().getDefaultDisplay().getMetrics(metrics);
-        } else {
-            final Display display = getWindowManager().getDefaultDisplay();
-            display.getRealMetrics(metrics);
-        }
-//        float this_dev_height = metrics.heightPixels;
-//        float this_dev_width = metrics.widthPixels;
-
         if (linearLayout == null || surfaceView == null || scrcpy == null) {
             return;
         }
-        float this_dev_height = linearLayout.getHeight();
-        float this_dev_width = linearLayout.getWidth();
-        if (PreUtils.get(context, Constant.CONTROL_NAV, false) &&
-                !PreUtils.get(context, Constant.CONTROL_NO, false)) {
-            if (landscape) {
-                this_dev_width = this_dev_width - 96;
-            } else {                                                 //100 is the height of nav bar but need multiples of 8.
-                this_dev_height = this_dev_height - 96;
-            }
-        }
+        // Mirroring only: consume taps locally, never forward any input.
+        surfaceView.setOnTouchListener((view, event) -> true);
+        float width = linearLayout.getWidth();
+        float height = linearLayout.getHeight();
         int[] remote = scrcpy.getOrientedRemoteSize(landscape);
         int remoteW = remote[0];
         int remoteH = remote[1];
-        if (remoteW <= 0 || remoteH <= 0 || this_dev_width <= 0 || this_dev_height <= 0) {
-            if (!PreUtils.get(context, Constant.CONTROL_NO, false)) {
-                surfaceView.setOnTouchListener((view, event) ->
-                        scrcpy.touchevent(event, landscape, surfaceView.getWidth(), surfaceView.getHeight()));
-            }
+        if (remoteW <= 0 || remoteH <= 0 || width <= 0 || height <= 0) {
             return;
         }
-
-        float scale = Math.min(this_dev_width / remoteW, this_dev_height / remoteH);
-        int contentW = Math.round(remoteW * scale);
-        int contentH = Math.round(remoteH * scale);
-        int padH = Math.max(0, ((int) this_dev_width - contentW) / 2);
-        int padV = Math.max(0, ((int) this_dev_height - contentH) / 2);
-        linearLayout.setPadding(padH, padV, padH, padV);
-        Log.i("Scrcpy", "Fit remote " + remoteW + "x" + remoteH
-                + " into " + (int) this_dev_width + "x" + (int) this_dev_height
-                + " content=" + contentW + "x" + contentH
-                + " pad=" + padH + "," + padV);
-        if (!PreUtils.get(context, Constant.CONTROL_NO, false)) {
-            // Log.i("Screen", "setOnTouchListener: " + surfaceView.getWidth() + "x" + surfaceView.getHeight());
-            surfaceView.setOnTouchListener((view, event) -> scrcpy.touchevent(event, landscape, surfaceView.getWidth(), surfaceView.getHeight()));
-        }
-
-        if (PreUtils.get(context, Constant.CONTROL_NAV, false) &&
-                !PreUtils.get(context, Constant.CONTROL_NO, false)) {
-            final View backButton = findViewById(R.id.back_button);
-            final View homeButton = findViewById(R.id.home_button);
-            final View appswitchButton = findViewById(R.id.appswitch_button);
-            final View powerButton = findViewById(R.id.power_button);
-
-            if (backButton != null) {
-                backButton.setOnClickListener(v -> scrcpy.sendKeyevent(KeyEvent.KEYCODE_BACK));
-            }
-            if (homeButton != null) {
-                homeButton.setOnClickListener(v -> scrcpy.sendKeyevent(KeyEvent.KEYCODE_HOME));
-            }
-            if (appswitchButton != null) {
-                appswitchButton.setOnClickListener(v -> scrcpy.sendKeyevent(KeyEvent.KEYCODE_APP_SWITCH));
-            }
-            if (powerButton != null) {
-                powerButton.setOnClickListener(v -> scrcpy.sendKeyevent(KeyEvent.KEYCODE_POWER));
-            }
-        }
+        float scale = Math.min(width / remoteW, height / remoteH);
+        int padX = Math.max(0, ((int) width - Math.round(remoteW * scale)) / 2);
+        int padY = Math.max(0, ((int) height - Math.round(remoteH * scale)) / 2);
+        linearLayout.setPadding(padX, padY, padX, padY);
     }
 
     private void setSpinner(final int textArrayOptionResId, final int textViewResId, final String preferenceId) {
@@ -825,8 +778,8 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         Switch a_Switch0 = findViewById(R.id.switch0);
         Switch a_Switch1 = findViewById(R.id.switch1);
         Switch audioEnableSwitch = findViewById(R.id.switch_audio_enable);
-        PreUtils.put(context, Constant.CONTROL_NO, a_Switch0.isChecked());
-        PreUtils.put(context, Constant.CONTROL_NAV, a_Switch1.isChecked());
+        PreUtils.put(context, Constant.CONTROL_NO, true);
+        PreUtils.put(context, Constant.CONTROL_NAV, false);
         PreUtils.put(context, Constant.AUDIO_FORWARD, audioEnableSwitch.isChecked());
 
         String resolutionValue = getResources().getStringArray(R.array.options_resolution_values)[videoResolutionSpinner.getSelectedItemPosition()];
@@ -978,15 +931,9 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     }
 
     private void setupNavBar() {
-        final LinearLayout nav_bar = findViewById(R.id.nav_button_bar);
-        if (nav_bar == null) {
-            return;
-        }
-        if (PreUtils.get(context, Constant.CONTROL_NAV, false) &&
-                !PreUtils.get(context, Constant.CONTROL_NO, false)) {
-            nav_bar.setVisibility(LinearLayout.VISIBLE);
-        } else {
-            nav_bar.setVisibility(LinearLayout.GONE);
+        final LinearLayout navBar = findViewById(R.id.nav_button_bar);
+        if (navBar != null) {
+            navBar.setVisibility(View.GONE);
         }
     }
 

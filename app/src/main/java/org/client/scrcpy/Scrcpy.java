@@ -178,91 +178,9 @@ public class Scrcpy extends Service {
     }
 
 
-    public boolean touchevent(MotionEvent touch_event, boolean landscape, int displayW, int displayH) {
-        if (displayW <= 0 || displayH <= 0) {
-            return true;
-        }
-
-        int[] remote = getOrientedRemoteSize(landscape);
-        float remoteW = remote[0];
-        float remoteH = remote[1];
-        if (remoteW <= 0 || remoteH <= 0) {
-            return true;
-        }
-
-        int actionMasked = touch_event.getActionMasked();
-        int actionIndex = touch_event.getActionIndex();
-        int pointerId = touch_event.getPointerId(actionIndex);
-
-        if (actionMasked == MotionEvent.ACTION_MOVE) {
-            for (int i = 0; i < touch_event.getPointerCount(); i++) {
-                int currentPointerId = touch_event.getPointerId(i);
-                int[] mapped = mapTouchToRemote(touch_event.getX(i), touch_event.getY(i),
-                        displayW, displayH, remoteW, remoteH);
-                sendTouchEvent(touch_event.getAction(), touch_event.getButtonState(),
-                        mapped[0], mapped[1], currentPointerId);
-            }
-        } else {
-            int[] mapped = mapTouchToRemote(touch_event.getX(), touch_event.getY(),
-                    displayW, displayH, remoteW, remoteH);
-            if (actionMasked == MotionEvent.ACTION_DOWN) {
-                Log.i("Scrcpy", "touch DOWN " + mapped[0] + "," + mapped[1]
-                        + " surface=" + displayW + "x" + displayH
-                        + " remote=" + (int) remoteW + "x" + (int) remoteH
-                        + " video=" + remote_video_resolution[0] + "x" + remote_video_resolution[1]);
-            }
-            sendTouchEvent(touch_event.getAction(), touch_event.getButtonState(),
-                    mapped[0], mapped[1], pointerId);
-        }
-        return true;
-    }
-
-    /**
-     * Mappa il tocco dal SurfaceView ai pixel del device remoto, con letterbox
-     * se l'aspect del remoto non coincide con quello del client.
-     */
-    private static int[] mapTouchToRemote(float touchX, float touchY,
-                                          int displayW, int displayH,
-                                          float remoteW, float remoteH) {
-        float scale = Math.min(displayW / remoteW, displayH / remoteH);
-        float contentW = remoteW * scale;
-        float contentH = remoteH * scale;
-        if (contentW <= 0f || contentH <= 0f) {
-            return new int[]{0, 0};
-        }
-        float offX = (displayW - contentW) / 2f;
-        float offY = (displayH - contentH) / 2f;
-        int x = Math.round((touchX - offX) * remoteW / contentW);
-        int y = Math.round((touchY - offY) * remoteH / contentH);
-        if (x < 0) {
-            x = 0;
-        } else if (x >= (int) remoteW) {
-            x = (int) remoteW - 1;
-        }
-        if (y < 0) {
-            y = 0;
-        } else if (y >= (int) remoteH) {
-            y = (int) remoteH - 1;
-        }
-        return new int[]{x, y};
-    }
-
-    private void sendTouchEvent(int action, int buttonState, int x, int y, int pointerId) {
-        // 为支持多点触控，将 pointid 添加到最末尾
-        // TODO : 后续需要改造 event 传输方式
-        int[] buf = new int[]{action, buttonState, x, y, pointerId};
-        final byte[] array = new byte[buf.length * 4]; // https://stackoverflow.com/questions/2183240/java-integer-to-byte-array
-        for (int j = 0; j < buf.length; j++) {
-            final int c = buf[j];
-            array[j * 4] = (byte) ((c & 0xFF000000) >> 24);
-            array[j * 4 + 1] = (byte) ((c & 0xFF0000) >> 16);
-            array[j * 4 + 2] = (byte) ((c & 0xFF00) >> 8);
-            array[j * 4 + 3] = (byte) (c & 0xFF);
-        }
-        if (LetServceRunning.get()) {
-            event.offer(array);
-        }
-        // event = array;
+    // Compatibility no-op: never forward viewer touches.
+    public boolean touchevent(MotionEvent event, boolean landscape, int displayW, int displayH) {
+        return false;
     }
 
     public int[] get_remote_device_resolution() {
@@ -298,21 +216,8 @@ public class Scrcpy extends Service {
         return socket_status;
     }
 
+    // Compatibility no-op: remote keys are intentionally unsupported.
     public void sendKeyevent(int keycode) {
-        int[] buf = new int[]{keycode};
-
-        final byte[] array = new byte[buf.length * 4];   // https://stackoverflow.com/questions/2183240/java-integer-to-byte-array
-        for (int j = 0; j < buf.length; j++) {
-            final int c = buf[j];
-            array[j * 4] = (byte) ((c & 0xFF000000) >> 24);
-            array[j * 4 + 1] = (byte) ((c & 0xFF0000) >> 16);
-            array[j * 4 + 2] = (byte) ((c & 0xFF00) >> 8);
-            array[j * 4 + 3] = (byte) (c & 0xFF);
-        }
-        if (LetServceRunning.get()) {
-            event.offer(array);
-            // event = array;
-        }
     }
 
     private void startConnection(String ip, int port, int delay, boolean enableAudio) {
@@ -474,29 +379,9 @@ public class Scrcpy extends Service {
                     pendingConfigure = false;
                     updateAvailable.set(false);
                 }
-                byte[] sendevent;
-                int drained = 0;
-                while ((sendevent = event.poll()) != null) {
-                    waitEvent = false;
-                    try {
-                        byte[] data = ControlPacket.toArray(MediaPacket.Type.CONTROL, sendevent);
-                        dataOutputStream.write(data);
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                        if (serviceCallbacks != null) {
-                            serviceCallbacks.errorDisconnect();
-                        }
-                        LetServceRunning.set(false);
-                        break;
-                    }
-                    drained++;
-                    if (drained >= 64) {
-                        break;
-                    }
-                }
-                if (drained > 0) {
-                    dataOutputStream.flush();
-                }
+                // Read-only transport: discard remote input packets.
+                // Video keyframe requests are handled separately.
+                event.clear();
 
                 if (dataInputStream.available() > 0) {
                     waitEvent = false;

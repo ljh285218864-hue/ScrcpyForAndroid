@@ -1,3 +1,5 @@
+> **此 Fork 已改为只读屏幕同步版本。** 不提供远程触摸、滑动、按键、ADB 终端或重启/关机控制。原上游文档中提及的远程控制功能不再适用于此 Fork。被观看设备仍需授权建立镜像连接。
+
 # Scrcpy for Android
 
 - This application is android port to desktop applicaton [**Scrcpy**](https://github.com/Genymobile/scrcpy).

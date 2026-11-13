@@ -33,18 +33,18 @@ footer{color:#8c9bb6;max-width:1240px;margin:0 auto;padding:0 18px 25px;font-siz
 </style>
 </head>
 <body>
-<header><div><h1>Android 双机远程控制台</h1><p class="subtitle">Android 15 · 实时画面与触摸操作</p></div><div class="state"><i class="dot"></i><span>私有控制台</span></div></header>
+<header><div><h1>Android 双机远程控制台</h1><p class="subtitle">Android 15 · 实时画面 · 只读观看</p></div><div class="state"><i class="dot"></i><span>私有控制台</span></div></header>
 <nav aria-label="选择手机"><button type="button" class="active" data-mode="both">双机</button><button type="button" data-mode="a">只看 A</button><button type="button" data-mode="b">只看 B</button></nav>
 <main id="views">
 <section class="phone-card selected" id="card-a" aria-label="安卓手机 A">
 <div class="phone-heading"><div><b>A 虚拟手机</b><div><span>被观看端</span></div></div><a href="/a/vnc.html?autoconnect=true&amp;resize=scale&amp;path=a%2Fwebsockify" target="_blank" rel="noopener noreferrer">单独全屏</a></div>
 <div class="frame-wrap"><iframe title="Android A 远程桌面" loading="eager" allow="fullscreen" src="/a/vnc.html?autoconnect=true&amp;resize=scale&amp;path=a%2Fwebsockify"></iframe></div>
-<div class="hint">可点击、滑动和打开 YouTube。首次启动虚拟机时，需先完成安卓系统开机。</div>
+<div class="hint">仅显示虚拟手机 A 的画面，不支持远程触摸、滑动和输入。</div>
 </section>
 <section class="phone-card selected" id="card-b" aria-label="安卓手机 B">
 <div class="phone-heading"><div><b>B 虚拟手机</b><div><span>操作与观看端</span></div></div><a href="/b/vnc.html?autoconnect=true&amp;resize=scale&amp;path=b%2Fwebsockify" target="_blank" rel="noopener noreferrer">单独全屏</a></div>
 <div class="frame-wrap"><iframe title="Android B 远程桌面" loading="eager" allow="fullscreen" src="/b/vnc.html?autoconnect=true&amp;resize=scale&amp;path=b%2Fwebsockify"></iframe></div>
-<div class="hint">B 是独立的第二台安卓虚拟机。若需 B 内看到 A，另外安装并授权同屏 App。</div>
+<div class="hint">B 是第二台安卓虚拟机。页面只读显示画面，不支持控制。</div>
 </section>
 </main>
 <footer>此控制台需部署在支持 KVM 的云服务器上。请勿分享浏览密码。VNC 适合交互测试，但 YouTube 视频可能不流畅，且不传输安卓系统音频。</footer>

@@ -271,60 +271,8 @@ try:
     record("PASS: A opened YouTube and B displayed a changed screen.")
     record("Note: screenshot-change check alone does not prove individual YouTube video playback or frame-perfect mirroring; review a-youtube.png and b-youtube.png.")
 
-    # Next phase: verify remote INPUT, not merely matching screenshots.
-    # The fullscreen tutorial is an Android SYSTEM modal on B; tapping the
-    # mirrored surface before dismissing it would never reach A.
-    root_b = dump_ui(B, "b-fullscreen-tip.xml")
-    got_it = find_node(root_b, texts=("Got it",))
-    if got_it:
-        if not tap(B, got_it):
-            raise RuntimeError("Unable to dismiss B's fullscreen system tutorial")
-        time.sleep(3)
-        record("B Android fullscreen tutorial dismissed")
-
-    # Prefer the deterministic YouTube permission dialog on the fresh AVD.
-    # If YouTube has no permission dialog, use Android Settings instead.
-    a_before = dump_ui(A, "a-before-remote-touch.xml")
-    target = find_node(a_before, texts=("Don't allow", "Don’t allow"))
-    touch_context = "YouTube notification dialog"
-    if target is None:
-        record("YouTube permission dialog not present; using Settings navigation")
-        result = shell(A, "am", "start", "-a", "android.settings.SETTINGS", timeout=30)
-        if result.returncode != 0:
-            raise RuntimeError("Could not open Settings on A")
-        time.sleep(8)
-        a_before = dump_ui(A, "a-before-remote-touch.xml")
-        target = find_node(a_before, texts=("Network & internet", "Network & Internet"))
-        touch_context = "Android Settings Network & internet"
-    if target is None:
-        raise RuntimeError("No safe, visible A UI target available for B-to-A touch test")
-
-    # Coordinate parity is valid for this specific test: both AVDs use the
-    # same 1080x2340 resolution, with B in full-screen scrcpy mode.
-    screenshot(A, "a-before-remote-touch.png")
-    screenshot(B, "b-before-remote-touch.png")
-    target_bounds = target.attrib.get("bounds", "")
-    record(f"Remote input target on A: {touch_context}, bounds={target_bounds}")
-    if not tap(B, target):
-        raise RuntimeError("B could not send touch to mirrored A target")
-
-    time.sleep(9)
-    a_after = dump_ui(A, "a-after-remote-touch.xml")
-    screenshot(A, "a-after-remote-touch.png")
-    screenshot(B, "b-after-remote-touch.png")
-    target_after = find_node(a_after, texts=("Don't allow", "Don’t allow")) if touch_context.startswith("YouTube") else None
-    ui_changed = ET.tostring(a_before) != ET.tostring(a_after) if a_before is not None and a_after is not None else False
-    if touch_context.startswith("YouTube"):
-        touch_ok = target_after is None and ui_changed
-    else:
-        # The settings dashboard and its Network subpage have different
-        # exported hierarchy; check that we navigated and UI changed.
-        touch_ok = ui_changed and find_node(a_after, texts=("Network & internet", "Network & Internet")) is None
-    record("A UI changed after B touch: " + str(ui_changed))
-    record("B-to-A remote touch verified: " + str(touch_ok))
-    if not touch_ok:
-        raise RuntimeError("B tap did not produce the expected UI transition on A")
-    record("PASS: B touch input controlled A's UI")
+    record("Screen mirroring only: no remote touch/key/command testing.")
+    record("Testing viewer reconnection without any control of A.")
 
     # Reconnection: force-stop only the viewing app B, then relaunch and
     # reconnect using the same locally authorized ADB connection.

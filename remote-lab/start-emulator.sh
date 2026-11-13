@@ -9,7 +9,7 @@ mkdir -p "$ANDROID_AVD_HOME" /data/android_home
 Xvfb :0 -screen 0 1200x1120x24 -nolisten tcp +extension GLX &
 sleep 1
 openbox --display :0 >/tmp/openbox.log 2>&1 &
-x11vnc -display :0 -rfbport 5900 -localhost -forever -shared -nopw -noxdamage >/tmp/x11vnc.log 2>&1 &
+x11vnc -display :0 -rfbport 5900 -localhost -forever -shared -nopw -noxdamage -viewonly >/tmp/x11vnc.log 2>&1 &
 websockify --web=/usr/share/novnc 6080 127.0.0.1:5900 >/tmp/websockify.log 2>&1 &
 
 if [[ ! -f "$ANDROID_AVD_HOME/${AVD_NAME}.ini" ]]; then

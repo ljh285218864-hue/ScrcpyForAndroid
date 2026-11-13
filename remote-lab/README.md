@@ -1,6 +1,6 @@
 # Android 15 双机浏览器实时控制台
 
-本目录为 ScrcpyForAndroid 的 **独立自托管测试部署方案**。在带 KVM 加速的 Linux 服务器上启动两台 Android 15（API 35）虚拟机，用 noVNC 把 A、B 两个画面和触摸操作显示在 iPhone Safari 中。HTTPS 和密码保护由 Caddy 提供。
+本目录为 ScrcpyForAndroid 的 **独立自托管测试部署方案**。在带 KVM 加速的 Linux 服务器上启动两台 Android 15（API 35）虚拟机，用 noVNC 把 A、B 两个画面以只读方式显示在 iPhone Safari 中。HTTPS 和密码保护由 Caddy 提供。
 
 **注意：仓库有部署配置 ≠ 已有在线网页。** 需要先准备有足够硬件资源的服务器并部署验证；不能在 GitHub Actions 中长期托管。
 
@@ -28,7 +28,7 @@ bash setup.sh
 
 从浏览器访问 `https://你的专用域名/`，用户为 `viewer`，密码就是启动时设置的私有密码。HTTPS 由 Caddy 在域名 DNS/端口条件满足后自动申请证书。
 
-提供 **双机 / 只看 A / 只看 B** 三个选项，iPhone 触摸可以通过 noVNC 操作屏幕。首次启动可能需要先完成安卓开机。**noVNC 没有安卓系统音频，YouTube 视频可能不流畅；若要流畅播放视频和音频，后续应换 WebRTC 流媒体链路。**
+提供 **双机 / 只看 A / 只看 B** 三个选项，iPhone 仅能查看画面；noVNC 的 `-viewonly` 会拒绝触摸和键盘输入。首次启动可能需要先完成安卓开机。**noVNC 没有安卓系统音频，YouTube 视频可能不流畅；若要流畅播放视频和音频，后续应换 WebRTC 流媒体链路。**
 
 ## 维护
 

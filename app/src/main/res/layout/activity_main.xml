@@ -395,6 +395,7 @@
 
                 <Switch
                     android:id="@+id/switch1"
+                    android:visibility="gone"
                     android:layout_width="match_parent"
                     android:layout_height="60dp"
                     android:layout_marginLeft="10dp"
@@ -448,6 +449,7 @@
 
                 <Button
                     android:id="@+id/button_adb_terminal"
+                    android:visibility="gone"
                     android:layout_width="0dp"
                     android:layout_height="50dp"
                     android:layout_marginRight="4dp"
@@ -459,6 +461,7 @@
 
                 <Button
                     android:id="@+id/button_adb_shell"
+                    android:visibility="gone"
                     android:layout_width="0dp"
                     android:layout_height="50dp"
                     android:layout_marginLeft="4dp"
