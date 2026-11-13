@@ -220,7 +220,56 @@ try:
     if not handshake:
         raise RuntimeError("No scrcpy video handshake; review both logcat files and device screenshots")
     record("PASS: dual Android 15 emulators established a scrcpy video handshake.")
-    record("Decoded frame visibility requires reviewing b-screen.png; handshake alone is not end-to-end visual verification.")
+
+    # Live-content change test: A opens YouTube, while B continues mirroring A.
+    # The previous GitHub Actions emulators are ephemeral, so this happens in
+    # the newly launched pair, not in any past (already stopped) run.
+    screenshot(A, "a-before-youtube.png")
+    screenshot(B, "b-before-youtube.png")
+    record("Opening YouTube on emulator A while B is connected...")
+
+    youtube_installed = "package:" in shell(A, "pm", "path", "com.google.android.youtube").stdout
+    if youtube_installed:
+        attempt = shell(A, "monkey", "-p", "com.google.android.youtube",
+                        "-c", "android.intent.category.LAUNCHER", "1", timeout=30)
+        record("A native YouTube app launch: " +
+               ("requested" if attempt.returncode == 0 and "Events injected: 1" in attempt.stdout
+                else "did not start; falling back to browser"))
+        youtube_installed = attempt.returncode == 0 and "Events injected: 1" in attempt.stdout
+
+    if not youtube_installed:
+        attempt = shell(A, "am", "start", "-W", "-a", "android.intent.action.VIEW",
+                        "-d", "https://m.youtube.com", timeout=40)
+        record("A YouTube website launch: " +
+               " ".join(attempt.stdout.strip().splitlines()[-4:]))
+        if attempt.returncode != 0 or "Error:" in attempt.stdout:
+            raise RuntimeError("A emulator could not open YouTube URL: " +
+                               (attempt.stdout + attempt.stderr)[-700:])
+
+    time.sleep(18)
+    screenshot(A, "a-youtube.png")
+    screenshot(B, "b-youtube.png")
+    focus_a = shell(A, "dumpsys", "window", timeout=25).stdout
+    focus_b = shell(B, "dumpsys", "window", timeout=25).stdout
+    (OUT / "a-youtube-window.txt").write_text(focus_a, encoding="utf-8")
+    (OUT / "b-youtube-window.txt").write_text(focus_b, encoding="utf-8")
+
+    from hashlib import sha256
+    def file_digest(file_name):
+        f = OUT / file_name
+        return sha256(f.read_bytes()).hexdigest() if f.exists() and f.stat().st_size else "MISSING"
+
+    a_changed = file_digest("a-before-youtube.png") != file_digest("a-youtube.png")
+    b_changed = file_digest("b-before-youtube.png") != file_digest("b-youtube.png")
+    record("A screen changed after opening YouTube: " + str(a_changed))
+    record("B mirrored screen changed after A opened YouTube: " + str(b_changed))
+    record("A YouTube and B mirrored screenshots are saved in the test artifact.")
+    if not a_changed:
+        raise RuntimeError("YouTube launch did not visibly change A screenshot")
+    if not b_changed:
+        raise RuntimeError("B screen remained identical after A opened YouTube")
+    record("PASS: A opened YouTube and B displayed a changed screen.")
+    record("Note: screenshot-change check alone does not prove individual YouTube video playback or frame-perfect mirroring; review a-youtube.png and b-youtube.png.")
 except Exception as err:
     record("FAIL: " + repr(err))
     collect()
