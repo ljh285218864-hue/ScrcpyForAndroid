@@ -50,7 +50,11 @@ def dump_ui(device, name):
     r = adb(device, "exec-out", "cat", "/sdcard/window.xml", timeout=20)
     xml = r.stdout
     (OUT / name).write_text(xml, encoding="utf-8")
-    return ET.fromstring(xml) if xml.strip().startswith("<?xml") else None
+    try:
+        return ET.fromstring(xml) if xml.strip().startswith("<?xml") else None
+    except ET.ParseError:
+        record(f"{name}: temporary malformed UI dump; retrying")
+        return None
 
 def find_node(root, *, resource_id=None, texts=()):
     if root is None:
@@ -73,6 +77,11 @@ def wait_for_viewer_home(device, *, label, attempts=10):
     """
     for n in range(attempts):
         root = dump_ui(device, f"{label}-ui-attempt-{n}.xml")
+        if root is None:
+            record(f"{label}: UI hierarchy unavailable at attempt {n+1}; recovering app")
+            shell(device, "am", "start", "-n", PKG + "/.MainActivity", timeout=30)
+            time.sleep(4)
+            continue
         host = find_node(root, resource_id="editText_server_host")
         if host is not None:
             return root
