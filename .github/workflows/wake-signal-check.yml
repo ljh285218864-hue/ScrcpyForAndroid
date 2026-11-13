@@ -1,0 +1,54 @@
+name: Wake Signal Protocol Fast Check
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/wake-signal-check.yml'
+      - '.github/scripts/dual-emulator-test.py'
+      - 'app/src/main/java/org/client/scrcpy/WakeAuth.java'
+      - 'app/src/main/java/org/client/scrcpy/WakeLanClient.java'
+      - 'app/src/main/java/org/client/scrcpy/WakeLanService.java'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify emulator test script compiles
+        run: python3 -m py_compile .github/scripts/dual-emulator-test.py
+      - name: Verify wake handshake and bad-key rejection
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/wakefast
+          javac -d /tmp/wakefast app/src/main/java/org/client/scrcpy/WakeAuth.java
+          cat >/tmp/wakefast/TestWake.java <<'JAVA'
+          import org.client.scrcpy.WakeAuth;
+          public final class TestWake {
+            public static void main(String[] args) throws Exception {
+              String secret = WakeAuth.randomHex(16);
+              if (!WakeAuth.isHex(secret, 32)) throw new AssertionError("token");
+              String c = WakeAuth.randomHex(8);
+              String s = WakeAuth.randomHex(16);
+              String valid = WakeAuth.mac(secret, c, s);
+              if (!WakeAuth.verify(valid, WakeAuth.mac(secret, c, s))) throw new AssertionError("valid");
+              if (WakeAuth.verify(valid, WakeAuth.mac(WakeAuth.randomHex(16), c, s)))
+                throw new AssertionError("wrong key accepted");
+              if (WakeAuth.verify(valid, WakeAuth.mac(secret, c, WakeAuth.randomHex(16))))
+                throw new AssertionError("stale challenge accepted");
+              if (WakeAuth.isHex("invalid", 32)) throw new AssertionError("bad token");
+              System.out.println("PASS: wake HMAC, challenge freshness, bad-key rejection");
+            }
+          }
+          JAVA
+          javac -cp /tmp/wakefast -d /tmp/wakefast /tmp/wakefast/TestWake.java
+          java -cp /tmp/wakefast TestWake
