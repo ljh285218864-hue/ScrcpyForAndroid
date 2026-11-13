@@ -1,0 +1,45 @@
+name: Validate Android Live Lab
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'remote-lab/**'
+      - '.github/workflows/remote-lab-validate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check shell syntax
+        run: |
+          bash -n remote-lab/setup.sh
+          bash -n remote-lab/check.sh
+          bash -n remote-lab/start-emulator.sh
+
+      - name: Check Docker Compose
+        env:
+          VIEW_DOMAIN: lab.example.com
+          VIEW_PASSWORD_HASH: unused-during-compose-config
+        run: docker compose -f remote-lab/compose.yaml config --quiet
+
+      - name: Validate Caddy configuration
+        run: |
+          hash=$(docker run --rm caddy:2.10 caddy hash-password --plaintext 'ci-only-not-a-real-secret')
+          docker run --rm \
+            -e VIEW_DOMAIN=lab.example.com \
+            -e VIEW_PASSWORD_HASH="$hash" \
+            -v "$PWD/remote-lab/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.10 caddy validate --config /etc/caddy/Caddyfile
+
+      - name: Validate dashboard is present
+        run: |
+          test -s remote-lab/web/index.html
+          grep -q 'data-mode="both"' remote-lab/web/index.html
+          grep -q 'path=a%2Fwebsockify' remote-lab/web/index.html
+          grep -q 'path=b%2Fwebsockify' remote-lab/web/index.html
