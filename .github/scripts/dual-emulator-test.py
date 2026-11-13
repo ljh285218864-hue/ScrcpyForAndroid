@@ -231,11 +231,11 @@ def start_owner_wake_listener():
     with socket.create_connection(("127.0.0.1", 10055), timeout=8) as raw:
         raw.settimeout(8)
         stream = raw.makefile("rwb", buffering=0)
-        stream.write(b"HELLO 0123456789abcdef\\n")
+        stream.write(b"HELLO 0123456789abcdef\n")
         response = stream.readline()
         if not response.startswith(b"CHALLENGE "):
             raise RuntimeError("A wake server did not issue a challenge")
-        stream.write(b"AUTH " + b"0" * 64 + b"\\n")
+        stream.write(b"AUTH " + b"0" * 64 + b"\n")
         denied = stream.readline().strip()
         if denied != b"DENIED":
             raise RuntimeError("A wake listener accepted an invalid authentication proof")
