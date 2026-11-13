@@ -412,6 +412,26 @@ try:
         raise RuntimeError("Read-only viewer did not display a changed frame after every A-side page transition")
     record("PASS: B screen updated through three A-side page transitions without viewer controlling A")
     record("Screenshot hashes confirm visible changes, not precise frame latency or pixel-for-pixel equality.")
+
+    # Additional 60-second viewer stability test. A stays on a static page;
+    # B remains a passive viewer. No commands or control requests are sent
+    # from B to A. Screenshot timestamps and logs are retained for diagnosis.
+    record("Starting 60-second continuous view-only monitoring on B")
+    for sample in range(1, 4):
+        time.sleep(20)
+        live = shell(B, "pidof", PKG, timeout=12).stdout.strip()
+        if not live:
+            raise RuntimeError(f"Viewer process exited during stability sample {sample}")
+        a_file = f"a-stability-{sample}.png"
+        b_file = f"b-stability-{sample}.png"
+        screenshot(A, a_file)
+        screenshot(B, b_file)
+        a_bytes = (OUT / a_file).stat().st_size
+        b_bytes = (OUT / b_file).stat().st_size
+        if a_bytes < 3000 or b_bytes < 3000:
+            raise RuntimeError(f"Invalid screenshot while monitoring sample {sample}")
+        record(f"Viewer stability +{sample * 20}s: B process alive, A frame={a_bytes} bytes, B frame={b_bytes} bytes")
+    record("PASS: B viewer process stayed active for 60 seconds with screenshots from both virtual phones")
 except Exception as err:
     record("FAIL: " + repr(err))
     collect()
