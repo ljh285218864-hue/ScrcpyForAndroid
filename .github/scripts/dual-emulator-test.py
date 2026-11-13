@@ -61,6 +61,44 @@ def find_node(root, *, resource_id=None, texts=()):
             return node
     return None
 
+
+def wait_for_viewer_home(device, *, label, attempts=10):
+    """Wait for the B viewer UI and handle only synthetic emulator launcher ANRs.
+
+    Never sends input to the screen being mirrored (A); touches here are solely
+    for dismissing a local B emulator system dialog.
+    """
+    for n in range(attempts):
+        root = dump_ui(device, f"{label}-ui-attempt-{n}.xml")
+        host = find_node(root, resource_id="editText_server_host")
+        if host is not None:
+            return root
+
+        # The Google API emulator can have a temporary Pixel Launcher ANR as
+        # it boots. It overlays our app even when the app itself is healthy.
+        launcher_anr = find_node(root, texts=("Pixel Launcher isn't responding",
+                                              "Pixel Launcher keeps stopping",
+                                              "Pixel Launcher is not responding"))
+        if launcher_anr is not None:
+            choice = ("Wait", "等待") if n < 2 else ("Close app", "关闭应用")
+            action = next((node for node in root.iter("node")
+                           if node.attrib.get("class") == "android.widget.Button"
+                           and node.attrib.get("text", "").strip() in choice), None)
+            if action is not None and tap(device, action):
+                record(f"{label}: dismissed synthetic Pixel Launcher ANR via {choice[0]}")
+            else:
+                record(f"{label}: found Pixel Launcher ANR but no actionable button")
+            time.sleep(6)
+            continue
+
+        top = [node.attrib.get("text", "") for node in root.iter("node")
+               if node.attrib.get("text")]
+        record(f"{label}: viewer UI not ready (attempt {n+1}/{attempts}); visible={top[:6]!r}")
+        # Ensure the viewer is foreground without tapping any remote device.
+        shell(device, "am", "start", "-n", PKG + "/.MainActivity", timeout=30)
+        time.sleep(6)
+    raise RuntimeError(f"{label}: viewer home not available after {attempts} attempts")
+
 def tap(device, node):
     if node is None:
         return False
@@ -161,12 +199,15 @@ try:
     record("B app launch: " + " ".join(launched.stdout.strip().splitlines()[-3:]))
     time.sleep(5)
     screenshot(B, "b-before-connection.png")
+    # Android emulators can show Pixel Launcher ANR over the newly opened app.
+    # Recover the local emulator UI before looking for our EditText.
+    wait_for_viewer_home(B, label="first-launch")
 
     # Reach host-side emulator A ADB listener using Android emulator networking.
     ip = shell(B, "ping", "-c", "1", "-W", "3", "10.0.2.2", timeout=10)
     record("B -> emulator host gateway ping: " + ("success" if ip.returncode == 0 else "unavailable"))
 
-    root = dump_ui(B, "b-before.xml")
+    root = wait_for_viewer_home(B, label="connection")
     host = find_node(root, resource_id="editText_server_host")
     if not tap(B, host):
         raise RuntimeError("B remote host input not found in UI hierarchy")
@@ -284,7 +325,7 @@ try:
     if relaunch.returncode != 0:
         raise RuntimeError("Could not relaunch B after disconnect")
     time.sleep(5)
-    root_b = dump_ui(B, "b-reconnected-home.xml")
+    root_b = wait_for_viewer_home(B, label="reconnect")
     addr = find_node(root_b, resource_id="editText_server_host")
     if addr is None:
         raise RuntimeError("B connection screen unavailable after restart")
