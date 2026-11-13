@@ -6,6 +6,12 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/android-debug-apk.yml'
+      - 'app/**'
+      - 'server/**'
+      - 'gradle/**'
+      - 'build.gradle'
+      - 'settings.gradle'
+      - 'gradlew'
 
 permissions:
   contents: read
