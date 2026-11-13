@@ -177,6 +177,23 @@ try:
     record("B host entry set to local synthetic emulator A address")
 
     root = dump_ui(B, "b-address-set.xml")
+    host_node = find_node(root, resource_id="editText_server_host")
+    typed_address = host_node.attrib.get("text", "") if host_node is not None else ""
+    record("B address field before closing keyboard: " + typed_address)
+    if typed_address != HOST:
+        raise RuntimeError(f"Remote address input mismatch: expected {HOST}, got {typed_address!r}")
+
+    # Hide the soft keyboard before tapping Start. The UI hierarchy can still
+    # list an underlying button even when the IME covers its coordinates.
+    # The earlier test accidentally tapped the 'y' key over the Start button.
+    shell(B, "input", "keyevent", "KEYCODE_BACK")
+    time.sleep(2)
+    root = dump_ui(B, "b-keyboard-hidden.xml")
+    host_node = find_node(root, resource_id="editText_server_host")
+    typed_address = host_node.attrib.get("text", "") if host_node is not None else ""
+    if typed_address != HOST:
+        raise RuntimeError(f"Remote address mutated after hiding keyboard: {typed_address!r}")
+    screenshot(B, "b-ready-to-start.png")
     start = find_node(root, resource_id="button_start")
     for attempt in range(3):
         if start is not None:
@@ -186,7 +203,9 @@ try:
         start = find_node(root, resource_id="button_start")
     if not tap(B, start):
         raise RuntimeError("B Start control missing from UI hierarchy")
-    record("B app Start tapped; waiting for local ADB scrcpy connection")
+    record("B Start button tapped with soft keyboard dismissed; waiting for local ADB scrcpy connection")
+    time.sleep(5)
+    screenshot(B, "b-five-seconds-after-start.png")
     simulate_owner_approval()
     time.sleep(25)
     collect()
