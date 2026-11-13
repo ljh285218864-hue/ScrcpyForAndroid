@@ -330,11 +330,9 @@ try:
     fill_field(B, "editText_wake_key", wake_token, "viewer-wake-key")
     record("B configured A's authenticated LAN wake endpoint; code kept out of logs")
 
-    # Hide the soft keyboard before tapping Start. The UI hierarchy can still
-    # list an underlying button even when the IME covers its coordinates.
-    # The earlier test accidentally tapped the 'y' key over the Start button.
-    shell(B, "input", "keyevent", "KEYCODE_BACK")
-    time.sleep(2)
+    # fill_field() already dismisses the IME after each input.
+    # Do NOT send another Back here: on Android it can close the whole viewer.
+    time.sleep(1)
     root = dump_ui(B, "b-keyboard-hidden.xml")
     host_node = find_node(root, resource_id="editText_server_host")
     typed_address = host_node.attrib.get("text", "") if host_node is not None else ""
