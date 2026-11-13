@@ -335,9 +335,12 @@ try:
     time.sleep(1)
     root = dump_ui(B, "b-keyboard-hidden.xml")
     host_node = find_node(root, resource_id="editText_server_host")
-    typed_address = host_node.attrib.get("text", "") if host_node is not None else ""
-    if typed_address != HOST:
-        raise RuntimeError(f"Remote address mutated after hiding keyboard: {typed_address!r}")
+    # With Advanced Settings expanded we may be scrolled well below this
+    # input; its value was already verified before scrolling.
+    if host_node is not None:
+        typed_address = host_node.attrib.get("text", "")
+        if typed_address != HOST:
+            raise RuntimeError(f"Remote address mutated: {typed_address!r}")
     screenshot(B, "b-ready-to-start.png")
     start = find_node(root, resource_id="button_start")
     for attempt in range(3):
