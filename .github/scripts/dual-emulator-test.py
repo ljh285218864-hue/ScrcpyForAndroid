@@ -218,9 +218,9 @@ def configure_synthetic_viewer_wake(token):
     UI fields remain available for real manual tests, but CI uses run-as to
     avoid flaky on-screen keyboards and scroll gestures hiding nested fields.
     """
-    xml = ('<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\\n'
+    xml = ('<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\n'
            '<map><string name="viewer_host">' + WAKE_HOST +
-           '</string><string name="viewer_code">' + token + '</string></map>\\n')
+           '</string><string name="viewer_code">' + token + '</string></map>\n')
     prep = adb(B, "shell", "run-as", PKG, "mkdir", "-p", "shared_prefs")
     if prep.returncode:
         raise RuntimeError("B debug preferences directory not available: " + prep.stderr[-300:])
