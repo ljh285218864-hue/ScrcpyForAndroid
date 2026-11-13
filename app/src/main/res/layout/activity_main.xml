@@ -409,6 +409,18 @@
                     android:textColor="@color/white"
                     android:textSize="15sp" />
 
+                <Button
+                    android:id="@+id/button_test_wake"
+                    android:layout_width="match_parent"
+                    android:layout_height="50dp"
+                    android:layout_marginLeft="10dp"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginRight="10dp"
+                    android:background="@drawable/btn_selector"
+                    android:text="@string/action_test_wake"
+                    android:textColor="@color/white"
+                    android:textSize="14sp" />
+
                 <Switch
                     android:id="@+id/switch_audio_enable"
                     android:layout_width="match_parent"

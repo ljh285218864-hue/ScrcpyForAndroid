@@ -14,6 +14,12 @@
     <string name="hint_video_encoder">e.g. c2.android.avc.encoder (empty = default)</string>
     <string name="label_x">x</string>
     <string name="action_start">开始观看屏幕</string>
+    <string name="action_test_wake">测试本机唤醒接收</string>
+    <string name="wake_notification_title">唤醒请求测试</string>
+    <string name="wake_notification_message">接收模块已收到本机测试请求，点击打开屏幕同步。</string>
+    <string name="wake_local_test_received">本机唤醒接收测试成功（尚未接入异地请求）</string>
+    <string name="wake_local_test_failed">唤醒服务暂时不可用</string>
+    <string name="wake_local_test_disabled_notification">已收到请求，但通知权限未开启；已记录本机测试结果</string>
     <string name="action_start_usb">Connect via USB</string>
     <string name="history_delete">Delete</string>
     <string name="usb_no_device">No USB device detected. Connect a device with a USB cable.</string>

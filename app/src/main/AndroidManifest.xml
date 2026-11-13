@@ -3,6 +3,7 @@
 
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <uses-feature
         android:name="android.hardware.usb.host"
@@ -27,6 +28,12 @@
         <activity
             android:name=".SettingActivity"
             android:exported="false" />
+
+        <!-- Internal wake-request test receiver. No public entry point or automatic screen sharing. -->
+        <service
+            android:name=".WakeRequestService"
+            android:exported="false"
+            android:enabled="true" />
 
         <service
             android:name=".Scrcpy"

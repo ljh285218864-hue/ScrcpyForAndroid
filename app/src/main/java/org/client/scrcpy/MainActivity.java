@@ -24,6 +24,10 @@ import android.hardware.SensorManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.content.pm.PackageManager;
+import android.Manifest;
 import android.os.IBinder;
 import android.os.SystemClock;
 import android.window.OnBackInvokedCallback;
@@ -336,6 +340,11 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             shareLogButton.setOnClickListener(v -> shareSessionLog());
         }
         // No ADB terminal or shell is reachable from the viewer UI.
+        // Tests the internal wake receiver without starting ADB or sharing a screen.
+        Button wakeTestButton = findViewById(R.id.button_test_wake);
+        if (wakeTestButton != null) {
+            wakeTestButton.setOnClickListener(v -> testWakeReceiverLocally());
+        }
         btnMoreSettings.setOnClickListener(v -> {
             AutoTransition autoTransition = new AutoTransition();
             TransitionManager.beginDelayedTransition(scrollView, autoTransition);
@@ -1294,6 +1303,52 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             Toast.makeText(context, "Server Address Empty", Toast.LENGTH_SHORT).show();
             startStatusMonitor();
             connectExitExt();
+        }
+    }
+
+    private static final int WAKE_NOTIFICATION_PERMISSION_REQUEST = 7231;
+
+    private void testWakeReceiverLocally() {
+        // User explicitly presses the test button. No background service is
+        // launched without an authorized, foreground user action here.
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                     != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                    WAKE_NOTIFICATION_PERMISSION_REQUEST);
+            return;
+        }
+        runLocalWakeTest();
+    }
+
+    private void runLocalWakeTest() {
+        final long before = WakeRequestService.lastTestReceivedAt(this);
+        if (!WakeRequestService.requestLocalTest(this)) {
+            Toast.makeText(this, R.string.wake_local_test_failed, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            if (isFinishing() || isDestroyed()) {
+                return;
+            }
+            final boolean received = WakeRequestService.lastTestReceivedAt(this) > before;
+            final boolean canNotify = Build.VERSION.SDK_INT < 33
+                    || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                            == PackageManager.PERMISSION_GRANTED;
+            int message = received ? (canNotify ? R.string.wake_local_test_received
+                    : R.string.wake_local_test_disabled_notification) : R.string.wake_local_test_failed;
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+        }, 800);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                                           int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == WAKE_NOTIFICATION_PERMISSION_REQUEST) {
+            // Receipt can still be verified in the app even if notification
+            // permission is declined.
+            runLocalWakeTest();
         }
     }
 
