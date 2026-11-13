@@ -319,7 +319,7 @@ try:
     else:
         # The settings dashboard and its Network subpage have different
         # exported hierarchy; check that we navigated and UI changed.
-        touch_ok = ui_changed and find_node(a_after, texts=("Network & internet",)) is None
+        touch_ok = ui_changed and find_node(a_after, texts=("Network & internet", "Network & Internet")) is None
     record("A UI changed after B touch: " + str(ui_changed))
     record("B-to-A remote touch verified: " + str(touch_ok))
     if not touch_ok:
