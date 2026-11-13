@@ -212,6 +212,28 @@ def fill_field(device, field_id, value, label):
         raise RuntimeError(f"{label}: {field_id} text did not match")
     shell(device, "input", "keyevent", "KEYCODE_BACK")
 
+def configure_synthetic_viewer_wake(token):
+    """Synthetic B owner's private test settings; no external app API.
+
+    UI fields remain available for real manual tests, but CI uses run-as to
+    avoid flaky on-screen keyboards and scroll gestures hiding nested fields.
+    """
+    xml = ('<?xml version="1.0" encoding="utf-8" standalone="yes" ?>\\n'
+           '<map><string name="viewer_host">' + WAKE_HOST +
+           '</string><string name="viewer_code">' + token + '</string></map>\\n')
+    prep = adb(B, "shell", "run-as", PKG, "mkdir", "-p", "shared_prefs")
+    if prep.returncode:
+        raise RuntimeError("B debug preferences directory not available: " + prep.stderr[-300:])
+    result = subprocess.run(["adb", "-s", B, "shell", "run-as", PKG, "tee",
+                             "shared_prefs/wake_lan_test.xml"],
+                            input=xml, text=True, capture_output=True, timeout=25)
+    if result.returncode:
+        raise RuntimeError("B debug preferences could not be written: " + result.stderr[-300:])
+    saved = adb(B, "shell", "run-as", PKG, "cat", "shared_prefs/wake_lan_test.xml")
+    if saved.returncode or (WAKE_HOST not in saved.stdout) or token not in saved.stdout:
+        raise RuntimeError("B debug preferences verification failed")
+    record("B test owner configured authenticated wake credentials (without logging secret)")
+
 def start_owner_wake_listener():
     install_a = adb(A, "install", "-r", str(apk), timeout=120)
     if install_a.returncode:
@@ -290,6 +312,7 @@ try:
     if install.returncode:
         raise RuntimeError("Failed to install B app: " + (install.stdout + install.stderr)[-1200:])
     record("B app installed: " + str(apk))
+    configure_synthetic_viewer_wake(wake_token)
     launched = shell(B, "am", "start", "-W", "-n", PKG + "/.MainActivity", timeout=30)
     record("B app launch: " + " ".join(launched.stdout.strip().splitlines()[-3:]))
     time.sleep(5)
@@ -319,28 +342,11 @@ try:
     if typed_address != HOST:
         raise RuntimeError(f"Remote address input mismatch: expected {HOST}, got {typed_address!r}")
 
-    # Configure test-only A<->B authenticated wake from the B viewer UI.
-    # First dismiss the IME: it overlays the More Settings button coordinates.
+    # Wake address and key were installed into B's own private debug settings
+    # before its UI started; the user-facing inputs are tested separately.
+    # This isolates B->A authenticated wake plus video from flaky emulator IME.
+    # The host keyboard is still open from address entry; dismiss it once.
     shell(B, "input", "keyevent", "KEYCODE_BACK")
-    time.sleep(1.5)
-    for attempt in range(4):
-        root = dump_ui(B, f"viewer-wake-more-{attempt}.xml")
-        more = find_node(root, resource_id="btn_more_settings")
-        if more is None:
-            more = find_visible_control(B, "btn_more_settings", "viewer-wake-more", scroll_down=False)
-        if "▲" in more.attrib.get("text", ""):
-            break
-        if not tap(B, more):
-            raise RuntimeError("B: could not tap More Settings")
-        time.sleep(1)
-    else:
-        raise RuntimeError("B: More Settings could not expand")
-    fill_field(B, "editText_wake_host", WAKE_HOST, "viewer-wake-host")
-    fill_field(B, "editText_wake_key", wake_token, "viewer-wake-key")
-    record("B configured A's authenticated LAN wake endpoint; code kept out of logs")
-
-    # fill_field() already dismisses the IME after each input.
-    # Do NOT send another Back here: on Android it can close the whole viewer.
     time.sleep(1)
     root = dump_ui(B, "b-keyboard-hidden.xml")
     host_node = find_node(root, resource_id="editText_server_host")
