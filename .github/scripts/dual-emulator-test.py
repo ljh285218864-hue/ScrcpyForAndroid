@@ -109,13 +109,20 @@ def simulate_owner_approval():
     for _ in range(12):
         try:
             root = dump_ui(A, "a-permission-window.xml")
-            title = find_node(root, texts=("Allow USB debugging", "允许USB调试", "Always allow from this computer"))
-            if title is not None:
-                cb = find_node(root, texts=("Always allow from this computer", "始终允许使用这台计算机"))
+            nodes = list(root.iter("node")) if root is not None else []
+            text_blob = " ".join(n.attrib.get("text", "") for n in nodes).lower()
+            if "usb debugging" in text_blob or "usb调试" in text_blob or "usb 调试" in text_blob:
+                cb = next((n for n in nodes
+                           if ("always allow" in n.attrib.get("text", "").lower()
+                               or "始终允许" in n.attrib.get("text", ""))
+                           and n.attrib.get("checkable") == "true"), None)
                 if cb is not None and cb.attrib.get("checked") != "true":
                     tap(A, cb)
-                allow = find_node(root, texts=("Allow", "允许"))
-                if allow and tap(A, allow):
+                allow = next((n for n in nodes
+                              if n.attrib.get("class") == "android.widget.Button"
+                              and n.attrib.get("text", "").strip().lower() in
+                                  ("allow", "允许", "确定", "ok")), None)
+                if allow is not None and tap(A, allow):
                     record("A emulator: simulated device owner accepting ADB authorization")
                     return
         except Exception as err:
