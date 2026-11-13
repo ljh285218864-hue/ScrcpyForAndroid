@@ -1,0 +1,76 @@
+name: Dual Android 15 Emulator Scrcpy Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/dual-android15-scrcpy.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  dual-emulator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+          log-accepted-android-sdk-licenses: 'false'
+
+      - name: Install Android SDK, NDK and native build tools
+        run: |
+          set -euo pipefail
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;26.3.11579264"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build cmake patch bison flex
+
+      - name: Build x86_64 debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleScrcpyDebug -PlibadbAbis=x86_64
+
+      - name: Enable KVM
+        run: |
+          test -e /dev/kvm
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Start A and B Android 15 emulators and test scrcpy
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          avd-name: phone_a
+          emulator-port: 5554
+          cores: 2
+          ram-size: 2048M
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: python3 .github/scripts/dual-emulator-test.py
+
+      - name: Upload both emulator logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dual-android15-scrcpy-results
+          path: dual-emulator-results/
+          if-no-files-found: warn
+          retention-days: 14
