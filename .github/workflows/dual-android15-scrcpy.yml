@@ -8,7 +8,6 @@ on:
       - '.github/workflows/dual-android15-scrcpy.yml'
       - '.github/scripts/dual-emulator-test.py'
       - '.github/scripts/analyze-mirror-frames.py'
-      - '.github/scripts/live_screen_uploader.py'
 
 permissions:
   contents: read
@@ -57,9 +56,6 @@ jobs:
 
       - name: Start A and B Android 15 emulators and test scrcpy
         uses: reactivecircus/android-emulator-runner@v2
-        env:
-          SCREEN_MONITOR_URL: ${{ secrets.SCREEN_MONITOR_URL }}
-          SCREEN_MONITOR_KEY: ${{ secrets.SCREEN_MONITOR_KEY }}
         with:
           api-level: 35
           target: google_apis
