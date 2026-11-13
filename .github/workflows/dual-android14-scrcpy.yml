@@ -5,6 +5,8 @@ on:
   push:
     branches: [main]
     paths:
+      - 'app/src/main/**'
+      - 'server/src/main/**'
       - '.github/workflows/dual-android14-scrcpy.yml'
       - '.github/scripts/dual-emulator-test.py'
       - '.github/scripts/analyze-mirror-frames.py'
