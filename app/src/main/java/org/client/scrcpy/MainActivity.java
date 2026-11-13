@@ -317,6 +317,17 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         sendCommands = new SendCommands();
 
         startButton.setOnClickListener(v -> {
+            final EditText wakeHostField = findViewById(R.id.editText_wake_host);
+            final EditText wakeKeyField = findViewById(R.id.editText_wake_key);
+            final String wakeHostText = wakeHostField == null ? "" : wakeHostField.getText().toString().trim();
+            final String wakeKeyText = wakeKeyField == null ? "" : wakeKeyField.getText().toString().trim();
+            if (TextUtils.isEmpty(wakeHostText) != TextUtils.isEmpty(wakeKeyText)) {
+                Toast.makeText(this, R.string.wake_lan_incomplete, Toast.LENGTH_LONG).show();
+                return;
+            }
+            getSharedPreferences(WakeLanService.PREF, MODE_PRIVATE).edit()
+                    .putString("viewer_host", wakeHostText)
+                    .putString("viewer_code", wakeKeyText).apply();
             stopStatusMonitor();
             // 启动连接前先释放上一次的 USB/scrcpy 会话（停止服务、关闭 usbAdb、
             // 释放 7008 与 USB 设备），避免横屏/反复连接后授权丢失或 openDevice 失败
@@ -359,6 +370,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         });
 
         get_saved_preferences();
+        initLanWakeControls();
 
         EditText editText = findViewById(R.id.editText_server_host);
 
@@ -1236,6 +1248,29 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             // the owner must enable and authorize it again.
             Progress.showDialog(MainActivity.this, getString(R.string.reconnecting_authorized_device));
             ThreadUtils.workPost(() -> {
+                android.content.SharedPreferences wakeSettings = getSharedPreferences(
+                        WakeLanService.PREF, MODE_PRIVATE);
+                String wakeHost = wakeSettings.getString("viewer_host", "");
+                String wakeCode = wakeSettings.getString("viewer_code", "");
+                if (!TextUtils.isEmpty(wakeHost) && !TextUtils.isEmpty(wakeCode)) {
+                    ThreadUtils.post(() -> Progress.showDialog(MainActivity.this,
+                            getString(R.string.wake_lan_requesting)));
+                    String failure = WakeLanClient.request(wakeHost, wakeCode);
+                    if (failure != null) {
+                        SessionLog.i("Authenticated LAN wake request failed: " + failure);
+                        ThreadUtils.post(() -> {
+                            Progress.closeDialog();
+                            if (!isFinishing()) {
+                                Toast.makeText(context, failure, Toast.LENGTH_LONG).show();
+                                startStatusMonitor();
+                            }
+                        });
+                        return;
+                    }
+                    SessionLog.i("Authenticated LAN wake request acknowledged; connecting ADB");
+                    ThreadUtils.post(() -> Progress.showDialog(MainActivity.this,
+                            getString(R.string.wake_lan_accepted)));
+                }
                 boolean adbReady = AdbHelper.isDeviceOnline(context, serverHost, serverPort);
                 if (!adbReady) {
                     SessionLog.i("ADB preflight: reconnect unavailable, restarting local ADB daemon");
@@ -1304,6 +1339,46 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             startStatusMonitor();
             connectExitExt();
         }
+    }
+
+    private void initLanWakeControls() {
+        final Button on = findViewById(R.id.button_wake_listen_on);
+        final Button off = findViewById(R.id.button_wake_listen_off);
+        final EditText hostField = findViewById(R.id.editText_wake_host);
+        final EditText keyField = findViewById(R.id.editText_wake_key);
+        android.content.SharedPreferences prefs = getSharedPreferences(
+                WakeLanService.PREF, MODE_PRIVATE);
+        if (hostField != null) hostField.setText(prefs.getString("viewer_host", ""));
+        if (keyField != null) keyField.setText(prefs.getString("viewer_code", ""));
+        updateLanReceiverCode();
+        if (on != null) {
+            on.setOnClickListener(v -> {
+                try {
+                    WakeLanService.startByOwner(this);
+                    new Handler(Looper.getMainLooper()).postDelayed(
+                            this::updateLanReceiverCode, 900);
+                } catch (RuntimeException error) {
+                    Log.w("WakeLan", "Could not start owner-enabled receiver", error);
+                    Toast.makeText(this, R.string.wake_lan_start_failed,
+                            Toast.LENGTH_LONG).show();
+                }
+            });
+        }
+        if (off != null) {
+            off.setOnClickListener(v -> {
+                WakeLanService.stopByOwner(this);
+                new Handler(Looper.getMainLooper()).postDelayed(
+                        this::updateLanReceiverCode, 400);
+            });
+        }
+    }
+
+    private void updateLanReceiverCode() {
+        TextView label = findViewById(R.id.wake_lan_code_label);
+        if (label == null) return;
+        String code = WakeLanService.currentCode(this);
+        label.setText(TextUtils.isEmpty(code) ? getString(R.string.wake_lan_off)
+                : getString(R.string.wake_lan_code_prefix, code));
     }
 
     private static final int WAKE_NOTIFICATION_PERMISSION_REQUEST = 7231;

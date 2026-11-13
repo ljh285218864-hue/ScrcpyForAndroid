@@ -409,6 +409,75 @@
                     android:textColor="@color/white"
                     android:textSize="15sp" />
 
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:padding="10dp"
+                    android:text="@string/wake_lan_section"
+                    android:textColor="@color/white"
+                    android:textSize="15sp" />
+
+                <Button
+                    android:id="@+id/button_wake_listen_on"
+                    android:layout_width="match_parent"
+                    android:layout_height="50dp"
+                    android:background="@drawable/btn_selector"
+                    android:text="@string/wake_lan_start"
+                    android:textColor="@color/white" />
+
+                <Button
+                    android:id="@+id/button_wake_listen_off"
+                    android:layout_width="match_parent"
+                    android:layout_height="50dp"
+                    android:layout_marginTop="4dp"
+                    android:background="@drawable/btn_selector"
+                    android:text="@string/wake_lan_stop"
+                    android:textColor="@color/white" />
+
+                <TextView
+                    android:id="@+id/wake_lan_code_label"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:padding="10dp"
+                    android:text="@string/wake_lan_off"
+                    android:textColor="@color/white"
+                    android:textIsSelectable="true"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:padding="10dp"
+                    android:text="@string/wake_lan_viewer_section"
+                    android:textColor="@color/white"
+                    android:textSize="14sp" />
+
+                <EditText
+                    android:id="@+id/editText_wake_host"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:background="@drawable/edit_background"
+                    android:hint="@string/wake_lan_host_hint"
+                    android:inputType="textUri"
+                    android:importantForAutofill="no"
+                    android:padding="10dp"
+                    android:textColor="@color/white"
+                    android:textColorHint="#A8AAB5" />
+
+                <EditText
+                    android:id="@+id/editText_wake_key"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="6dp"
+                    android:background="@drawable/edit_background"
+                    android:hint="@string/wake_lan_key_hint"
+                    android:inputType="textVisiblePassword"
+                    android:importantForAutofill="no"
+                    android:padding="10dp"
+                    android:textColor="@color/white"
+                    android:textColorHint="#A8AAB5" />
+
                 <Button
                     android:id="@+id/button_test_wake"
                     android:layout_width="match_parent"

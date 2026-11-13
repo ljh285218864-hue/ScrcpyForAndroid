@@ -14,6 +14,19 @@
     <string name="hint_video_encoder">e.g. c2.android.avc.encoder (empty = default)</string>
     <string name="label_x">x</string>
     <string name="action_start">开始观看屏幕</string>
+
+    <string name="wake_lan_section">A手机：明确开启局域网测试接收，收到请求会显示通知（不自动开启屏幕采集）</string>
+    <string name="wake_lan_start">A手机 · 开启接收</string>
+    <string name="wake_lan_stop">A手机 · 停止接收</string>
+    <string name="wake_lan_off">接收已关闭，无有效测试密钥</string>
+    <string name="wake_lan_code_prefix">本机测试密钥：%1$s</string>
+    <string name="wake_lan_start_failed">无法启动接收服务，请检查应用通知及系统后台限制</string>
+    <string name="wake_lan_viewer_section">B手机：填写A的局域网接收地址与临时密钥（选填，不填则沿用旧版ADB直连）</string>
+    <string name="wake_lan_host_hint">A 接收地址，如 192.168.1.5:10055</string>
+    <string name="wake_lan_key_hint">A 的32位测试密钥</string>
+    <string name="wake_lan_incomplete">接收地址和测试密钥必须同时填写</string>
+    <string name="wake_lan_requesting">正在向A发送验证过的唤醒请求…</string>
+    <string name="wake_lan_accepted">A已确认接收请求，正在连接已授权ADB…</string>
     <string name="action_test_wake">测试本机唤醒接收</string>
     <string name="wake_notification_title">唤醒请求测试</string>
     <string name="wake_notification_message">接收模块已收到本机测试请求，点击打开屏幕同步。</string>

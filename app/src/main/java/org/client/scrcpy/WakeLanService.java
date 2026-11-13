@@ -139,7 +139,7 @@ public final class WakeLanService extends Service {
             BufferedWriter out = new BufferedWriter(new OutputStreamWriter(
                     socket.getOutputStream(), StandardCharsets.US_ASCII));
             String hello = in.readLine();
-            if (hello == null || hello.length() != 23
+            if (hello == null || hello.length() != 22
                     || !hello.startsWith("HELLO ")
                     || !WakeAuth.isHex(hello.substring(6), 16)) {
                 out.write("DENIED\n");
