@@ -48,5 +48,47 @@ def main():
         sys.exit(1)
     print("PASS: all three screen changes appeared on B with correct content.")
 
+    # Each stress screenshot on B must resemble its simultaneous A screenshot
+    # more closely than A's PREVIOUS, different screen. A and B are aligned
+    # 1080x2340 emulators. Screenshots alone do not establish exact latency.
+    stress_results = []
+    for i in range(1, 11):
+        a_path = directory / f"a-stress-{i:02d}.png"
+        b_path = directory / f"b-stress-{i:02d}.png"
+        if not a_path.is_file() or not b_path.is_file():
+            raise RuntimeError(f"Missing dynamic stress pair {i}")
+        a_image = Image.open(a_path).convert("RGB").crop((0, 120, 1080, 2250))
+        b_image = Image.open(b_path).convert("RGB").crop((0, 120, 1080, 2250))
+        if a_image.size != b_image.size:
+            raise RuntimeError(f"Stress pair {i}: mismatched image dimensions")
+        matching_error = round(sum(ImageStat.Stat(ImageChops.difference(a_image, b_image)).mean) / 3, 3)
+        if i > 1:
+            previous_a = directory / f"a-stress-{i-1:02d}.png"
+            previous_image = Image.open(previous_a).convert("RGB").crop((0, 120, 1080, 2250))
+            stale_error = round(sum(ImageStat.Stat(ImageChops.difference(previous_image, b_image)).mean) / 3, 3)
+        else:
+            stale_error = None
+        margin = round(stale_error - matching_error, 3) if stale_error is not None else None
+        ok = True if i == 1 else margin >= 0.8
+        stress_results.append({
+            "stage": i, "match_error": matching_error,
+            "stale_error": stale_error, "margin": margin, "pass": ok
+        })
+        print(f"Stress {i:02d}: same MAE={matching_error}, previous MAE={stale_error}, pass={ok}")
+
+    stress_pass = all(item["pass"] for item in stress_results)
+    stress_report = {
+        "pass": stress_pass,
+        "passed_pair_comparisons": sum(item["pass"] for item in stress_results),
+        "total_stages": len(stress_results),
+        "stages": stress_results,
+        "limitations": "This tests screen content freshness at ~25s intervals, not sub-second latency."
+    }
+    (directory / "stress-fidelity-report.json").write_text(json.dumps(stress_report, indent=2)+"\\n",encoding="utf-8")
+    if not stress_pass:
+        print("FAIL: B failed to mirror one or more current A pages in stress test", file=sys.stderr)
+        sys.exit(1)
+    print("PASS: all 10 read-only stress screenshot pairs matched their A-side content.")
+
 if __name__ == "__main__":
     main()

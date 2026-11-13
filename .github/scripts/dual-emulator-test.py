@@ -432,6 +432,37 @@ try:
             raise RuntimeError(f"Invalid screenshot while monitoring sample {sample}")
         record(f"Viewer stability +{sample * 20}s: B process alive, A frame={a_bytes} bytes, B frame={b_bytes} bytes")
     record("PASS: B viewer process stayed active for 60 seconds with screenshots from both virtual phones")
+
+    # Approximately four additional minutes of live screen mirroring, added
+    # to the preceding one-minute stable session. All screen changes are
+    # generated LOCALLY on emulator A by the authorized test harness.
+    # Nothing is injected by the B viewer or the mirrored video surface.
+    record("Starting 10-stage dynamic read-only screen continuity stress test")
+    test_begin = time.monotonic()
+    dynamic_stages = [
+        ("settings", "android.settings.SETTINGS"),
+        ("wifi", "android.settings.WIFI_SETTINGS"),
+        ("display", "android.settings.DISPLAY_SETTINGS"),
+    ]
+    for idx in range(10):
+        label, action = dynamic_stages[idx % len(dynamic_stages)]
+        result = shell(A, "am", "start", "-W", "-a", action, timeout=45)
+        if result.returncode != 0 or "Error:" in result.stdout:
+            raise RuntimeError(f"Stress step {idx+1}: A failed to open {label}")
+        time.sleep(8)
+        a_name = f"a-stress-{idx+1:02d}.png"
+        b_name = f"b-stress-{idx+1:02d}.png"
+        screenshot(A, a_name)
+        screenshot(B, b_name)
+        if (OUT / a_name).stat().st_size < 3000 or (OUT / b_name).stat().st_size < 3000:
+            raise RuntimeError(f"Stress step {idx+1}: missing valid A/B frames")
+        time.sleep(17)
+        if not shell(B, "pidof", PKG, timeout=15).stdout.strip():
+            raise RuntimeError(f"Stress step {idx+1}: viewer process stopped")
+        record(f"Read-only stress step {idx+1}/10: A={label}, B alive, images saved")
+    elapsed = round(time.monotonic() - test_begin, 1)
+    record(f"PASS: 10 A-side screen transitions with B staying alive for {elapsed}s")
+    record("Image fidelity is independently assessed in analyze-mirror-frames.py.")
 except Exception as err:
     record("FAIL: " + repr(err))
     collect()
