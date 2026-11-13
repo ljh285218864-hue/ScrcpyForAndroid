@@ -330,11 +330,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                 connectScrcpyServer(serverAdr);
             }
         });
-        // No reboot/power-off controls in this read-only application.\n        Button shareLogButton = findViewById(R.id.button_share_log);
+        // No reboot/power-off controls in this read-only application.
+        Button shareLogButton = findViewById(R.id.button_share_log);
         if (shareLogButton != null) {
             shareLogButton.setOnClickListener(v -> shareSessionLog());
         }
-        // No ADB terminal or shell is reachable from the viewer UI.\n        btnMoreSettings.setOnClickListener(v -> {
+        // No ADB terminal or shell is reachable from the viewer UI.
+        btnMoreSettings.setOnClickListener(v -> {
             AutoTransition autoTransition = new AutoTransition();
             TransitionManager.beginDelayedTransition(scrollView, autoTransition);
 
@@ -1219,8 +1221,35 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             int serverPort = Integer.parseInt(serverInfo[1]);
             int localForwardPort = Scrcpy.LOCAL_FORWART_PORT;
 
-            Progress.showDialog(MainActivity.this, getString(R.string.please_wait));
+            // Read-only viewer: first restore the previously authorized ADB
+            // connection. This does NOT wake/unlock the remote screen or launch
+            // an app on the other phone. If debugging was disabled by Android,
+            // the owner must enable and authorize it again.
+            Progress.showDialog(MainActivity.this, getString(R.string.reconnecting_authorized_device));
             ThreadUtils.workPost(() -> {
+                boolean adbReady = AdbHelper.isDeviceOnline(context, serverHost, serverPort);
+                if (!adbReady) {
+                    SessionLog.i("ADB preflight: reconnect unavailable, restarting local ADB daemon");
+                    AdbHelper.restartAdb();
+                    try {
+                        AdbHelper.waitForRunning(5);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                    adbReady = AdbHelper.isDeviceOnline(context, serverHost, serverPort);
+                }
+                if (!adbReady) {
+                    SessionLog.i("ADB preflight: target still unavailable or not authorized");
+                    ThreadUtils.post(() -> {
+                        Progress.closeDialog();
+                        if (!MainActivity.this.isFinishing()) {
+                            Toast.makeText(context, R.string.adb_reconnect_failed, Toast.LENGTH_LONG).show();
+                            startStatusMonitor();
+                        }
+                    });
+                    return;
+                }
+                SessionLog.i("ADB preflight: authorized device is online; launching read-only stream");
                 AdbHelper.writeAssetsJarServer(App.mContext);
                 if (autoResolutionEnabled) {
                     ResolutionHelper.AutoResolution autoResolution =

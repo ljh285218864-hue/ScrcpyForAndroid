@@ -55,6 +55,8 @@
 
     <string name="connect_tips">当前仅支持已获授权的 ADB 连接。跨网络同步功能尚未启用。</string>
     <string name="read_only_notice">仅观看屏幕，不支持点击、滑动、按键或远程命令。连接前需在被观看手机上完成系统授权；异地连接尚未启用。</string>
+    <string name="reconnecting_authorized_device">正在恢复已授权连接…</string>
+    <string name="adb_reconnect_failed">连接未恢复。请检查对方设备网络和无线调试是否开启，并确认此前已完成授权。</string>
     <string name="please_wait">Connecting …</string>
 
     <string name="connect_faild">Connection failed</string>
