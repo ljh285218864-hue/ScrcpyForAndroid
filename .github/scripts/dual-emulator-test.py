@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -246,9 +247,14 @@ try:
     if not tap(B, start):
         raise RuntimeError("B Start control missing from UI hierarchy")
     record("B Start button tapped with soft keyboard dismissed; waiting for local ADB scrcpy connection")
+    # The viewer now checks authorization BEFORE starting the scrcpy server.
+    # Simulate the consenting owner promptly in the synthetic A emulator;
+    # otherwise the preflight may time out while the test waits to click Allow.
+    permission_thread = threading.Thread(target=simulate_owner_approval, daemon=True)
+    permission_thread.start()
     time.sleep(5)
     screenshot(B, "b-five-seconds-after-start.png")
-    simulate_owner_approval()
+    permission_thread.join(timeout=40)
     time.sleep(25)
     collect()
     log = (OUT / "b-logcat.txt").read_text(encoding="utf-8", errors="replace")
