@@ -86,6 +86,14 @@ jobs:
           assert 'pending.decision.await' in service and 'pending.accepted' in service
           assert 'PairedDeviceStore.save' in service and 'PairLanClient.pair' in m
           assert 'WakeLanClient.request' in m
+          assert 'PairedDeviceStore.updateAddress' in service
+          assert 'pending.accepted' in service and 'PAIR_WINDOW_MS' in service
+          # Regression: earlier PAIR responses wrote literal backslash+n to the wire,
+          # causing Android B to hang indefinitely in BufferedReader.readLine().
+          import re as _re
+          for frame in _re.findall(r'out\\.write\\([^;]+;', service):
+              if chr(92) * 2 + 'n' in frame:
+                  raise AssertionError("Pairing protocol writes a literal backslash+n")
           assert 'connectScrcpyServer(serverAdr)' in m
           print("PASS: pairing UI and owner consent gate precede read-only scrcpy")
           PY
