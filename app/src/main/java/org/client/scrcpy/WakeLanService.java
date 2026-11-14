@@ -23,6 +23,9 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 /**
  * User-enabled LAN wake receiver for read-only mirroring TESTS.
@@ -39,6 +42,46 @@ public final class WakeLanService extends Service {
     public static final String ACTION_START = "org.client.scrcpy.lan.START";
     public static final String ACTION_STOP = "org.client.scrcpy.lan.STOP";
     private static final int FGS_ID = 8451;
+    private static final long PAIR_WINDOW_MS = 3 * 60 * 1000L;
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+    private static final Object PAIR_LOCK = new Object();
+    private static PendingPair pendingPair;
+
+    public static final class PendingPair {
+        public final String id;
+        public final String remoteAddress;
+        private final CountDownLatch decision = new CountDownLatch(1);
+        private volatile boolean accepted;
+        PendingPair(String id, String remoteAddress) {
+            this.id = id;
+            this.remoteAddress = remoteAddress;
+        }
+    }
+
+    public static String openPairingWindow(Context context) {
+        String code = String.format(java.util.Locale.ROOT, "%06d",
+                SECURE_RANDOM.nextInt(1_000_000));
+        context.getSharedPreferences(PREF, MODE_PRIVATE).edit()
+                .putString("pair_short_code", code)
+                .putLong("pair_expires", System.currentTimeMillis() + PAIR_WINDOW_MS)
+                .apply();
+        return code;
+    }
+
+    public static PendingPair getPendingPair() {
+        synchronized (PAIR_LOCK) { return pendingPair; }
+    }
+
+    public static void decidePairing(String id, boolean accept) {
+        synchronized (PAIR_LOCK) {
+            if (pendingPair == null || !pendingPair.id.equals(id)) return;
+            pendingPair.accepted = accept;
+            pendingPair.decision.countDown();
+        }
+    }
+
+    private int rejectedPairAttempts = 0;
+    private String lastPairCode = "";
     private static final int REQUEST_ID = 8452;
     private static final String CHANNEL = "screen_mirror_active_listener";
     private static final String REQ_CHANNEL = "screen_mirror_incoming_request";
@@ -75,6 +118,8 @@ public final class WakeLanService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
+            getSharedPreferences(PREF, MODE_PRIVATE).edit()
+                    .remove("pair_short_code").remove("pair_expires").apply();
             closeListener();
             getSharedPreferences(PREF, MODE_PRIVATE).edit().remove(KEY_CODE).apply();
             stopForeground(STOP_FOREGROUND_REMOVE);
@@ -144,6 +189,10 @@ public final class WakeLanService extends Service {
             BufferedWriter out = new BufferedWriter(new OutputStreamWriter(
                     socket.getOutputStream(), StandardCharsets.US_ASCII));
             String hello = in.readLine();
+            if (hello != null && hello.startsWith("PAIR ")) {
+                handlePairing(socket, hello, out);
+                return;
+            }
             if (hello == null || hello.length() != 22
                     || !hello.startsWith("HELLO ")
                     || !WakeAuth.isHex(hello.substring(6), 16)) {
@@ -157,9 +206,15 @@ public final class WakeLanService extends Service {
             String response = in.readLine();
             String nonce = hello.substring(6);
             String expected = WakeAuth.mac(code, nonce, challenge);
+            PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
+            boolean acceptedByPeer = peer != null
+                    && socket.getInetAddress().getHostAddress().equals(peer.host)
+                    && WakeAuth.verify(response != null && response.startsWith("AUTH ")
+                                ? response.substring(5) : null,
+                            WakeAuth.mac(peer.secret, nonce, challenge));
             if (response == null || response.length() != 69
                     || !response.startsWith("AUTH ")
-                    || !WakeAuth.verify(response.substring(5), expected)) {
+                    || !(WakeAuth.verify(response.substring(5), expected) || acceptedByPeer)) {
                 out.write("DENIED\n");
                 out.flush();
                 return;
@@ -173,6 +228,72 @@ public final class WakeLanService extends Service {
         } catch (Exception error) {
             Log.w(TAG, "Wake request rejected or interrupted");
         }
+    }
+
+    private void handlePairing(Socket client, String command, BufferedWriter out)
+            throws Exception {
+        String[] parts = command.split(" ");
+        android.content.SharedPreferences prefs = getSharedPreferences(PREF, MODE_PRIVATE);
+        String activeCode = prefs.getString("pair_short_code", "");
+        long expiry = prefs.getLong("pair_expires", 0L);
+        if (!activeCode.equals(lastPairCode)) {
+            lastPairCode = activeCode;
+            rejectedPairAttempts = 0;
+        }
+        boolean validFormat = parts.length == 3 && parts[1].matches("[0-9]{6}")
+                && WakeAuth.isHex(parts[2], 16);
+        boolean validCode = validFormat
+                && WakeAuth.verify(parts[1], activeCode)
+                && System.currentTimeMillis() < expiry
+                && rejectedPairAttempts < 5;
+        if (!validCode) {
+            rejectedPairAttempts++;
+            out.write("DENIED\\n");
+            out.flush();
+            return;
+        }
+        PendingPair pending = new PendingPair(parts[2], client.getInetAddress().getHostAddress());
+        synchronized (PAIR_LOCK) {
+            if (pendingPair != null) {
+                out.write("BUSY\\n");
+                out.flush();
+                return;
+            }
+            pendingPair = pending;
+        }
+        Log.i(TAG, "Owner approval required for new app pairing");
+        notifyPairingPending();
+        try {
+            // A must visibly approve; merely knowing a six-digit code
+            // cannot grant a long-lived viewing credential.
+            boolean replied = pending.decision.await(50, TimeUnit.SECONDS);
+            if (!replied || !pending.accepted || !running) {
+                out.write("DENIED\\n");
+                out.flush();
+                return;
+            }
+            String sharedSecret = WakeAuth.randomHex(16);
+            PairedDeviceStore.save(this, "已配对手机",
+                    pending.remoteAddress, sharedSecret, 0);
+            prefs.edit().remove("pair_short_code").remove("pair_expires").apply();
+            out.write("PAIRED " + pending.id + " " + sharedSecret + "\\n");
+            out.flush();
+            Log.i(TAG, "Owner approved app peer; ADB consent remains separate");
+        } finally {
+            synchronized (PAIR_LOCK) {
+                if (pendingPair == pending) pendingPair = null;
+            }
+        }
+    }
+
+    private void notifyPairingPending() {
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) return;
+        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (manager != null) manager.notify(REQUEST_ID + 1, notification(
+                "新的配对请求需要确认", "请打开屏幕同步，核对并批准对方手机的配对请求",
+                REQ_CHANNEL, false));
     }
 
     private void prepareChannels() {
@@ -234,6 +355,13 @@ public final class WakeLanService extends Service {
     }
 
     private void closeListener() {
+        synchronized (PAIR_LOCK) {
+            if (pendingPair != null) {
+                pendingPair.accepted = false;
+                pendingPair.decision.countDown();
+                pendingPair = null;
+            }
+        }
         if (localNsdManager != null && localNsdRegistration != null) {
             try { localNsdManager.unregisterService(localNsdRegistration); }
             catch (RuntimeException ignored) { }
