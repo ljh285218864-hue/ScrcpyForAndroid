@@ -218,9 +218,14 @@ public final class WakeLanService extends Service {
                 PairedDeviceStore.updateAddress(this,
                         socket.getInetAddress().getHostAddress());
             }
+            // After a persistent pairing exists, disable the old temporary
+            // test token. Only the saved peer's random long token may wake us.
+            boolean legacyAccepted = peer == null && response != null
+                    && response.startsWith("AUTH ")
+                    && WakeAuth.verify(response.substring(5), expected);
             if (response == null || response.length() != 69
                     || !response.startsWith("AUTH ")
-                    || !(WakeAuth.verify(response.substring(5), expected) || acceptedByPeer)) {
+                    || !(legacyAccepted || acceptedByPeer)) {
                 out.write("DENIED\n");
                 out.flush();
                 return;
