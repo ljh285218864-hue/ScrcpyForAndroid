@@ -399,9 +399,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         Button openDebugSettings = findViewById(R.id.button_open_wireless_debugging);
         final boolean isXiaomiFamily = XiaomiSettingsSupport.isXiaomiFamily(
                 Build.MANUFACTURER, Build.BRAND);
+        final boolean isVivoFamily = VivoSettingsSupport.isVivoFamily(
+                Build.MANUFACTURER, Build.BRAND);
         if (openDebugSettings != null) {
             if (isXiaomiFamily) {
                 openDebugSettings.setText(R.string.action_open_xiaomi_developer_options);
+            } else if (isVivoFamily) {
+                openDebugSettings.setText(R.string.action_open_vivo_developer_options);
             }
             openDebugSettings.setOnClickListener(v -> openWirelessDebugSettings());
         }
@@ -409,6 +413,16 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (xiaomiGuide != null) {
             xiaomiGuide.setVisibility(isXiaomiFamily ? View.VISIBLE : View.GONE);
             xiaomiGuide.setOnClickListener(v -> showXiaomiDeveloperGuide());
+        }
+        Button vivoGuide = findViewById(R.id.button_vivo_debug_help);
+        if (vivoGuide != null) {
+            vivoGuide.setVisibility(isVivoFamily ? View.VISIBLE : View.GONE);
+            vivoGuide.setOnClickListener(v -> showVivoDeveloperGuide());
+        }
+        Button vivoBackground = findViewById(R.id.button_vivo_background_settings);
+        if (vivoBackground != null) {
+            vivoBackground.setVisibility(isVivoFamily ? View.VISIBLE : View.GONE);
+            vivoBackground.setOnClickListener(v -> showVivoBackgroundGuide());
         }
 
         EditText editText = findViewById(R.id.editText_server_host);
@@ -1405,6 +1419,17 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             showXiaomiDeveloperGuide();
             return;
         }
+        if (VivoSettingsSupport.isVivoFamily(Build.MANUFACTURER, Build.BRAND)) {
+            // OriginOS / iQOO: use the public Developer Options entry instead of
+            // undocumented vendor activities which differ by model and update.
+            if (launchDebugSettings(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) {
+                Toast.makeText(this, R.string.vivo_debug_developer_opened,
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+            showVivoDeveloperGuide();
+            return;
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
                 && launchDebugSettings("android.settings.WIRELESS_DEBUGGING_SETTINGS")) {
             return;
@@ -1444,6 +1469,51 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                             && !launchDebugSettings(Settings.ACTION_SETTINGS)) {
                         Toast.makeText(this, R.string.wireless_debugging_settings_unavailable,
                                 Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    /** Instructions for vivo / iQOO users; all switches remain user controlled. */
+    private void showVivoDeveloperGuide() {
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.vivo_debug_help_title)
+                .setMessage(R.string.vivo_debug_help_message)
+                .setPositiveButton(R.string.vivo_debug_open_developer, (dialog, which) -> {
+                    if (!launchDebugSettings(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+                            && !launchDebugSettings(Settings.ACTION_SETTINGS)) {
+                        Toast.makeText(this, R.string.wireless_debugging_settings_unavailable,
+                                Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNeutralButton(R.string.vivo_debug_open_about_phone, (dialog, which) -> {
+                    if (!launchDebugSettings(Settings.ACTION_DEVICE_INFO_SETTINGS)
+                            && !launchDebugSettings(Settings.ACTION_SETTINGS)) {
+                        Toast.makeText(this, R.string.wireless_debugging_settings_unavailable,
+                                Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    /** Opens only this application's system details, never changes power settings. */
+    private void showVivoBackgroundGuide() {
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.vivo_background_title)
+                .setMessage(R.string.vivo_background_message)
+                .setPositiveButton(R.string.vivo_background_open_details, (dialog, which) -> {
+                    Intent details = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                    details.setData(Uri.parse("package:" + getPackageName()));
+                    try {
+                        startActivity(details);
+                    } catch (ActivityNotFoundException | SecurityException error) {
+                        Log.d("Scrcpy", "Application details unavailable", error);
+                        if (!launchDebugSettings(Settings.ACTION_SETTINGS)) {
+                            Toast.makeText(this, R.string.vivo_background_settings_unavailable,
+                                    Toast.LENGTH_LONG).show();
+                        }
                     }
                 })
                 .setNegativeButton(android.R.string.cancel, null)
