@@ -22,6 +22,7 @@ import java.util.Map;
 public final class LanDeviceDiscovery {
     public static final String WAKE_TYPE = "_screenwake._tcp.";
     private static final String ADB_TYPE = "_adb-tls-connect._tcp.";
+    private static final String ADB_PAIR_TYPE = "_adb-tls-pairing._tcp.";
     private static final String TAG = "LanDiscovery";
     private final NsdManager nsd;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -29,6 +30,7 @@ public final class LanDeviceDiscovery {
     private final Listener listener;
     private NsdManager.DiscoveryListener wakeListener;
     private NsdManager.DiscoveryListener adbListener;
+    private NsdManager.DiscoveryListener adbPairListener;
     private WifiManager.MulticastLock multicastLock;
     private boolean active;
 
@@ -42,12 +44,14 @@ public final class LanDeviceDiscovery {
         public final String address;
         public final int wakePort;
         public final int adbPort;
+        public final int pairingPort;
 
-        Device(String name, String address, int wakePort, int adbPort) {
+        Device(String name, String address, int wakePort, int adbPort, int pairingPort) {
             this.name = name;
             this.address = address;
             this.wakePort = wakePort;
             this.adbPort = adbPort;
+            this.pairingPort = pairingPort;
         }
 
         public String label() {
@@ -80,6 +84,7 @@ public final class LanDeviceDiscovery {
         }
         wakeListener = makeListener(WAKE_TYPE);
         adbListener = makeListener(ADB_TYPE);
+        adbPairListener = makeListener(ADB_PAIR_TYPE);
         try {
             nsd.discoverServices(WAKE_TYPE, NsdManager.PROTOCOL_DNS_SD, wakeListener);
         } catch (RuntimeException exception) {
@@ -91,6 +96,11 @@ public final class LanDeviceDiscovery {
         } catch (RuntimeException exception) {
             Log.w(TAG, "ADB discovery could not start", exception);
             listener.onError("ADB 服务自动搜索不可用，可能仍需首次无线调试授权");
+        }
+        try {
+            nsd.discoverServices(ADB_PAIR_TYPE, NsdManager.PROTOCOL_DNS_SD, adbPairListener);
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "ADB pairing discovery unavailable", exception);
         }
     }
 
@@ -136,8 +146,11 @@ public final class LanDeviceDiscovery {
         final String name = isWake ? info.getServiceName() :
                 previous == null ? "" : previous.name;
         final int wakePort = isWake ? info.getPort() : previous == null ? 0 : previous.wakePort;
-        final int adbPort = isWake ? previous == null ? 0 : previous.adbPort : info.getPort();
-        discovered.put(address, new Device(name, address, wakePort, adbPort));
+        final boolean isAdb = ADB_TYPE.equals(type);
+        final boolean isPairing = ADB_PAIR_TYPE.equals(type);
+        final int adbPort = isAdb ? info.getPort() : previous == null ? 0 : previous.adbPort;
+        final int pairingPort = isPairing ? info.getPort() : previous == null ? 0 : previous.pairingPort;
+        discovered.put(address, new Device(name, address, wakePort, adbPort, pairingPort));
         listener.onChanged(available());
     }
 
@@ -156,8 +169,11 @@ public final class LanDeviceDiscovery {
         catch (RuntimeException ignored) { }
         try { if (adbListener != null) nsd.stopServiceDiscovery(adbListener); }
         catch (RuntimeException ignored) { }
+        try { if (adbPairListener != null) nsd.stopServiceDiscovery(adbPairListener); }
+        catch (RuntimeException ignored) { }
         wakeListener = null;
         adbListener = null;
+        adbPairListener = null;
         if (multicastLock != null && multicastLock.isHeld()) {
             try { multicastLock.release(); } catch (RuntimeException ignored) { }
         }
