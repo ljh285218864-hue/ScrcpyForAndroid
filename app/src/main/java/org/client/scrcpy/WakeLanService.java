@@ -247,7 +247,7 @@ public final class WakeLanService extends Service {
         // This phase deliberately supports one mutually trusted device.
         // Replacing an existing owner-approved peer requires explicit unpairing.
         if (PairedDeviceStore.load(this) != null) {
-            out.write("DENIED\\n");
+            out.write("DENIED\n");
             out.flush();
             return;
         }
