@@ -1,0 +1,53 @@
+workflows:
+  pairing-android15-emulator:
+    name: Android 15 双虚拟机配对与观看测试
+    instance_type: linux_x2
+    max_build_duration: 120
+    environment:
+      ubuntu: 24.04
+      java: 17
+      vars:
+        ANDROID_TEST_API: "35"
+        ANDROID_TEST_IMAGE_TARGET: "google_apis_playstore"
+    scripts:
+      - name: 检查模拟器和测试脚本
+        script: |
+          set -euo pipefail
+          python3 -m py_compile .github/scripts/pairing-dual-emulator-test.py
+          command -v adb
+          command -v emulator
+          command -v avdmanager
+          emulator -accel-check || true
+          avdmanager list avd
+          test -e /dev/kvm || { echo 'Codemagic Linux does not expose KVM: emulator test cannot run here'; exit 1; }
+
+      - name: 安装 Android SDK / NDK 与编译工具
+        script: |
+          set -euo pipefail
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;26.3.11579264"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build cmake patch bison flex
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/local.properties"
+
+      - name: 构建 x86_64 安卓测试 APK
+        script: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleScrcpyDebug -PlibadbAbis=x86_64
+          ls -lh app/build/outputs/apk/scrcpy/debug/
+
+      - name: 启动 A 模拟器并完成 A/B 配对、观看与重新连接测试
+        script: |
+          set -euo pipefail
+          mkdir -p dual-emulator-results
+          # Codemagic's Linux image already includes the Android 15 emulator-35 AVD.
+          # Launch A on port 5554; the Python harness starts an isolated B on 5556.
+          nohup emulator -avd emulator-35 -port 5554 \
+            -no-window -no-snapshot -gpu swiftshader_indirect \
+            -noaudio -no-boot-anim -camera-back none \
+            > dual-emulator-results/emulator_a.log 2>&1 &
+          python3 .github/scripts/pairing-dual-emulator-test.py
+
+    artifacts:
+      - app/build/outputs/apk/scrcpy/debug/*.apk
+      - dual-emulator-results/**
