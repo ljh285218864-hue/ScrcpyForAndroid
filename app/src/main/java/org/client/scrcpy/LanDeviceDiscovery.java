@@ -8,11 +8,14 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import java.net.InetAddress;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Optional local network discovery. A advertises an owner-enabled wake listener;
@@ -33,6 +36,21 @@ public final class LanDeviceDiscovery {
     private NsdManager.DiscoveryListener adbPairListener;
     private WifiManager.MulticastLock multicastLock;
     private boolean active;
+    private final ArrayDeque<ResolveRequest> resolutionQueue = new ArrayDeque<>();
+    private final Set<String> seenServices = new HashSet<>();
+    private boolean resolving;
+    private int generation;
+
+    private static final class ResolveRequest {
+        final String type;
+        final NsdServiceInfo service;
+        final int generation;
+        ResolveRequest(String type, NsdServiceInfo service, int generation) {
+            this.type = type;
+            this.service = service;
+            this.generation = generation;
+        }
+    }
 
     public interface Listener {
         void onChanged(List<Device> devices);
@@ -78,7 +96,11 @@ public final class LanDeviceDiscovery {
             return;
         }
         active = true;
+        generation++;
         discovered.clear();
+        seenServices.clear();
+        resolutionQueue.clear();
+        resolving = false;
         if (multicastLock != null) {
             try { multicastLock.acquire(); } catch (RuntimeException ignored) { }
         }
@@ -109,24 +131,9 @@ public final class LanDeviceDiscovery {
             @Override public void onDiscoveryStarted(String type) { }
             @Override public void onServiceFound(NsdServiceInfo info) {
                 if (!active) return;
-                try {
-                    nsd.resolveService(info, new NsdManager.ResolveListener() {
-                        @Override public void onServiceResolved(NsdServiceInfo resolved) {
-                            if (!active) return;
-                            final InetAddress host = resolved.getHost();
-                            if (host == null || resolved.getPort() <= 0) return;
-                            final String address = host.getHostAddress();
-                            if (address == null || !(host.isSiteLocalAddress()
-                                    || host.isLoopbackAddress())) return;
-                            main.post(() -> putResolved(serviceType, resolved, address));
-                        }
-                        @Override public void onResolveFailed(NsdServiceInfo ignored, int code) {
-                            Log.d(TAG, "NSD resolve unavailable: " + code);
-                        }
-                    });
-                } catch (RuntimeException error) {
-                    Log.d(TAG, "NSD resolve failed", error);
-                }
+                // Legacy Android NSD allows only one outstanding resolve.
+                // Serializing all three service types avoids ALREADY_ACTIVE.
+                main.post(() -> queueResolution(serviceType, info));
             }
             @Override public void onServiceLost(NsdServiceInfo info) {
                 // Results are refreshed on every explicit user search.
@@ -137,6 +144,54 @@ public final class LanDeviceDiscovery {
             }
             @Override public void onStopDiscoveryFailed(String type, int code) { }
         };
+    }
+
+    private void queueResolution(String type, NsdServiceInfo info) {
+        if (!active) return;
+        String key = type + ":" + info.getServiceName();
+        if (!seenServices.add(key) || resolutionQueue.size() >= 64) return;
+        resolutionQueue.add(new ResolveRequest(type, info, generation));
+        resolveNext();
+    }
+
+    private void resolveNext() {
+        if (!active || resolving || resolutionQueue.isEmpty()) return;
+        final ResolveRequest request = resolutionQueue.poll();
+        if (request.generation != generation) {
+            resolveNext();
+            return;
+        }
+        resolving = true;
+        try {
+            nsd.resolveService(request.service, new NsdManager.ResolveListener() {
+                @Override public void onServiceResolved(NsdServiceInfo resolved) {
+                    main.post(() -> {
+                        if (active && generation == request.generation) {
+                            InetAddress host = resolved.getHost();
+                            if (host != null && resolved.getPort() > 0
+                                    && (host.isSiteLocalAddress() || host.isLoopbackAddress())) {
+                                putResolved(request.type, resolved, host.getHostAddress());
+                            }
+                            resolving = false;
+                            resolveNext();
+                        }
+                    });
+                }
+                @Override public void onResolveFailed(NsdServiceInfo ignored, int code) {
+                    main.post(() -> {
+                        if (active && generation == request.generation) {
+                            Log.d(TAG, "NSD resolution failed: " + code);
+                            resolving = false;
+                            resolveNext();
+                        }
+                    });
+                }
+            });
+        } catch (RuntimeException error) {
+            Log.d(TAG, "NSD resolution unavailable", error);
+            resolving = false;
+            resolveNext();
+        }
     }
 
     private void putResolved(String type, NsdServiceInfo info, String address) {
@@ -165,6 +220,10 @@ public final class LanDeviceDiscovery {
     public void stop() {
         if (!active) return;
         active = false;
+        generation++;
+        resolutionQueue.clear();
+        seenServices.clear();
+        resolving = false;
         try { if (wakeListener != null) nsd.stopServiceDiscovery(wakeListener); }
         catch (RuntimeException ignored) { }
         try { if (adbListener != null) nsd.stopServiceDiscovery(adbListener); }
