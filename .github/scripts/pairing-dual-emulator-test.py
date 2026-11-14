@@ -482,7 +482,7 @@ try:
     second_logs = adb(B, "logcat", "-d", "-v", "threadtime", timeout=30).stdout
     (OUT / "b-after-reopen-logcat.txt").write_text(second_logs, encoding="utf-8")
     screenshot(B, "b-after-reopen-view.png")
-    if not re.search(r"Handshake device=\\d+x\\d+ video=\\d+x\\d+", second_logs):
+    if not re.search(r"Handshake device=\d+x\d+ video=\d+x\d+", second_logs):
         raise RuntimeError("B did not re-establish scrcpy video after reopening the app")
     record("PASS: B restarted app and established a NEW read-only video handshake")
     collect()
