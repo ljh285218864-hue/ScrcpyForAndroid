@@ -1,0 +1,72 @@
+name: Package vivo and iQOO debug APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/package-vivo-debug.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package-debug:
+    name: Build installable Android debug APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+    steps:
+      - name: Checkout current source
+        uses: actions/checkout@v4
+
+      - name: Free build disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build patch bison flex
+          cmake --version
+          ninja --version
+
+      - name: Install Android SDK and NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;26.3.11579264"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT}}"
+          test -f "$SDK_ROOT/ndk/26.3.11579264/build/cmake/android.toolchain.cmake"
+          echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
+
+      - name: Compile read-only screen mirror debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew :app:assembleScrcpyDebug -PlibadbAbis=arm64-v8a --no-daemon --stacktrace
+          find app/build/outputs/apk/scrcpy/debug -type f -name '*.apk' -print
+          test -n "$(find app/build/outputs/apk/scrcpy/debug -type f -name '*.apk' -print -quit)"
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: vivo-iqoo-debug-apk
+          path: app/build/outputs/apk/scrcpy/debug/*.apk
+          retention-days: 14
+          if-no-files-found: error
