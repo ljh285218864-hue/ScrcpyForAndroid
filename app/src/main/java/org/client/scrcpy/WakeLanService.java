@@ -266,14 +266,14 @@ public final class WakeLanService extends Service {
                 && rejectedPairAttempts < 5;
         if (!validCode) {
             rejectedPairAttempts++;
-            out.write("DENIED\\n");
+            out.write("DENIED\n");
             out.flush();
             return;
         }
         PendingPair pending = new PendingPair(parts[2], client.getInetAddress().getHostAddress());
         synchronized (PAIR_LOCK) {
             if (pendingPair != null) {
-                out.write("BUSY\\n");
+                out.write("BUSY\n");
                 out.flush();
                 return;
             }
@@ -286,7 +286,7 @@ public final class WakeLanService extends Service {
             // cannot grant a long-lived viewing credential.
             boolean replied = pending.decision.await(50, TimeUnit.SECONDS);
             if (!replied || !pending.accepted || !running) {
-                out.write("DENIED\\n");
+                out.write("DENIED\n");
                 out.flush();
                 return;
             }
@@ -294,7 +294,7 @@ public final class WakeLanService extends Service {
             PairedDeviceStore.save(this, "已配对手机",
                     pending.remoteAddress, sharedSecret, 0);
             prefs.edit().remove("pair_short_code").remove("pair_expires").apply();
-            out.write("PAIRED " + pending.id + " " + sharedSecret + "\\n");
+            out.write("PAIRED " + pending.id + " " + sharedSecret + "\n");
             out.flush();
             Log.i(TAG, "Owner approved app peer; ADB consent remains separate");
         } finally {
