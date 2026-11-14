@@ -1653,6 +1653,14 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                             }
                             PairedDeviceStore.save(this, device.name,
                                     device.address, result.secret, device.adbPort);
+                            // Both phones explicitly opted into mutual pairing.
+                            // Start a visibly notified listener on B as well,
+                            // so A can subsequently initiate its own requests.
+                            try {
+                                WakeLanService.startByOwner(this);
+                            } catch (RuntimeException error) {
+                                Log.w("Scrcpy", "Peer paired but B receiver unavailable", error);
+                            }
                             syncPeerToViewFields(PairedDeviceStore.load(this));
                             updatePairedDeviceUi();
                             new android.app.AlertDialog.Builder(this)
@@ -1873,8 +1881,12 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         TextView label = findViewById(R.id.wake_lan_code_label);
         if (label == null) return;
         String code = WakeLanService.currentCode(this);
-        label.setText(TextUtils.isEmpty(code) ? getString(R.string.wake_lan_off)
-                : getString(R.string.wake_lan_code_prefix, code));
+        if (PairedDeviceStore.load(this) != null) {
+            label.setText(R.string.wake_lan_paired);
+        } else {
+            label.setText(TextUtils.isEmpty(code) ? getString(R.string.wake_lan_off)
+                    : getString(R.string.wake_lan_code_prefix, code));
+        }
     }
 
     private static final int WAKE_NOTIFICATION_PERMISSION_REQUEST = 7231;

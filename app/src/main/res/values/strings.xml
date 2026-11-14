@@ -79,6 +79,7 @@
     <string name="wake_lan_start">A手机 · 开启接收</string>
     <string name="wake_lan_stop">A手机 · 停止接收</string>
     <string name="wake_lan_off">接收已关闭，无有效测试密钥</string>
+    <string name="wake_lan_paired">已保存配对密钥，无需再手动输入长密钥。接收服务运行时系统会显示通知。</string>
     <string name="wake_lan_code_prefix">本机测试密钥：%1$s</string>
     <string name="wake_lan_start_failed">无法启动接收服务，请检查应用通知及系统后台限制</string>
     <string name="wake_lan_viewer_section">B手机：先点首页「自动搜索附近手机」，唤醒地址与调试端口将自动填写；测试阶段仍需填写A的密钥。</string>
