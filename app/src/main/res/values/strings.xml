@@ -21,7 +21,7 @@
     <string name="xiaomi_debug_help_button">小米 / Redmi / POCO：找不到开发者选项？</string>
     <string name="xiaomi_debug_developer_opened">小米 / 澎湃OS：在开发者选项内找到“无线调试”，由本人手动开启。</string>
     <string name="xiaomi_debug_help_title">小米手机开启无线调试</string>
-    <string name="xiaomi_debug_help_message">首次使用（澎湃OS / MIUI）：\\n\\n1. 打开“关于手机”或“我的设备”，进入“详细信息与规格 / 全部参数与信息”。\\n2. 连续点击“OS版本 / MIUI版本”约7次，按提示开启开发者选项。\\n3. 返回设置 → 更多设置 → 开发者选项 → 无线调试。\\n\\n如果仍找不到开发者选项，可在系统设置中搜索。小米安全中心清理或优化后，有时需要重新检查入口。\\n\\n无线调试必须由手机持有人开启并确认授权。</string>
+    <string name="xiaomi_debug_help_message">首次使用（澎湃OS / MIUI）：\n\n1. 打开“关于手机”或“我的设备”，进入“详细信息与规格 / 全部参数与信息”。\n2. 连续点击“OS版本 / MIUI版本”约7次，按提示开启开发者选项。\n3. 返回设置 → 更多设置 → 开发者选项 → 无线调试。\n\n如果仍找不到开发者选项，可在系统设置中搜索。小米安全中心清理或优化后，有时需要重新检查入口。\n\n无线调试必须由手机持有人开启并确认授权。</string>
     <string name="xiaomi_debug_open_developer">打开开发者选项</string>
     <string name="xiaomi_debug_open_about_phone">打开关于手机</string>
     <string name="wireless_debugging_find_in_developer_options">已打开开发者选项，请找到“无线调试”并手动开启。</string>
