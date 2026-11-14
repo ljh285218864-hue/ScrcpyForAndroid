@@ -1641,7 +1641,9 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             new android.app.AlertDialog.Builder(this)
                     .setTitle(R.string.pair_adb_required_title)
                     .setMessage(R.string.pair_adb_required_description)
-                    .setPositiveButton(R.string.pair_authorize_button,
+                    .setPositiveButton(R.string.pair_adb_connect_manual_button,
+                            (d, which) -> promptManualAdbConnectPort(peer))
+                    .setNeutralButton(R.string.pair_authorize_button,
                             (d, which) -> authorizeSystemAdb())
                     .setNegativeButton(android.R.string.cancel, null).show();
             return;
@@ -1755,6 +1757,8 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                 .setMessage(R.string.pair_adb_guide_message)
                 .setPositiveButton(R.string.pair_adb_find_port, (d, which) ->
                         discoverAdbPairingService(peer))
+                .setNeutralButton(R.string.pair_adb_manual_button, (d, which) ->
+                        promptManualSystemAdbPairing(peer))
                 .setNegativeButton(android.R.string.cancel, null).show();
     }
 
@@ -1778,6 +1782,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         });
         scan[0].start();
         pairingHandler.postDelayed(() -> {
+            // Read the unfiltered NSD snapshot: the system's pairing service may
+            // not appear in the list of app wake services.
+            for (LanDeviceDiscovery.Device device : scan[0].allDiscovered()) {
+                if (!peer.host.equals(device.address)) continue;
+                if (device.pairingPort > 0) pairPort[0] = device.pairingPort;
+                if (device.adbPort > 0) connectPort[0] = device.adbPort;
+            }
             scan[0].stop();
             Progress.closeDialog();
             if (isFinishing() || isDestroyed()) return;
@@ -1786,7 +1797,15 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                 syncPeerToViewFields(PairedDeviceStore.load(this));
             }
             if (pairPort[0] <= 0) {
-                Toast.makeText(this, R.string.pair_adb_port_missing, Toast.LENGTH_LONG).show();
+                new android.app.AlertDialog.Builder(this)
+                        .setTitle(R.string.pair_adb_required_title)
+                        .setMessage(R.string.pair_adb_port_missing)
+                        .setPositiveButton(R.string.pair_adb_manual_button,
+                                (d, which) -> promptManualSystemAdbPairing(peer))
+                        .setNeutralButton(R.string.pair_adb_find_port,
+                                (d, which) -> discoverAdbPairingService(peer))
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show();
                 return;
             }
             promptSystemAdbCode(peer.host, pairPort[0]);
@@ -1804,30 +1823,140 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                 .setTitle(R.string.pair_adb_code_title)
                 .setMessage(R.string.pair_adb_code_message)
                 .setView(systemCode)
-                .setPositiveButton(R.string.pair_submit_button, (d, selected) -> {
-                    String code = systemCode.getText().toString().trim();
-                    if (!code.matches("[0-9]{6}")) {
-                        Toast.makeText(this, R.string.pair_bad_code, Toast.LENGTH_LONG).show();
+                .setPositiveButton(R.string.pair_submit_button, (d, selected) ->
+                        pairSystemAdb(address, port, systemCode.getText().toString().trim()))
+                .setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    /** Manual fallback for ROMs/routers that block the Android ADB mDNS service. */
+    private void promptManualSystemAdbPairing(PairedDeviceStore.Peer peer) {
+        if (peer == null) return;
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        int padding = (int) (20 * getResources().getDisplayMetrics().density);
+        form.setPadding(padding, 0, padding, 0);
+        TextView instructions = new TextView(this);
+        instructions.setText(getString(R.string.pair_adb_manual_detail, peer.host));
+        form.addView(instructions);
+
+        EditText portField = new EditText(this);
+        portField.setSingleLine(true);
+        portField.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        portField.setFilters(new android.text.InputFilter[]{
+                new android.text.InputFilter.LengthFilter(5)});
+        portField.setHint(R.string.pair_adb_manual_pair_port_hint);
+        form.addView(portField);
+
+        EditText codeField = new EditText(this);
+        codeField.setSingleLine(true);
+        codeField.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        codeField.setFilters(new android.text.InputFilter[]{
+                new android.text.InputFilter.LengthFilter(6)});
+        codeField.setHint(R.string.pair_six_digits_hint);
+        form.addView(codeField);
+
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.pair_adb_code_title)
+                .setView(form)
+                .setPositiveButton(R.string.pair_submit_button, (d, which) -> {
+                    int port = parseWirelessAdbPort(portField.getText().toString());
+                    if (port <= 0) {
+                        Toast.makeText(this, R.string.pair_adb_manual_port_invalid,
+                                Toast.LENGTH_LONG).show();
                         return;
                     }
-                    Progress.showDialog(this, getString(R.string.pair_adb_running));
+                    pairSystemAdb(peer.host, port, codeField.getText().toString().trim());
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private static int parseWirelessAdbPort(String text) {
+        try {
+            int port = Integer.parseInt(text.trim());
+            return port >= 1 && port <= 65535 ? port : 0;
+        } catch (NumberFormatException error) {
+            return 0;
+        }
+    }
+
+    private void pairSystemAdb(String address, int port, String code) {
+        if (!code.matches("[0-9]{6}")) {
+            Toast.makeText(this, R.string.pair_bad_code, Toast.LENGTH_LONG).show();
+            return;
+        }
+        Progress.showDialog(this, getString(R.string.pair_adb_running));
+        ThreadUtils.workPost(() -> {
+            boolean success = false;
+            try {
+                String output = AdbHelper.adbCmd(this, "pair", address + ":" + port, code);
+                success = output != null
+                        && output.toLowerCase(java.util.Locale.ROOT)
+                                .contains("successfully paired");
+            } catch (RuntimeException error) {
+                Log.w("Scrcpy", "System ADB pairing failed", error);
+            }
+            final boolean paired = success;
+            ThreadUtils.post(() -> {
+                Progress.closeDialog();
+                if (isFinishing() || isDestroyed()) return;
+                Toast.makeText(this, paired ? R.string.pair_adb_success
+                                : R.string.pair_adb_failed, Toast.LENGTH_LONG).show();
+                if (!paired) return;
+                startLanAutoDiscovery();
+                PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
+                if (peer != null && peer.adbPort <= 0) {
+                    new android.app.AlertDialog.Builder(this)
+                            .setTitle(R.string.pair_adb_required_title)
+                            .setMessage(R.string.pair_adb_pair_next_connect)
+                            .setPositiveButton(R.string.pair_adb_connect_manual_button,
+                                    (d, which) -> promptManualAdbConnectPort(peer))
+                            .setNegativeButton(android.R.string.cancel, null).show();
+                }
+            });
+        });
+    }
+
+    /** Connection port is displayed on the wireless debugging main page,
+     * and differs from the temporary system pairing port. */
+    private void promptManualAdbConnectPort(PairedDeviceStore.Peer peer) {
+        if (peer == null) return;
+        EditText field = new EditText(this);
+        field.setSingleLine(true);
+        field.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        field.setFilters(new android.text.InputFilter[]{
+                new android.text.InputFilter.LengthFilter(5)});
+        field.setHint(R.string.pair_adb_connect_manual_hint);
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.pair_adb_connect_manual_button)
+                .setMessage(getString(R.string.pair_adb_connect_manual_detail, peer.host))
+                .setView(field)
+                .setPositiveButton(android.R.string.ok, (d, which) -> {
+                    int port = parseWirelessAdbPort(field.getText().toString());
+                    if (port <= 0) {
+                        Toast.makeText(this, R.string.pair_adb_manual_port_invalid,
+                                Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    PairedDeviceStore.updatePort(this, port);
+                    PairedDeviceStore.Peer updated = PairedDeviceStore.load(this);
+                    if (updated == null) return;
+                    syncPeerToViewFields(updated);
+                    updatePairedDeviceUi();
                     ThreadUtils.workPost(() -> {
-                        String output = AdbHelper.adbCmd(this, "pair",
-                                address + ":" + port, code);
-                        boolean success = output != null
-                                && output.toLowerCase(java.util.Locale.ROOT)
-                                        .contains("successfully paired");
+                        boolean online = AdbHelper.isDeviceOnline(this, updated.host, port);
                         ThreadUtils.post(() -> {
-                            Progress.closeDialog();
                             if (isFinishing() || isDestroyed()) return;
-                            Toast.makeText(this, success
-                                            ? R.string.pair_adb_success
-                                            : R.string.pair_adb_failed,
+                            applyStatusLed(online);
+                            Toast.makeText(this, online
+                                            ? R.string.pair_adb_connect_success
+                                            : R.string.pair_adb_connect_failed,
                                     Toast.LENGTH_LONG).show();
-                            if (success) startLanAutoDiscovery();
                         });
                     });
-                }).setNegativeButton(android.R.string.cancel, null).show();
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
     }
 
     private void initLanAutoDiscovery() {
