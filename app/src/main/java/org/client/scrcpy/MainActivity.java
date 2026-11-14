@@ -113,6 +113,9 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     private long timestamp = 0;
     private OnBackInvokedCallback backInvokedCallback;
     private LanDeviceDiscovery lanDiscovery;
+    private OneTapConnection oneTapConnection;
+    private boolean oneTapConnecting;
+    private boolean skipWakeRequestOnce;
     private List<LanDeviceDiscovery.Device> lanDevices = new ArrayList<>();
     private final Handler lanSearchHandler = new Handler(Looper.getMainLooper());
     private final Handler pairingHandler = new Handler(Looper.getMainLooper());
@@ -396,6 +399,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         initLanWakeControls();
         initLanAutoDiscovery();
         initPairingHome();
+        initQuickHome();
         Button openDebugSettings = findViewById(R.id.button_open_wireless_debugging);
         final boolean isXiaomiFamily = XiaomiSettingsSupport.isXiaomiFamily(
                 Build.MANUFACTURER, Build.BRAND);
@@ -1069,6 +1073,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
 
     @Override
     protected void onDestroy() {
+        if (oneTapConnection != null) oneTapConnection.cancel();
         pairingHandler.removeCallbacks(pairingApprovalPoll);
         stopLanAutoDiscovery();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && backInvokedCallback != null) {
@@ -1293,6 +1298,8 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     }
 
     private void connectScrcpyServer(String serverAdr) {
+        final boolean skipWakeForAuthorizedOneTap = skipWakeRequestOnce;
+        skipWakeRequestOnce = false;
         if (!TextUtils.isEmpty(serverAdr)) {
             saveHistory(serverAdr);  // 保存到历史记录
             String[] serverInfo = Util.getServerHostAndPort(serverAdr);
@@ -1310,7 +1317,8 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                         WakeLanService.PREF, MODE_PRIVATE);
                 String wakeHost = wakeSettings.getString("viewer_host", "");
                 String wakeCode = wakeSettings.getString("viewer_code", "");
-                if (!TextUtils.isEmpty(wakeHost) && !TextUtils.isEmpty(wakeCode)) {
+                if (!skipWakeForAuthorizedOneTap
+                        && !TextUtils.isEmpty(wakeHost) && !TextUtils.isEmpty(wakeCode)) {
                     ThreadUtils.post(() -> Progress.showDialog(MainActivity.this,
                             getString(R.string.wake_lan_requesting)));
                     String failure = WakeLanClient.request(wakeHost, wakeCode);
@@ -1612,6 +1620,200 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (watch != null) watch.setEnabled(peer != null);
         if (auth != null) auth.setEnabled(peer != null);
         if (remove != null) remove.setEnabled(peer != null);
+        TextView quickName = findViewById(R.id.quick_device_name);
+        if (quickName != null) quickName.setText(peer == null
+                ? getString(R.string.quick_device_none) : peer.name);
+        LinearLayout pairActions = findViewById(R.id.quick_pair_actions);
+        if (pairActions != null) pairActions.setVisibility(peer == null ? View.VISIBLE : View.GONE);
+        Switch receiver = findViewById(R.id.quick_receive_switch);
+        if (receiver != null) receiver.setVisibility(peer == null ? View.GONE : View.VISIBLE);
+        Button quickWatch = findViewById(R.id.quick_watch_button);
+        if (quickWatch != null && !oneTapConnecting) {
+            quickWatch.setText(peer == null ? R.string.quick_watch_add : R.string.quick_watch_start);
+            quickWatch.setEnabled(true);
+        }
+        TextView quickStatus = findViewById(R.id.quick_connection_status);
+        if (quickStatus != null && !oneTapConnecting) {
+            quickStatus.setText(peer == null
+                    ? R.string.quick_status_unpaired : R.string.quick_status_paired);
+        }
+    }
+
+    /**
+     * Everyday controls sit above the fully preserved original troubleshooting UI.
+     * They never grant system ADB permission or start video capture on the peer.
+     */
+    private void initQuickHome() {
+        Button primary = findViewById(R.id.quick_watch_button);
+        Button showCode = findViewById(R.id.quick_show_pair_code);
+        Button search = findViewById(R.id.quick_find_peer);
+        Button advanced = findViewById(R.id.quick_advanced_button);
+        Switch receiver = findViewById(R.id.quick_receive_switch);
+        if (primary != null) primary.setOnClickListener(v -> startOneTapWatch());
+        if (showCode != null) showCode.setOnClickListener(v -> showLocalPairCode());
+        if (search != null) search.setOnClickListener(v -> startLanAutoDiscovery());
+        if (advanced != null) advanced.setOnClickListener(v -> toggleQuickAdvanced());
+        if (receiver != null) {
+            receiver.setChecked(!TextUtils.isEmpty(WakeLanService.currentCode(this)));
+            receiver.setOnCheckedChangeListener((view, enabled) -> {
+                if (enabled) {
+                    try {
+                        WakeLanService.startByOwner(this);
+                    } catch (RuntimeException error) {
+                        Log.w("Scrcpy", "Receiver could not start", error);
+                        Toast.makeText(this, R.string.quick_receive_failed, Toast.LENGTH_LONG).show();
+                        receiver.setOnCheckedChangeListener(null);
+                        receiver.setChecked(false);
+                        initQuickReceiverListener(receiver);
+                    }
+                } else {
+                    try {
+                        WakeLanService.stopByOwner(this);
+                    } catch (RuntimeException error) {
+                        Log.w("Scrcpy", "Receiver could not stop", error);
+                    }
+                }
+            });
+        }
+        updatePairedDeviceUi();
+    }
+
+    private void initQuickReceiverListener(Switch receiver) {
+        receiver.setOnCheckedChangeListener((view, enabled) -> {
+            if (enabled) {
+                try {
+                    WakeLanService.startByOwner(this);
+                } catch (RuntimeException error) {
+                    Log.w("Scrcpy", "Receiver could not start", error);
+                    Toast.makeText(this, R.string.quick_receive_failed, Toast.LENGTH_LONG).show();
+                    receiver.setOnCheckedChangeListener(null);
+                    receiver.setChecked(false);
+                    initQuickReceiverListener(receiver);
+                }
+            } else {
+                try {
+                    WakeLanService.stopByOwner(this);
+                } catch (RuntimeException error) {
+                    Log.w("Scrcpy", "Receiver could not stop", error);
+                }
+            }
+        });
+    }
+
+    private void toggleQuickAdvanced() {
+        LinearLayout details = findViewById(R.id.layout_advanced_controls);
+        Button button = findViewById(R.id.quick_advanced_button);
+        if (details == null || button == null) return;
+        boolean willShow = details.getVisibility() != View.VISIBLE;
+        details.setVisibility(willShow ? View.VISIBLE : View.GONE);
+        button.setText(willShow ? R.string.quick_close_advanced : R.string.quick_open_advanced);
+    }
+
+    private void showFirstUseQuickPair() {
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.quick_pair_title)
+                .setMessage(R.string.quick_pair_help)
+                .setPositiveButton(R.string.quick_pair_show, (d, which) -> showLocalPairCode())
+                .setNeutralButton(R.string.quick_pair_search, (d, which) -> startLanAutoDiscovery())
+                .setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    private void setQuickStage(int message) {
+        TextView status = findViewById(R.id.quick_connection_status);
+        if (status != null) status.setText(message);
+    }
+
+    private void endOneTapState() {
+        oneTapConnecting = false;
+        Button button = findViewById(R.id.quick_watch_button);
+        if (button != null) {
+            button.setEnabled(true);
+            button.setText(R.string.quick_watch_start);
+        }
+    }
+
+    private void startOneTapWatch() {
+        if (oneTapConnecting || isFinishing() || isDestroyed()) return;
+        PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
+        if (peer == null) {
+            showFirstUseQuickPair();
+            return;
+        }
+        if (oneTapConnection == null) oneTapConnection = new OneTapConnection(this);
+        oneTapConnecting = true;
+        stopStatusMonitor();
+        Button button = findViewById(R.id.quick_watch_button);
+        if (button != null) {
+            button.setEnabled(false);
+            button.setText(R.string.quick_watch_busy);
+        }
+        oneTapConnection.start(peer, new OneTapConnection.Callback() {
+            @Override public void onStage(int stringRes) {
+                if (!oneTapConnecting || isFinishing() || isDestroyed()) return;
+                setQuickStage(stringRes);
+            }
+
+            @Override public void onConnected(String host, int port) {
+                if (!oneTapConnecting || isFinishing() || isDestroyed()) return;
+                PairedDeviceStore.updateAddress(MainActivity.this, host);
+                PairedDeviceStore.updatePort(MainActivity.this, port);
+                PairedDeviceStore.Peer current = PairedDeviceStore.load(MainActivity.this);
+                if (current == null) {
+                    endOneTapState();
+                    startStatusMonitor();
+                    return;
+                }
+                syncPeerToViewFields(current);
+                endOneTapState();
+                setQuickStage(R.string.quick_status_online);
+                // Preflight already verified ADB; do not fail merely because the
+                // optional wake listener stopped while the peer remained online.
+                skipWakeRequestOnce = true;
+                Button existingStart = findViewById(R.id.button_start);
+                if (existingStart != null) existingStart.performClick();
+                else startStatusMonitor();
+            }
+
+            @Override public void onFailed(OneTapConnection.Failure reason) {
+                if (!oneTapConnecting || isFinishing() || isDestroyed()) return;
+                endOneTapState();
+                startStatusMonitor();
+                int detail = reason == OneTapConnection.Failure.DEVICE_NOT_FOUND
+                        ? R.string.quick_fail_offline : R.string.quick_fail_adb;
+                setQuickStage(detail);
+                new android.app.AlertDialog.Builder(MainActivity.this)
+                        .setTitle(R.string.quick_fail_title)
+                        .setMessage(detail)
+                        .setPositiveButton(R.string.quick_retry,
+                                (d, which) -> startOneTapWatch())
+                        .setNeutralButton(R.string.quick_repair,
+                                (d, which) -> showQuickConnectionRepair())
+                        .setNegativeButton(android.R.string.cancel, null).show();
+            }
+        });
+    }
+
+    private void showQuickConnectionRepair() {
+        final CharSequence[] options = {
+                getString(R.string.pair_authorize_button),
+                getString(R.string.pair_adb_connect_manual_button),
+                getString(R.string.quick_open_advanced)
+        };
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.quick_repair)
+                .setItems(options, (d, which) -> {
+                    if (which == 0) authorizeSystemAdb();
+                    else if (which == 1) {
+                        PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
+                        if (peer != null) promptManualAdbConnectPort(peer);
+                    } else {
+                        LinearLayout advanced = findViewById(R.id.layout_advanced_controls);
+                        if (advanced != null && advanced.getVisibility() != View.VISIBLE) {
+                            toggleQuickAdvanced();
+                        }
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null).show();
     }
 
     private void syncPeerToViewFields(PairedDeviceStore.Peer peer) {
@@ -2257,6 +2459,12 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (label != null) {
             label.setText(online ? R.string.status_online : R.string.status_offline);
             label.setTextColor(color);
+        }
+        TextView quick = findViewById(R.id.quick_connection_status);
+        if (quick != null && !oneTapConnecting) {
+            PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
+            quick.setText(peer == null ? R.string.quick_status_unpaired
+                    : online ? R.string.quick_status_online : R.string.quick_status_paired);
         }
     }
 
