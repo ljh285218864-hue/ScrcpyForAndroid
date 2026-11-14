@@ -1,5 +1,5 @@
-# Codemagic Android test build for the checked-in ScrcpyForAndroid sources.
-# Produces an installable debug APK; no release signing credentials are needed.
+# Codemagic Android debug APK build for ScrcpyForAndroid.
+# The project builds libadb.so from AOSP sources; this needs native build tools.
 workflows:
   android-debug-apk:
     name: Android Debug APK
@@ -12,11 +12,33 @@ workflows:
         script: |
           set -eu
           printf 'sdk.dir=%s\n' "$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/local.properties"
+      - name: Prepare native build tools
+        script: |
+          set -eu
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          for formula in cmake ninja bison flex; do
+            if ! brew list --formula "$formula" >/dev/null 2>&1; then
+              brew install "$formula"
+            fi
+          done
+          cmake --version
+          ninja --version
+          command -v python3
+          command -v patch
+          NDK_VERSION=26.3.11579264
+          if [ ! -f "$ANDROID_SDK_ROOT/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake" ]; then
+            sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "ndk;$NDK_VERSION"
+          fi
+          test -f "$ANDROID_SDK_ROOT/ndk/$NDK_VERSION/build/cmake/android.toolchain.cmake"
       - name: Build Android debug APK
         script: |
           set -eu
+          export PATH="$(brew --prefix bison)/bin:$(brew --prefix flex)/bin:$PATH"
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/26.3.11579264"
+          export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
           chmod +x gradlew
-          ./gradlew :app:assembleScrcpyDebug --no-daemon
+          # Focus first on 64-bit Android hardware (including current Xiaomi phones).
+          ./gradlew :app:assembleScrcpyDebug -PlibadbAbis=arm64-v8a --no-daemon --stacktrace --info
           find app/build/outputs/apk/scrcpy/debug -name '*.apk' -type f -print
           test -n "$(find app/build/outputs/apk/scrcpy/debug -name '*.apk' -type f -print -quit)"
     artifacts:
