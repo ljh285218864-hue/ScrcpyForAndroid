@@ -33,16 +33,41 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Validate preinstalled Android SDK
+      - name: Locate and configure Android SDK
         shell: bash
         run: |
           set -euo pipefail
-          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-          test -n "$SDK_ROOT"
-          test -d "$SDK_ROOT"
-          command -v sdkmanager
+          SDK_ROOT=""
+          for candidate in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" /usr/local/lib/android/sdk /opt/android-sdk; do
+            if [ -n "$candidate" ] && [ -d "$candidate" ]; then
+              SDK_ROOT="$candidate"
+              break
+            fi
+          done
+          if [ -z "$SDK_ROOT" ]; then
+            echo "::error::Android SDK directory missing on runner"
+            ls -la /usr/local/lib/android /opt || true
+            exit 1
+          fi
+          SDKMANAGER=""
+          for candidate in "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "$SDK_ROOT/cmdline-tools/16.0/bin/sdkmanager" "$SDK_ROOT/cmdline-tools/12.0/bin/sdkmanager" "$SDK_ROOT/tools/bin/sdkmanager"; do
+            if [ -x "$candidate" ]; then
+              SDKMANAGER="$candidate"
+              break
+            fi
+          done
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager not found under $SDK_ROOT"
+            find "$SDK_ROOT/cmdline-tools" -maxdepth 4 -name sdkmanager -print || true
+            exit 1
+          fi
           echo "Android SDK: $SDK_ROOT"
-          sdkmanager --version
+          echo "sdkmanager: $SDKMANAGER"
+          "$SDKMANAGER" --version
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
 
       - name: Install native build dependencies
         run: |
