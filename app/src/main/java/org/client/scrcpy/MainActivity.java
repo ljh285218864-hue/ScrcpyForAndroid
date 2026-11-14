@@ -1903,7 +1903,6 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                 Toast.makeText(this, paired ? R.string.pair_adb_success
                                 : R.string.pair_adb_failed, Toast.LENGTH_LONG).show();
                 if (!paired) return;
-                startLanAutoDiscovery();
                 PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
                 if (peer != null && peer.adbPort <= 0) {
                     new android.app.AlertDialog.Builder(this)
@@ -1911,7 +1910,11 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                             .setMessage(R.string.pair_adb_pair_next_connect)
                             .setPositiveButton(R.string.pair_adb_connect_manual_button,
                                     (d, which) -> promptManualAdbConnectPort(peer))
+                            .setNeutralButton(R.string.pair_adb_find_port,
+                                    (d, which) -> startLanAutoDiscovery())
                             .setNegativeButton(android.R.string.cancel, null).show();
+                } else {
+                    startLanAutoDiscovery();
                 }
             });
         });
