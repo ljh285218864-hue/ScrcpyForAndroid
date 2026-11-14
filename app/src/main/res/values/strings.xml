@@ -2,7 +2,7 @@
     <string name="app_name">屏幕同步（只读）</string>
     <string name="app_title">屏幕同步 · 只读观看</string>
 
-    <string name="label_server_ip">已授权设备地址（局域网 ADB）</string>
+    <string name="label_server_ip">连接地址（自动搜索后无需填写）</string>
     <string name="status_online">Online</string>
     <string name="status_offline">Offline</string>
     <string name="label_video_resolution">Resolution</string>
@@ -29,7 +29,7 @@
     <string name="wake_lan_off">接收已关闭，无有效测试密钥</string>
     <string name="wake_lan_code_prefix">本机测试密钥：%1$s</string>
     <string name="wake_lan_start_failed">无法启动接收服务，请检查应用通知及系统后台限制</string>
-    <string name="wake_lan_viewer_section">B手机：填写A的局域网接收地址与临时密钥（选填，不填则沿用旧版ADB直连）</string>
+    <string name="wake_lan_viewer_section">B手机：先点首页「自动搜索附近手机」，唤醒地址与调试端口将自动填写；测试阶段仍需填写A的密钥。</string>
     <string name="wake_lan_host_hint">A 接收地址，如 192.168.1.5:10055</string>
     <string name="wake_lan_key_hint">A 的32位测试密钥</string>
     <string name="wake_lan_incomplete">接收地址和测试密钥必须同时填写</string>
