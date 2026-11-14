@@ -1764,6 +1764,23 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         Button search = findViewById(R.id.button_auto_find);
         if (search == null) return;
         search.setOnClickListener(v -> {
+            // CI-only emulator routing: the A/B Android emulators have separate
+            // isolated NATs, so mDNS cannot cross their virtual networks.
+            // This supplies ONLY a test discovery result, NOT pairing/ADB trust.
+            // Genuine device owner approval and system ADB authorization remain
+            // mandatory in all builds.
+            if (BuildConfig.DEBUG) {
+                android.content.SharedPreferences ciPrefs = getSharedPreferences(
+                        WakeLanService.PREF, MODE_PRIVATE);
+                String emulatedHost = ciPrefs.getString("ci_pair_host", "");
+                if ("10.0.2.2".equals(emulatedHost)) {
+                    int adbPort = ciPrefs.getInt("ci_adb_port", 0);
+                    pairWithChosenDevice(new LanDeviceDiscovery.Device(
+                            "Android A emulator", emulatedHost,
+                            WakeLanService.PORT, adbPort, 0));
+                    return;
+                }
+            }
             if (!lanDevices.isEmpty() && lanDiscovery != null) {
                 showLanDiscoveredDevices();
             } else {
