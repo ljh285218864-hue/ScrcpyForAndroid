@@ -115,6 +115,22 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     private LanDeviceDiscovery lanDiscovery;
     private List<LanDeviceDiscovery.Device> lanDevices = new ArrayList<>();
     private final Handler lanSearchHandler = new Handler(Looper.getMainLooper());
+    private final Handler pairingHandler = new Handler(Looper.getMainLooper());
+    private String lastPromptedPairId = "";
+    private final Runnable pairingApprovalPoll = new Runnable() {
+        @Override public void run() {
+            if (isFinishing() || isDestroyed()) return;
+            if (first_time) {
+                WakeLanService.PendingPair pending = WakeLanService.getPendingPair();
+                if (pending != null && !pending.id.equals(lastPromptedPairId)) {
+                    lastPromptedPairId = pending.id;
+                    showIncomingPairConsent(pending);
+                }
+                if (findViewById(R.id.paired_device_status) != null) updatePairedDeviceUi();
+            }
+            pairingHandler.postDelayed(this, 1200);
+        }
+    };
 
     private LinearLayout linearLayout;
 
@@ -375,8 +391,11 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         });
 
         get_saved_preferences();
+        PairedDeviceStore.Peer savedPeer = PairedDeviceStore.load(this);
+        if (savedPeer != null) syncPeerToViewFields(savedPeer);
         initLanWakeControls();
         initLanAutoDiscovery();
+        initPairingHome();
         Button openDebugSettings = findViewById(R.id.button_open_wireless_debugging);
         final boolean isXiaomiFamily = XiaomiSettingsSupport.isXiaomiFamily(
                 Build.MANUFACTURER, Build.BRAND);
@@ -1036,6 +1055,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
 
     @Override
     protected void onDestroy() {
+        pairingHandler.removeCallbacks(pairingApprovalPoll);
         stopLanAutoDiscovery();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && backInvokedCallback != null) {
             getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backInvokedCallback);
@@ -1078,6 +1098,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     @Override
     protected void onPause() {
         super.onPause();
+        pairingHandler.removeCallbacks(pairingApprovalPoll);
         Log.d("Scrcpy", "onPause: " + serviceBound);
         try {
             // 页面不在前台时注销 USB 授权广播，避免 AdbShellActivity 的授权
@@ -1098,6 +1119,8 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     @Override
     protected void onResume() {
         super.onResume();
+        pairingHandler.removeCallbacks(pairingApprovalPoll);
+        pairingHandler.post(pairingApprovalPoll);
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 registerReceiver(usbPermissionReceiver, new IntentFilter(ACTION_USB_PERMISSION),
@@ -1437,6 +1460,272 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         }
     }
 
+    private void initPairingHome() {
+        Button receive = findViewById(R.id.button_begin_pairing);
+        Button watch = findViewById(R.id.button_watch_paired);
+        Button systemAdb = findViewById(R.id.button_authorize_adb);
+        Button remove = findViewById(R.id.button_remove_pair);
+        if (receive != null) receive.setOnClickListener(v -> showLocalPairCode());
+        if (watch != null) watch.setOnClickListener(v -> watchPairedDevice());
+        if (systemAdb != null) systemAdb.setOnClickListener(v -> authorizeSystemAdb());
+        if (remove != null) remove.setOnClickListener(v -> {
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle(R.string.pair_remove_title)
+                    .setMessage(R.string.pair_remove_detail)
+                    .setPositiveButton(R.string.pair_remove_confirm, (d, which) -> {
+                        PairedDeviceStore.clear(this);
+                        try { WakeLanService.stopByOwner(this); }
+                        catch (RuntimeException error) {
+                            Log.w("Scrcpy", "Wake listener could not be stopped", error);
+                        }
+                        getSharedPreferences(WakeLanService.PREF, MODE_PRIVATE).edit()
+                                .remove("viewer_host").remove("viewer_code").apply();
+                        EditText wakeField = findViewById(R.id.editText_wake_host);
+                        EditText secretField = findViewById(R.id.editText_wake_key);
+                        if (wakeField != null) wakeField.setText("");
+                        if (secretField != null) secretField.setText("");
+                        updatePairedDeviceUi();
+                        Toast.makeText(this, R.string.pair_remove_adb_reminder,
+                                Toast.LENGTH_LONG).show();
+                    })
+                    .setNegativeButton(android.R.string.cancel, null).show();
+        });
+        updatePairedDeviceUi();
+    }
+
+    private void showLocalPairCode() {
+        String code = WakeLanService.openPairingWindow(this);
+        try {
+            WakeLanService.startByOwner(this);
+        } catch (RuntimeException error) {
+            Log.e("Scrcpy", "Pairing receiver unavailable", error);
+            Toast.makeText(this, R.string.wake_lan_start_failed, Toast.LENGTH_LONG).show();
+            return;
+        }
+        TextView codeText = new TextView(this);
+        codeText.setText(code);
+        codeText.setTextSize(30);
+        codeText.setTextIsSelectable(true);
+        codeText.setGravity(android.view.Gravity.CENTER);
+        int pad = (int) (24 * getResources().getDisplayMetrics().density);
+        codeText.setPadding(pad, pad, pad, pad);
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.pair_code_title)
+                .setMessage(R.string.pair_code_instructions)
+                .setView(codeText)
+                .setPositiveButton(R.string.pair_code_ack, null).show();
+    }
+
+    private void showIncomingPairConsent(WakeLanService.PendingPair pending) {
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.pair_owner_approve_title)
+                .setMessage(getString(R.string.pair_owner_approve_description, pending.remoteAddress))
+                .setPositiveButton(R.string.pair_owner_approve, (d, which) -> {
+                    WakeLanService.decidePairing(pending.id, true);
+                    pairingHandler.postDelayed(this::updatePairedDeviceUi, 1100);
+                })
+                .setNegativeButton(R.string.pair_owner_deny, (d, which) ->
+                        WakeLanService.decidePairing(pending.id, false))
+                .setOnCancelListener(d -> WakeLanService.decidePairing(pending.id, false))
+                .show();
+    }
+
+    private void updatePairedDeviceUi() {
+        TextView label = findViewById(R.id.paired_device_status);
+        if (label == null) return;
+        PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
+        label.setText(peer == null ? getString(R.string.pair_no_device)
+                : getString(R.string.pair_connected_device, peer.name));
+        Button watch = findViewById(R.id.button_watch_paired);
+        Button auth = findViewById(R.id.button_authorize_adb);
+        Button remove = findViewById(R.id.button_remove_pair);
+        if (watch != null) watch.setEnabled(peer != null);
+        if (auth != null) auth.setEnabled(peer != null);
+        if (remove != null) remove.setEnabled(peer != null);
+    }
+
+    private void syncPeerToViewFields(PairedDeviceStore.Peer peer) {
+        EditText wakeHost = findViewById(R.id.editText_wake_host);
+        EditText wakeKey = findViewById(R.id.editText_wake_key);
+        if (wakeHost != null) wakeHost.setText(peer.host + ":" + WakeLanService.PORT);
+        if (wakeKey != null) wakeKey.setText(peer.secret);
+        getSharedPreferences(WakeLanService.PREF, MODE_PRIVATE).edit()
+                .putString("viewer_host", peer.host + ":" + WakeLanService.PORT)
+                .putString("viewer_code", peer.secret).apply();
+        if (peer.adbPort > 0) {
+            String serial = peer.host + ":" + peer.adbPort;
+            EditText adbHost = findViewById(R.id.editText_server_host);
+            if (adbHost != null) adbHost.setText(serial);
+            PreUtils.put(this, Constant.CONTROL_REMOTE_ADDR, serial);
+        }
+    }
+
+    private void watchPairedDevice() {
+        PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
+        if (peer == null) {
+            Toast.makeText(this, R.string.pair_no_device, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        syncPeerToViewFields(peer);
+        if (peer.adbPort <= 0) {
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle(R.string.pair_adb_required_title)
+                    .setMessage(R.string.pair_adb_required_description)
+                    .setPositiveButton(R.string.pair_authorize_button,
+                            (d, which) -> authorizeSystemAdb())
+                    .setNegativeButton(android.R.string.cancel, null).show();
+            return;
+        }
+        Button start = findViewById(R.id.button_start);
+        if (start != null) start.performClick();
+    }
+
+    private void pairWithChosenDevice(LanDeviceDiscovery.Device device) {
+        PairedDeviceStore.Peer existing = PairedDeviceStore.load(this);
+        if (existing != null && device.address.equals(existing.host)) {
+            if (device.adbPort > 0) PairedDeviceStore.updatePort(this, device.adbPort);
+            syncPeerToViewFields(PairedDeviceStore.load(this));
+            updatePairedDeviceUi();
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle(R.string.pair_existing_title)
+                    .setMessage(R.string.pair_existing_message)
+                    .setPositiveButton(R.string.pair_watch_button,
+                            (d, which) -> watchPairedDevice())
+                    .setNegativeButton(android.R.string.cancel, null).show();
+            return;
+        }
+        if (existing != null) {
+            Toast.makeText(this, R.string.pair_only_one_peer, Toast.LENGTH_LONG).show();
+            return;
+        }
+        EditText codeInput = new EditText(this);
+        codeInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        codeInput.setSingleLine(true);
+        codeInput.setFilters(new android.text.InputFilter[]{
+                new android.text.InputFilter.LengthFilter(6)});
+        codeInput.setHint(R.string.pair_six_digits_hint);
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(getString(R.string.pair_enter_code_title, device.name))
+                .setMessage(R.string.pair_enter_code_instructions)
+                .setView(codeInput)
+                .setPositiveButton(R.string.pair_submit_button, (d, which) -> {
+                    String code = codeInput.getText().toString().trim();
+                    if (!code.matches("[0-9]{6}")) {
+                        Toast.makeText(this, R.string.pair_bad_code, Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    Progress.showDialog(this, getString(R.string.pair_waiting_owner));
+                    ThreadUtils.workPost(() -> {
+                        PairLanClient.Result result = PairLanClient.pair(
+                                device.address, device.wakePort, code);
+                        ThreadUtils.post(() -> {
+                            Progress.closeDialog();
+                            if (isFinishing() || isDestroyed()) return;
+                            if (!result.ok()) {
+                                Toast.makeText(this, result.error, Toast.LENGTH_LONG).show();
+                                return;
+                            }
+                            PairedDeviceStore.save(this, device.name,
+                                    device.address, result.secret, device.adbPort);
+                            syncPeerToViewFields(PairedDeviceStore.load(this));
+                            updatePairedDeviceUi();
+                            new android.app.AlertDialog.Builder(this)
+                                    .setTitle(R.string.pair_success_title)
+                                    .setMessage(R.string.pair_success_message)
+                                    .setPositiveButton(R.string.pair_watch_button,
+                                            (dialog, selected) -> watchPairedDevice())
+                                    .setNegativeButton(R.string.pair_authorize_button,
+                                            (dialog, selected) -> authorizeSystemAdb())
+                                    .show();
+                        });
+                    });
+                })
+                .setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    private void authorizeSystemAdb() {
+        PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
+        if (peer == null) return;
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.pair_adb_guide_title)
+                .setMessage(R.string.pair_adb_guide_message)
+                .setPositiveButton(R.string.pair_adb_find_port, (d, which) ->
+                        discoverAdbPairingService(peer))
+                .setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    private void discoverAdbPairingService(PairedDeviceStore.Peer peer) {
+        stopLanAutoDiscovery();
+        Progress.showDialog(this, getString(R.string.pair_adb_searching));
+        final LanDeviceDiscovery[] scan = new LanDeviceDiscovery[1];
+        final int[] pairPort = {0};
+        final int[] connectPort = {peer.adbPort};
+        scan[0] = new LanDeviceDiscovery(this, new LanDeviceDiscovery.Listener() {
+            @Override public void onChanged(List<LanDeviceDiscovery.Device> devices) {
+                for (LanDeviceDiscovery.Device device : devices) {
+                    if (!peer.host.equals(device.address)) continue;
+                    if (device.pairingPort > 0) pairPort[0] = device.pairingPort;
+                    if (device.adbPort > 0) connectPort[0] = device.adbPort;
+                }
+            }
+            @Override public void onError(String message) {
+                Log.d("Scrcpy", "ADB pairing port scan: " + message);
+            }
+        });
+        scan[0].start();
+        pairingHandler.postDelayed(() -> {
+            scan[0].stop();
+            Progress.closeDialog();
+            if (isFinishing() || isDestroyed()) return;
+            if (connectPort[0] > 0) {
+                PairedDeviceStore.updatePort(this, connectPort[0]);
+                syncPeerToViewFields(PairedDeviceStore.load(this));
+            }
+            if (pairPort[0] <= 0) {
+                Toast.makeText(this, R.string.pair_adb_port_missing, Toast.LENGTH_LONG).show();
+                return;
+            }
+            promptSystemAdbCode(peer.host, pairPort[0]);
+        }, 9000);
+    }
+
+    private void promptSystemAdbCode(String address, int port) {
+        EditText systemCode = new EditText(this);
+        systemCode.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        systemCode.setSingleLine(true);
+        systemCode.setFilters(new android.text.InputFilter[]{
+                new android.text.InputFilter.LengthFilter(6)});
+        systemCode.setHint(R.string.pair_six_digits_hint);
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.pair_adb_code_title)
+                .setMessage(R.string.pair_adb_code_message)
+                .setView(systemCode)
+                .setPositiveButton(R.string.pair_submit_button, (d, selected) -> {
+                    String code = systemCode.getText().toString().trim();
+                    if (!code.matches("[0-9]{6}")) {
+                        Toast.makeText(this, R.string.pair_bad_code, Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    Progress.showDialog(this, getString(R.string.pair_adb_running));
+                    ThreadUtils.workPost(() -> {
+                        String output = AdbHelper.adbCmd(this, "pair",
+                                address + ":" + port, code);
+                        boolean success = output != null
+                                && output.toLowerCase(java.util.Locale.ROOT)
+                                        .contains("successfully paired");
+                        ThreadUtils.post(() -> {
+                            Progress.closeDialog();
+                            if (isFinishing() || isDestroyed()) return;
+                            Toast.makeText(this, success
+                                            ? R.string.pair_adb_success
+                                            : R.string.pair_adb_failed,
+                                    Toast.LENGTH_LONG).show();
+                            if (success) startLanAutoDiscovery();
+                        });
+                    });
+                }).setNegativeButton(android.R.string.cancel, null).show();
+    }
+
     private void initLanAutoDiscovery() {
         Button search = findViewById(R.id.button_auto_find);
         if (search == null) return;
@@ -1488,7 +1777,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         for (int i = 0; i < matches.size(); i++) labels[i] = matches.get(i).label();
         new android.app.AlertDialog.Builder(this)
                 .setTitle(R.string.auto_find_choose)
-                .setItems(labels, (dialog, selection) -> selectLanDiscoveredDevice(matches.get(selection)))
+                .setItems(labels, (dialog, selection) -> pairWithChosenDevice(matches.get(selection)))
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
     }

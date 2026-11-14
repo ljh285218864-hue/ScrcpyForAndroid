@@ -48,6 +48,52 @@
             android:orientation="vertical"
             tools:context=".MainActivity">
 
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginLeft="10dp"
+                android:layout_marginTop="6dp"
+                android:layout_marginRight="10dp"
+                android:padding="8dp"
+                android:orientation="vertical"
+                android:background="@color/btn_color_nomal">
+
+                <TextView
+                    android:id="@+id/paired_device_status"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:padding="8dp"
+                    android:text="@string/pair_no_device"
+                    android:textColor="@color/white"
+                    android:textSize="15sp" />
+
+                <Button
+                    android:id="@+id/button_begin_pairing"
+                    android:layout_width="match_parent"
+                    android:layout_height="50dp"
+                    android:background="@drawable/btn_selector"
+                    android:text="@string/pair_receiver_button"
+                    android:textColor="@color/white" />
+
+                <Button
+                    android:id="@+id/button_watch_paired"
+                    android:layout_width="match_parent"
+                    android:layout_height="54dp"
+                    android:layout_marginTop="5dp"
+                    android:background="@drawable/btn_selector"
+                    android:text="@string/pair_watch_button"
+                    android:textColor="@color/white" />
+
+                <Button
+                    android:id="@+id/button_authorize_adb"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="5dp"
+                    android:background="@drawable/btn_selector"
+                    android:text="@string/pair_authorize_button"
+                    android:textColor="@color/white" />
+            </LinearLayout>
+
             <Button
                 android:id="@+id/button_auto_find"
                 android:layout_width="match_parent"
@@ -526,6 +572,17 @@
                     android:padding="10dp"
                     android:textColor="@color/white"
                     android:textColorHint="#A8AAB5" />
+
+                <Button
+                    android:id="@+id/button_remove_pair"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginLeft="10dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginRight="10dp"
+                    android:background="@drawable/btn_selector"
+                    android:text="@string/pair_remove_title"
+                    android:textColor="@color/white" />
 
                 <Button
                     android:id="@+id/button_test_wake"
