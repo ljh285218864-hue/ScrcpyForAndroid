@@ -1,5 +1,31 @@
 <resources>
     <string name="app_name">屏幕同步（只读）</string>
+    <!-- Minimal everyday interface, preserving original settings underneath. -->
+    <string name="quick_app_title">屏幕同步</string>
+    <string name="quick_device_title">我的配对手机</string>
+    <string name="quick_device_none">还没有配对手机</string>
+    <string name="quick_status_unpaired">请先完成一次双方配对</string>
+    <string name="quick_status_paired">已配对 · 点击立即观看</string>
+    <string name="quick_status_online">系统连接就绪 · 可以观看</string>
+    <string name="quick_watch_start">立即观看</string>
+    <string name="quick_watch_add">添加配对手机</string>
+    <string name="quick_watch_busy">连接中…</string>
+    <string name="quick_allow_receiver">允许已配对手机连接</string>
+    <string name="quick_open_advanced">设备管理与高级设置 ▼</string>
+    <string name="quick_close_advanced">收起高级设置 ▲</string>
+    <string name="quick_pair_title">首次配对</string>
+    <string name="quick_pair_help">请在一台手机显示配对码，另一台手机搜索并输入，双方确认后保存配对关系。</string>
+    <string name="quick_pair_show">显示我的配对码</string>
+    <string name="quick_pair_search">搜索附近手机</string>
+    <string name="quick_stage_saved_connection">正在检查已授权的连接…</string>
+    <string name="quick_stage_discovering">正在寻找已配对手机和无线调试端口…</string>
+    <string name="quick_stage_authorizing">正在验证配对手机和系统连接…</string>
+    <string name="quick_fail_offline">没有找到已配对手机。请检查两台手机是否连接同一个 Wi-Fi，以及对方手机的接收服务是否开启。</string>
+    <string name="quick_fail_adb">已找到配对手机，但 Android 无线调试连接不可用。请确认无线调试开启，首次授权已完成，并检查连接端口。</string>
+    <string name="quick_fail_title">暂时无法连接</string>
+    <string name="quick_retry">重新尝试</string>
+    <string name="quick_repair">连接设置</string>
+    <string name="quick_receive_failed">无法开启接收服务，请检查通知权限和系统后台限制。</string>
     <string name="app_title">屏幕同步 · 只读观看</string>
 
     <string name="label_server_ip">连接地址（自动搜索后无需填写）</string>
