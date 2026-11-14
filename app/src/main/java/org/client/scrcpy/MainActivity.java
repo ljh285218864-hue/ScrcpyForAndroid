@@ -6,6 +6,7 @@ import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.ClipData;
 import android.content.ComponentName;
+import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -30,6 +31,7 @@ import android.content.pm.PackageManager;
 import android.Manifest;
 import android.os.IBinder;
 import android.os.SystemClock;
+import android.provider.Settings;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
 import android.text.Editable;
@@ -375,6 +377,10 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         get_saved_preferences();
         initLanWakeControls();
         initLanAutoDiscovery();
+        Button openDebugSettings = findViewById(R.id.button_open_wireless_debugging);
+        if (openDebugSettings != null) {
+            openDebugSettings.setOnClickListener(v -> openWirelessDebugSettings());
+        }
 
         EditText editText = findViewById(R.id.editText_server_host);
 
@@ -1343,6 +1349,42 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             Toast.makeText(context, "Server Address Empty", Toast.LENGTH_SHORT).show();
             startStatusMonitor();
             connectExitExt();
+        }
+    }
+
+    /**
+     * Opens the Android system page, not a debugging toggle.
+     * Some Android vendors expose a direct wireless debugging action, but
+     * it is not a stable public Android API. Always fall back to the official
+     * developer-options action and finally the general system settings.
+     * The user must enable wireless debugging and approve ADB themselves.
+     */
+    private void openWirelessDebugSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+                && launchDebugSettings("android.settings.WIRELESS_DEBUGGING_SETTINGS")) {
+            return;
+        }
+        if (launchDebugSettings(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) {
+            Toast.makeText(this, R.string.wireless_debugging_find_in_developer_options,
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (launchDebugSettings(Settings.ACTION_SETTINGS)) {
+            Toast.makeText(this, R.string.wireless_debugging_find_in_system_settings,
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        Toast.makeText(this, R.string.wireless_debugging_settings_unavailable,
+                Toast.LENGTH_LONG).show();
+    }
+
+    private boolean launchDebugSettings(String action) {
+        try {
+            startActivity(new Intent(action));
+            return true;
+        } catch (ActivityNotFoundException | SecurityException error) {
+            Log.d("Scrcpy", "Settings action unavailable: " + action, error);
+            return false;
         }
     }
 

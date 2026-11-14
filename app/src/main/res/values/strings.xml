@@ -16,6 +16,10 @@
     <string name="action_start">开始观看屏幕</string>
 
     <string name="action_auto_find_device">自动搜索附近手机</string>
+    <string name="action_open_wireless_debugging">打开无线调试设置</string>
+    <string name="wireless_debugging_find_in_developer_options">已打开开发者选项，请找到“无线调试”并手动开启。</string>
+    <string name="wireless_debugging_find_in_system_settings">无法直达开发者选项，请在系统设置中搜索“开发者选项”或“无线调试”。</string>
+    <string name="wireless_debugging_settings_unavailable">无法打开系统设置，请手动进入开发者选项开启无线调试。</string>
     <string name="auto_find_hint">无需手动输入局域网IP；请先在对方手机开启接收，首次ADB授权仍需完成。</string>
     <string name="auto_find_searching">正在搜索同一Wi-Fi中的屏幕同步设备…</string>
     <string name="auto_find_count">发现 %1$d 台设备，正在识别连接端口…</string>

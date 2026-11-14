@@ -60,6 +60,18 @@
                 android:textColor="@color/white"
                 android:textSize="16sp" />
 
+            <Button
+                android:id="@+id/button_open_wireless_debugging"
+                android:layout_width="match_parent"
+                android:layout_height="50dp"
+                android:layout_marginLeft="10dp"
+                android:layout_marginTop="6dp"
+                android:layout_marginRight="10dp"
+                android:background="@drawable/btn_selector"
+                android:text="@string/action_open_wireless_debugging"
+                android:textColor="@color/white"
+                android:textSize="15sp" />
+
             <TextView
                 android:id="@+id/text_auto_find_status"
                 android:layout_width="match_parent"
