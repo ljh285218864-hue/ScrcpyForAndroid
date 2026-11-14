@@ -244,6 +244,13 @@ public final class WakeLanService extends Service {
     private void handlePairing(Socket client, String command, BufferedWriter out)
             throws Exception {
         String[] parts = command.split(" ");
+        // This phase deliberately supports one mutually trusted device.
+        // Replacing an existing owner-approved peer requires explicit unpairing.
+        if (PairedDeviceStore.load(this) != null) {
+            out.write("DENIED\\n");
+            out.flush();
+            return;
+        }
         android.content.SharedPreferences prefs = getSharedPreferences(PREF, MODE_PRIVATE);
         String activeCode = prefs.getString("pair_short_code", "");
         long expiry = prefs.getLong("pair_expires", 0L);
