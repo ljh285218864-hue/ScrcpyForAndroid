@@ -91,7 +91,7 @@ jobs:
           # Regression: earlier PAIR responses wrote literal backslash+n to the wire,
           # causing Android B to hang indefinitely in BufferedReader.readLine().
           import re as _re
-          for frame in _re.findall(r'out\\.write\\([^;]+;', service):
+          for frame in _re.findall(r'out\.write\([^;]+;', service):
               if chr(92) * 2 + 'n' in frame:
                   raise AssertionError("Pairing protocol writes a literal backslash+n")
           assert 'connectScrcpyServer(serverAdr)' in m
