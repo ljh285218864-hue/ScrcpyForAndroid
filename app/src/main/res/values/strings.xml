@@ -63,12 +63,12 @@
     <string name="vivo_debug_help_button">vivo / iQOO：无线调试设置帮助</string>
     <string name="vivo_debug_developer_opened">已打开开发者选项，请在此手动开启“无线调试”并完成系统授权。</string>
     <string name="vivo_debug_help_title">vivo / iQOO 开启无线调试</string>
-    <string name="vivo_debug_help_message">适用于常见的 OriginOS / iQOO 系统：\\n\\n1. 打开设置 → 关于手机 → 版本信息（有的机型叫软件信息）。\\n2. 连续点击“软件版本 / 版本号”约7次，按系统提示开启开发者选项。\\n3. 返回设置 → 系统管理（部分版本为更多设置）→ 开发者选项 → 无线调试。\\n4. 在手机本人确认后开启无线调试；首次使用需完成系统的ADB配对授权。\\n\\n不同机型菜单可能不同，可在系统设置内搜索“开发者选项”或“无线调试”。本应用不会绕过系统授权。</string>
+    <string name="vivo_debug_help_message">适用于常见的 OriginOS / iQOO 系统：\n\n1. 打开设置 → 关于手机 → 版本信息（有的机型叫软件信息）。\n2. 连续点击“软件版本 / 版本号”约7次，按系统提示开启开发者选项。\n3. 返回设置 → 系统管理（部分版本为更多设置）→ 开发者选项 → 无线调试。\n4. 在手机本人确认后开启无线调试；首次使用需完成系统的ADB配对授权。\n\n不同机型菜单可能不同，可在系统设置内搜索“开发者选项”或“无线调试”。本应用不会绕过系统授权。</string>
     <string name="vivo_debug_open_developer">打开开发者选项</string>
     <string name="vivo_debug_open_about_phone">打开关于手机</string>
     <string name="vivo_background_help_button">vivo / iQOO：后台运行设置</string>
     <string name="vivo_background_title">vivo / iQOO 后台运行说明</string>
-    <string name="vivo_background_message">点击“打开应用信息”，在系统设置中检查通知权限、耗电管理 / 后台高耗电、后台运行、自启动等选项（仅在机型提供时由你手动开启）。\\n\\n这有助于已获授权的局域网接收服务在后台持续运行，但并不保证系统清理、强制停止或重启后仍然在线。无线调试也可能被系统关闭；再次观看前仍需遵守系统授权要求。</string>
+    <string name="vivo_background_message">点击“打开应用信息”，在系统设置中检查通知权限、耗电管理 / 后台高耗电、后台运行、自启动等选项（仅在机型提供时由你手动开启）。\n\n这有助于已获授权的局域网接收服务在后台持续运行，但并不保证系统清理、强制停止或重启后仍然在线。无线调试也可能被系统关闭；再次观看前仍需遵守系统授权要求。</string>
     <string name="vivo_background_open_details">打开应用信息</string>
     <string name="vivo_background_settings_unavailable">无法打开系统设置，请手动进入应用管理找到本应用。</string>
 
