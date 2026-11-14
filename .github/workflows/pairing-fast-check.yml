@@ -1,0 +1,91 @@
+name: Pairing Protocol Fast Check
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'app/src/main/java/org/client/scrcpy/PairLanClient.java'
+      - 'app/src/main/java/org/client/scrcpy/PairedDeviceStore.java'
+      - 'app/src/main/java/org/client/scrcpy/WakeLanService.java'
+      - 'app/src/main/java/org/client/scrcpy/WakeAuth.java'
+      - 'app/src/main/java/org/client/scrcpy/MainActivity.java'
+      - '.github/workflows/pairing-fast-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test-pairing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Test pairing client with a local mock A owner receiver
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/paired/org/client/scrcpy
+          cp app/src/main/java/org/client/scrcpy/{WakeAuth,PairLanClient}.java /tmp/paired/org/client/scrcpy/
+          printf 'package org.client.scrcpy; public final class WakeLanService { public static final int PORT = 10055; }\n' > /tmp/paired/org/client/scrcpy/WakeLanService.java
+          cat > /tmp/paired/org/client/scrcpy/TestPairClient.java <<'JAVA'
+          package org.client.scrcpy;
+          import java.io.*;
+          import java.net.*;
+          public final class TestPairClient {
+            public static void main(String[] args) throws Exception {
+              String secret = WakeAuth.randomHex(16);
+              String code = "123456";
+              ServerSocket server = new ServerSocket(10055, 1, InetAddress.getLoopbackAddress());
+              Thread owner = new Thread(() -> {
+                try (Socket client = server.accept();
+                     BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream()));
+                     BufferedWriter out = new BufferedWriter(new OutputStreamWriter(client.getOutputStream()))) {
+                  String request = in.readLine();
+                  if (request == null || !request.matches("PAIR [0-9]{6} [a-f0-9]{16}")) {
+                    throw new AssertionError("Bad pairing frame: " + request);
+                  }
+                  if (!request.substring(5, 11).equals(code))
+                    throw new AssertionError("Wrong pairing code");
+                  // Simulate A owner's explicit approval. No token is issued until consent.
+                  String nonce = request.substring(12);
+                  out.write("PAIRED " + nonce + " " + secret + "\n");
+                  out.flush();
+                } catch (Exception e) { throw new RuntimeException(e); }
+              });
+              owner.start();
+              PairLanClient.Result result = PairLanClient.pair("127.0.0.1", 10055, code);
+              if (!result.ok() || !result.secret.equals(secret)) throw new AssertionError("A/B pairing round trip");
+              owner.join(3000);
+              server.close();
+              PairLanClient.Result bad = PairLanClient.pair("127.0.0.1", 10055, "x");
+              if (bad.ok()) throw new AssertionError("Malformed pairing code accepted");
+              System.out.println("PASS: short-code pairing frame, owner approval response, long secret, bad code");
+            }
+          }
+          JAVA
+          javac -d /tmp/paired/out /tmp/paired/org/client/scrcpy/*.java
+          java -cp /tmp/paired/out org.client.scrcpy.TestPairClient
+      - name: Verify user-facing pairing resources and protected A approval
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          m = Path("app/src/main/java/org/client/scrcpy/MainActivity.java").read_text()
+          service = Path("app/src/main/java/org/client/scrcpy/WakeLanService.java").read_text()
+          ui = Path("app/src/main/res/layout/activity_main.xml").read_text()
+          strings = Path("app/src/main/res/values/strings.xml").read_text()
+          names = set(re.findall(r'<string name="([^"]+)"', strings))
+          for name in re.findall(r'@string/(\w+)', ui):
+              if name not in names: raise AssertionError("Missing UI string: " + name)
+          for name in ("button_begin_pairing", "button_watch_paired", "button_authorize_adb", "paired_device_status"):
+              if '@+id/'+name not in ui or 'R.id.'+name not in m: raise AssertionError(name)
+          assert 'pending.decision.await' in service and 'pending.accepted' in service
+          assert 'PairedDeviceStore.save' in service and 'PairLanClient.pair' in m
+          assert 'WakeLanClient.request' in m
+          assert 'connectScrcpyServer(serverAdr)' in m
+          print("PASS: pairing UI and owner consent gate precede read-only scrcpy")
+          PY
