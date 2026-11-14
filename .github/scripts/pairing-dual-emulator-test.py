@@ -471,12 +471,20 @@ try:
     if get_secret(wait_for_private_pair(B, "B reopened")) != secret_a:
         raise RuntimeError("B lost its paired key after app restart")
     record("PASS: B pairing credential persisted after app force-stop/reopen")
+    # Clear B's prior video logs, so a previous handshake cannot give a
+    # false positive when verifying this NEW viewing session.
+    adb(B, "logcat", "-c", timeout=20)
     watch_again = find_visible_control(B, "button_watch_paired", "b-watch-again",
                                        scroll_down=False)
     if not tap(B, watch_again):
         raise RuntimeError("B failed to tap one-click viewing after restart")
-    record("PASS: B retriggered one-tap viewing after reopening the app")
-    record("NOTE: actual reconnection after force-stop is checked in logs/screenshots")
+    time.sleep(20)
+    second_logs = adb(B, "logcat", "-d", "-v", "threadtime", timeout=30).stdout
+    (OUT / "b-after-reopen-logcat.txt").write_text(second_logs, encoding="utf-8")
+    screenshot(B, "b-after-reopen-view.png")
+    if not re.search(r"Handshake device=\\d+x\\d+ video=\\d+x\\d+", second_logs):
+        raise RuntimeError("B did not re-establish scrcpy video after reopening the app")
+    record("PASS: B restarted app and established a NEW read-only video handshake")
     collect()
 except Exception as err:
     record("FAIL: " + repr(err))
