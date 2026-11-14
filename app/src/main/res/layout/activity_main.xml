@@ -140,6 +140,29 @@
             </LinearLayout>
 
 
+            <Button
+                android:id="@+id/button_auto_find"
+                android:layout_width="match_parent"
+                android:layout_height="54dp"
+                android:layout_marginLeft="10dp"
+                android:layout_marginTop="8dp"
+                android:layout_marginRight="10dp"
+                android:background="@drawable/btn_selector"
+                android:text="@string/action_auto_find_device"
+                android:textColor="@color/white"
+                android:textSize="16sp" />
+
+            <TextView
+                android:id="@+id/text_auto_find_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginLeft="14dp"
+                android:layout_marginTop="4dp"
+                android:layout_marginRight="14dp"
+                android:text="@string/auto_find_hint"
+                android:textColor="@color/white"
+                android:textSize="12sp" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

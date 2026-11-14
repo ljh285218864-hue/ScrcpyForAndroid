@@ -12,6 +12,8 @@ import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
+import android.net.nsd.NsdManager;
+import android.net.nsd.NsdServiceInfo;
 import android.util.Log;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -43,6 +45,8 @@ public final class WakeLanService extends Service {
     private volatile boolean running;
     private ServerSocket server;
     private Thread worker;
+    private NsdManager localNsdManager;
+    private NsdManager.RegistrationListener localNsdRegistration;
 
     public static void startByOwner(Context context) {
         Intent intent = new Intent(context, WakeLanService.class);
@@ -107,6 +111,7 @@ public final class WakeLanService extends Service {
                 server = socket;
                 socket.setSoTimeout(1200);
                 Log.i(TAG, "Wake LAN receiver listening on TCP " + PORT);
+                registerLocalDiscovery();
                 while (running && !Thread.currentThread().isInterrupted()) {
                     try {
                         Socket client = socket.accept();
@@ -203,7 +208,38 @@ public final class WakeLanService extends Service {
                 REQ_CHANNEL, false));
     }
 
+    private void registerLocalDiscovery() {
+        try {
+            localNsdManager = (NsdManager) getSystemService(NSD_SERVICE);
+            if (localNsdManager == null) return;
+            NsdServiceInfo info = new NsdServiceInfo();
+            String model = Build.MODEL == null ? "Android" : Build.MODEL;
+            info.setServiceName("屏幕同步-" + model);
+            info.setServiceType(LanDeviceDiscovery.WAKE_TYPE);
+            info.setPort(PORT);
+            localNsdRegistration = new NsdManager.RegistrationListener() {
+                @Override public void onServiceRegistered(NsdServiceInfo registered) {
+                    Log.i(TAG, "LAN auto-discovery active");
+                }
+                @Override public void onRegistrationFailed(NsdServiceInfo service, int code) {
+                    Log.w(TAG, "LAN auto-discovery register failed: " + code);
+                }
+                @Override public void onServiceUnregistered(NsdServiceInfo service) { }
+                @Override public void onUnregistrationFailed(NsdServiceInfo service, int code) { }
+            };
+            localNsdManager.registerService(info, NsdManager.PROTOCOL_DNS_SD, localNsdRegistration);
+        } catch (RuntimeException error) {
+            Log.w(TAG, "LAN receiver listening but discovery unavailable", error);
+        }
+    }
+
     private void closeListener() {
+        if (localNsdManager != null && localNsdRegistration != null) {
+            try { localNsdManager.unregisterService(localNsdRegistration); }
+            catch (RuntimeException ignored) { }
+        }
+        localNsdRegistration = null;
+        localNsdManager = null;
         running = false;
         if (server != null) {
             try { server.close(); } catch (Exception ignored) { }

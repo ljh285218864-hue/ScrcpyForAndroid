@@ -110,6 +110,9 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     private Scrcpy scrcpy;
     private long timestamp = 0;
     private OnBackInvokedCallback backInvokedCallback;
+    private LanDeviceDiscovery lanDiscovery;
+    private List<LanDeviceDiscovery.Device> lanDevices = new ArrayList<>();
+    private final Handler lanSearchHandler = new Handler(Looper.getMainLooper());
 
     private LinearLayout linearLayout;
 
@@ -371,6 +374,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
 
         get_saved_preferences();
         initLanWakeControls();
+        initLanAutoDiscovery();
 
         EditText editText = findViewById(R.id.editText_server_host);
 
@@ -1016,6 +1020,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
 
     @Override
     protected void onDestroy() {
+        stopLanAutoDiscovery();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && backInvokedCallback != null) {
             getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backInvokedCallback);
             backInvokedCallback = null;
@@ -1338,6 +1343,91 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             Toast.makeText(context, "Server Address Empty", Toast.LENGTH_SHORT).show();
             startStatusMonitor();
             connectExitExt();
+        }
+    }
+
+    private void initLanAutoDiscovery() {
+        Button search = findViewById(R.id.button_auto_find);
+        if (search == null) return;
+        search.setOnClickListener(v -> {
+            if (!lanDevices.isEmpty() && lanDiscovery != null) {
+                showLanDiscoveredDevices();
+            } else {
+                startLanAutoDiscovery();
+            }
+        });
+    }
+
+    private void startLanAutoDiscovery() {
+        stopLanAutoDiscovery();
+        lanDevices = new ArrayList<>();
+        TextView status = findViewById(R.id.text_auto_find_status);
+        if (status != null) status.setText(R.string.auto_find_searching);
+        lanDiscovery = new LanDeviceDiscovery(this, new LanDeviceDiscovery.Listener() {
+            @Override public void onChanged(List<LanDeviceDiscovery.Device> devices) {
+                if (isFinishing() || isDestroyed()) return;
+                lanDevices = new ArrayList<>(devices);
+                TextView label = findViewById(R.id.text_auto_find_status);
+                if (label != null) label.setText(
+                        getString(R.string.auto_find_count, lanDevices.size()));
+            }
+            @Override public void onError(String message) {
+                if (isFinishing() || isDestroyed()) return;
+                Log.w("LanDiscovery", message);
+            }
+        });
+        lanDiscovery.start();
+        lanSearchHandler.postDelayed(() -> {
+            if (isFinishing() || isDestroyed() || lanDiscovery == null) return;
+            showLanDiscoveredDevices();
+        }, 8500);
+    }
+
+    private void showLanDiscoveredDevices() {
+        List<LanDeviceDiscovery.Device> matches = new ArrayList<>(lanDevices);
+        stopLanAutoDiscovery();
+        if (isFinishing() || isDestroyed()) return;
+        if (matches.isEmpty()) {
+            TextView status = findViewById(R.id.text_auto_find_status);
+            if (status != null) status.setText(R.string.auto_find_none);
+            Toast.makeText(this, R.string.auto_find_none, Toast.LENGTH_LONG).show();
+            return;
+        }
+        CharSequence[] labels = new CharSequence[matches.size()];
+        for (int i = 0; i < matches.size(); i++) labels[i] = matches.get(i).label();
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.auto_find_choose)
+                .setItems(labels, (dialog, selection) -> selectLanDiscoveredDevice(matches.get(selection)))
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void selectLanDiscoveredDevice(LanDeviceDiscovery.Device device) {
+        // A broadcast name/IP is never sufficient to authorize viewing:
+        // a matching secret and previously approved ADB key are still required.
+        String wakeHost = device.address + ":" + device.wakePort;
+        EditText wake = findViewById(R.id.editText_wake_host);
+        if (wake != null) wake.setText(wakeHost);
+        getSharedPreferences(WakeLanService.PREF, MODE_PRIVATE).edit()
+                .putString("viewer_host", wakeHost).apply();
+        TextView label = findViewById(R.id.text_auto_find_status);
+        if (device.adbPort > 0) {
+            String adbAddress = device.address + ":" + device.adbPort;
+            EditText adb = findViewById(R.id.editText_server_host);
+            if (adb != null) adb.setText(adbAddress);
+            PreUtils.put(this, Constant.CONTROL_REMOTE_ADDR, adbAddress);
+            if (label != null) label.setText(R.string.auto_find_ready);
+        } else {
+            if (label != null) label.setText(R.string.auto_find_missing_adb);
+            Toast.makeText(this, R.string.auto_find_missing_adb, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void stopLanAutoDiscovery() {
+        lanSearchHandler.removeCallbacksAndMessages(null);
+        if (lanDiscovery != null) {
+            lanDiscovery.stop();
+            lanDiscovery = null;
         }
     }
 

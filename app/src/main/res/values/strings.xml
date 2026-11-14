@@ -15,6 +15,14 @@
     <string name="label_x">x</string>
     <string name="action_start">开始观看屏幕</string>
 
+    <string name="action_auto_find_device">自动搜索附近手机</string>
+    <string name="auto_find_hint">无需手动输入局域网IP；请先在对方手机开启接收，首次ADB授权仍需完成。</string>
+    <string name="auto_find_searching">正在搜索同一Wi-Fi中的屏幕同步设备…</string>
+    <string name="auto_find_count">发现 %1$d 台设备，正在识别连接端口…</string>
+    <string name="auto_find_choose">选择要观看的手机</string>
+    <string name="auto_find_none">没有找到设备。请检查双方在同一Wi-Fi、对方已开启接收，并确认路由器没有隔离设备。</string>
+    <string name="auto_find_ready">已找到设备并自动填写连接地址。首次调试授权仍需由对方手机确认。</string>
+    <string name="auto_find_missing_adb">已找到对方接收服务，但没有发现ADB无线调试端口。请先完成首次无线调试授权，再重新搜索。</string>
     <string name="wake_lan_section">A手机：明确开启局域网测试接收，收到请求会显示通知（不自动开启屏幕采集）</string>
     <string name="wake_lan_start">A手机 · 开启接收</string>
     <string name="wake_lan_stop">A手机 · 停止接收</string>
