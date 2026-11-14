@@ -137,7 +137,10 @@ def start_b():
     if not sdk:
         raise RuntimeError("ANDROID_SDK_ROOT not configured")
     api_level = int(os.environ.get("ANDROID_TEST_API", "35"))
-    image = f"system-images;android-{api_level};google_apis;x86_64"
+    image_target = os.environ.get("ANDROID_TEST_IMAGE_TARGET", "google_apis")
+    if image_target not in ("google_apis", "google_apis_playstore"):
+        raise RuntimeError("Unsupported emulator system image target")
+    image = f"system-images;android-{api_level};{image_target};x86_64"
     record(f"Preparing second Android {api_level - 20} AVD (API {api_level})...")
     r = run(["avdmanager", "create", "avd", "--force", "--name", "phone_b",
              "--package", image, "--device", "pixel_5"], timeout=90)
