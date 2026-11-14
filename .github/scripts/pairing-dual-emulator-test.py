@@ -407,6 +407,8 @@ try:
     if not tap(B, field):
         raise RuntimeError("B six-digit app pairing input did not appear")
     shell(B, "input", "text", code)
+    shell(B, "input", "keyevent", "KEYCODE_BACK")  # dismiss IME, preserve pairing dialog
+    time.sleep(1)
     submit = find_button(B, "提交配对", "b-submit-app-pair")
     if not tap(B, submit):
         raise RuntimeError("B could not submit app pairing")
