@@ -53,6 +53,16 @@
     <string name="pair_adb_running">正在验证系统无线调试配对…</string>
     <string name="pair_adb_success">系统配对成功！返回首页，搜索一次对方设备后即可观看。</string>
     <string name="pair_adb_failed">系统配对失败，请检查系统配对码是否过期，并重试。</string>
+    <string name="pair_adb_manual_button">手动输入配对端口</string>
+    <string name="pair_adb_manual_detail">自动搜索失败时，请在对方手机「无线调试 → 使用配对码配对设备」页面查看 IP 地址和端口。核对 IP 是 %1$s，然后在下面填写冒号后面的端口数字以及该页的6位配对码。IP 不一致时请先重新搜索已配对设备。</string>
+    <string name="pair_adb_manual_pair_port_hint">系统配对端口（冒号后数字）</string>
+    <string name="pair_adb_manual_port_invalid">请输入正确的系统无线调试端口（1～65535）</string>
+    <string name="pair_adb_connect_manual_button">手动输入连接端口</string>
+    <string name="pair_adb_connect_manual_detail">系统 ADB 配对后，请返回对方手机「无线调试」主页面，找到「IP 地址和端口」。确认 IP 为 %1$s，输入主页面冒号后面的端口数字。注意这里的连接端口和配对码页面的配对端口不同。</string>
+    <string name="pair_adb_connect_manual_hint">无线调试连接端口</string>
+    <string name="pair_adb_connect_success">系统 ADB 已连接，可以返回首页观看。</string>
+    <string name="pair_adb_connect_failed">系统 ADB 暂未连接，请核对主页面连接端口、Wi-Fi 和调试授权。</string>
+    <string name="pair_adb_pair_next_connect">系统配对成功！自动查找连接端口失败时，还需输入对方无线调试主页面的连接端口。</string>
     <string name="pair_remove_title">解除本机配对</string>
     <string name="pair_remove_detail">取消本机保存的设备信任信息、停用唤醒接收。注意这不会删除 Android 系统里的 ADB 调试授权。</string>
     <string name="pair_remove_confirm">确定解绑</string>
