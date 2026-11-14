@@ -5,6 +5,11 @@ on:
     branches: [main]
     paths:
       - .github/workflows/package-vivo-debug.yml
+      - 'app/**'
+      - 'gradle/**'
+      - gradlew
+      - build.gradle
+      - settings.gradle
   workflow_dispatch:
 
 permissions:
