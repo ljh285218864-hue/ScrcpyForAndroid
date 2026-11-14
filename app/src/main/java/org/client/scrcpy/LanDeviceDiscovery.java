@@ -217,6 +217,16 @@ public final class LanDeviceDiscovery {
         return Collections.unmodifiableList(out);
     }
 
+    /**
+     * All resolved services, including standalone Android wireless debugging
+     * pairing endpoints. The normal device chooser continues to use available(),
+     * which only contains devices that advertise our own wake listener.
+     * Call only on the main thread while discovery is running.
+     */
+    public List<Device> allDiscovered() {
+        return Collections.unmodifiableList(new ArrayList<>(discovered.values()));
+    }
+
     public void stop() {
         if (!active) return;
         active = false;
