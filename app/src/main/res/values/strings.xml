@@ -36,6 +36,8 @@
     <string name="pair_success_message">这台手机已保存对方信息，以后无需再填应用配对码。若还没获得对方系统无线调试授权，需要完成一次系统授权后才能观看。</string>
     <string name="pair_watch_button">观看已配对手机</string>
     <string name="pair_only_one_peer">目前仅支持一对一配对，请先解绑旧设备</string>
+    <string name="pair_verifying_existing">正在验证已配对手机的新网络地址…</string>
+    <string name="pair_existing_verification_failed">发现的手机无法通过原配对密钥验证。为安全起见，未更新设备连接地址。</string>
     <string name="pair_existing_title">设备已配对</string>
     <string name="pair_existing_message">已找到之前配对的手机，连接地址已自动更新。可以直接尝试观看。</string>
     <string name="pair_authorize_button">首次系统无线调试授权</string>

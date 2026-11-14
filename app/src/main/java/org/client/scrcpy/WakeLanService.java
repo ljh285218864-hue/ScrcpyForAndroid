@@ -207,11 +207,17 @@ public final class WakeLanService extends Service {
             String nonce = hello.substring(6);
             String expected = WakeAuth.mac(code, nonce, challenge);
             PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
+            // HMAC establishes peer identity even when DHCP changes the IP.
+            // Do not bind a trusted device to a permanent LAN address.
             boolean acceptedByPeer = peer != null
-                    && socket.getInetAddress().getHostAddress().equals(peer.host)
                     && WakeAuth.verify(response != null && response.startsWith("AUTH ")
                                 ? response.substring(5) : null,
                             WakeAuth.mac(peer.secret, nonce, challenge));
+            if (acceptedByPeer && peer != null
+                    && !socket.getInetAddress().getHostAddress().equals(peer.host)) {
+                PairedDeviceStore.updateAddress(this,
+                        socket.getInetAddress().getHostAddress());
+            }
             if (response == null || response.length() != 69
                     || !response.startsWith("AUTH ")
                     || !(WakeAuth.verify(response.substring(5), expected) || acceptedByPeer)) {

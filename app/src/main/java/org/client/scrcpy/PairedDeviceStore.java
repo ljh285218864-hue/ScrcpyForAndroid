@@ -34,6 +34,12 @@ public final class PairedDeviceStore {
         if (!WakeAuth.isHex(code, 32) || TextUtils.isEmpty(host)) return null;
         return new Peer(p.getString("name", "Android"), host, code, p.getInt("adb_port", 0));
     }
+    public static void updateAddress(Context context, String newHost) {
+        if (TextUtils.isEmpty(newHost) || load(context) == null) return;
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putString("host", newHost).apply();
+    }
+
     public static void updatePort(Context context, int newPort) {
         if (newPort > 0 && newPort <= 65535 && load(context) != null) {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

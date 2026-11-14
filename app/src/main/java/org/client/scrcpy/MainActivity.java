@@ -1595,7 +1595,33 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             return;
         }
         if (existing != null) {
-            Toast.makeText(this, R.string.pair_only_one_peer, Toast.LENGTH_LONG).show();
+            // Local addresses can change after reconnecting Wi-Fi. Authenticate
+            // the saved secret against the newly discovered endpoint before
+            // updating the stored IP; NEVER trust an NSD name alone.
+            Progress.showDialog(this, getString(R.string.pair_verifying_existing));
+            ThreadUtils.workPost(() -> {
+                String failure = WakeLanClient.request(device.address + ":"
+                        + device.wakePort, existing.secret);
+                ThreadUtils.post(() -> {
+                    Progress.closeDialog();
+                    if (isFinishing() || isDestroyed()) return;
+                    if (failure != null) {
+                        Toast.makeText(this, R.string.pair_existing_verification_failed,
+                                Toast.LENGTH_LONG).show();
+                        return;
+                    }
+                    PairedDeviceStore.updateAddress(this, device.address);
+                    if (device.adbPort > 0) PairedDeviceStore.updatePort(this, device.adbPort);
+                    syncPeerToViewFields(PairedDeviceStore.load(this));
+                    updatePairedDeviceUi();
+                    new android.app.AlertDialog.Builder(this)
+                            .setTitle(R.string.pair_existing_title)
+                            .setMessage(R.string.pair_existing_message)
+                            .setPositiveButton(R.string.pair_watch_button,
+                                    (d, which) -> watchPairedDevice())
+                            .setNegativeButton(android.R.string.cancel, null).show();
+                });
+            });
             return;
         }
         EditText codeInput = new EditText(this);
