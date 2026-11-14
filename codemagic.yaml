@@ -1,0 +1,23 @@
+# Codemagic Android test build for the checked-in ScrcpyForAndroid sources.
+# Produces an installable debug APK; no release signing credentials are needed.
+workflows:
+  android-debug-apk:
+    name: Android Debug APK
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    environment:
+      java: 17
+    scripts:
+      - name: Configure Android SDK
+        script: |
+          set -eu
+          printf 'sdk.dir=%s\n' "$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/local.properties"
+      - name: Build Android debug APK
+        script: |
+          set -eu
+          chmod +x gradlew
+          ./gradlew :app:assembleScrcpyDebug --no-daemon
+          find app/build/outputs/apk/scrcpy/debug -name '*.apk' -type f -print
+          test -n "$(find app/build/outputs/apk/scrcpy/debug -name '*.apk' -type f -print -quit)"
+    artifacts:
+      - app/build/outputs/apk/scrcpy/debug/*.apk
