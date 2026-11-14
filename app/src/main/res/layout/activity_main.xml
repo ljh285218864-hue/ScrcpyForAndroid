@@ -48,6 +48,106 @@
             android:orientation="vertical"
             tools:context=".MainActivity">
 
+            <!-- Everyday screen: one primary action, all legacy tools retained below. -->
+            <LinearLayout
+                android:id="@+id/quick_home"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginLeft="8dp"
+                android:layout_marginTop="8dp"
+                android:layout_marginRight="8dp"
+                android:orientation="vertical"
+                android:padding="16dp"
+                android:background="#28313B">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/quick_device_title"
+                    android:textColor="@color/white"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:id="@+id/quick_device_name"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/quick_device_none"
+                    android:textColor="@color/white"
+                    android:textSize="21sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/quick_connection_status"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="@string/quick_status_unpaired"
+                    android:textColor="#B9D6F1"
+                    android:textSize="14sp" />
+
+                <Button
+                    android:id="@+id/quick_watch_button"
+                    android:layout_width="match_parent"
+                    android:layout_height="58dp"
+                    android:layout_marginTop="16dp"
+                    android:background="@drawable/btn_selector"
+                    android:text="@string/quick_watch_add"
+                    android:textColor="@color/white"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:id="@+id/quick_pair_actions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal">
+                    <Button
+                        android:id="@+id/quick_show_pair_code"
+                        android:layout_width="0dp"
+                        android:layout_height="48dp"
+                        android:layout_weight="1"
+                        android:layout_marginRight="4dp"
+                        android:text="@string/quick_pair_show"
+                        android:textSize="13sp" />
+                    <Button
+                        android:id="@+id/quick_find_peer"
+                        android:layout_width="0dp"
+                        android:layout_height="48dp"
+                        android:layout_weight="1"
+                        android:layout_marginLeft="4dp"
+                        android:text="@string/quick_pair_search"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/quick_receive_switch"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/quick_allow_receiver"
+                    android:textColor="@color/white"
+                    android:textSize="14sp" />
+
+                <Button
+                    android:id="@+id/quick_advanced_button"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/quick_open_advanced"
+                    android:textSize="14sp" />
+            </LinearLayout>
+
+            <!-- Original inputs/actions remain available and initialized, but hidden
+                 until the user explicitly opens device management. -->
+            <LinearLayout
+                android:id="@+id/layout_advanced_controls"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -739,6 +839,7 @@
                 android:textColor="@color/white"
                 android:textSize="15sp"
                 android:visibility="gone" />
+            </LinearLayout>
         </LinearLayout>
     </ScrollView>
 </FrameLayout>
