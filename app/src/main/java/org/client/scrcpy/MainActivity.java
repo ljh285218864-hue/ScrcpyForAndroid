@@ -378,8 +378,18 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         initLanWakeControls();
         initLanAutoDiscovery();
         Button openDebugSettings = findViewById(R.id.button_open_wireless_debugging);
+        final boolean isXiaomiFamily = XiaomiSettingsSupport.isXiaomiFamily(
+                Build.MANUFACTURER, Build.BRAND);
         if (openDebugSettings != null) {
+            if (isXiaomiFamily) {
+                openDebugSettings.setText(R.string.action_open_xiaomi_developer_options);
+            }
             openDebugSettings.setOnClickListener(v -> openWirelessDebugSettings());
+        }
+        Button xiaomiGuide = findViewById(R.id.button_xiaomi_debug_help);
+        if (xiaomiGuide != null) {
+            xiaomiGuide.setVisibility(isXiaomiFamily ? View.VISIBLE : View.GONE);
+            xiaomiGuide.setOnClickListener(v -> showXiaomiDeveloperGuide());
         }
 
         EditText editText = findViewById(R.id.editText_server_host);
@@ -1360,6 +1370,18 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
      * The user must enable wireless debugging and approve ADB themselves.
      */
     private void openWirelessDebugSettings() {
+        if (XiaomiSettingsSupport.isXiaomiFamily(Build.MANUFACTURER, Build.BRAND)) {
+            // Xiaomi / Redmi / POCO: the public developer-options entry is more
+            // reliable than an undocumented wireless-debugging deep-link.
+            // Never launch hidden com.android.settings internal activities.
+            if (launchDebugSettings(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) {
+                Toast.makeText(this, R.string.xiaomi_debug_developer_opened,
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+            showXiaomiDeveloperGuide();
+            return;
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
                 && launchDebugSettings("android.settings.WIRELESS_DEBUGGING_SETTINGS")) {
             return;
@@ -1376,6 +1398,33 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         }
         Toast.makeText(this, R.string.wireless_debugging_settings_unavailable,
                 Toast.LENGTH_LONG).show();
+    }
+
+    /**
+     * Xiaomi / Redmi / POCO setup guide. MIUI and HyperOS rename the "About
+     * phone" and version submenus, so offer documented public Settings intents
+     * rather than guessing hidden vendor activity class names.
+     */
+    private void showXiaomiDeveloperGuide() {
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.xiaomi_debug_help_title)
+                .setMessage(R.string.xiaomi_debug_help_message)
+                .setPositiveButton(R.string.xiaomi_debug_open_developer, (dialog, which) -> {
+                    if (!launchDebugSettings(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+                            && !launchDebugSettings(Settings.ACTION_SETTINGS)) {
+                        Toast.makeText(this, R.string.wireless_debugging_settings_unavailable,
+                                Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNeutralButton(R.string.xiaomi_debug_open_about_phone, (dialog, which) -> {
+                    if (!launchDebugSettings(Settings.ACTION_DEVICE_INFO_SETTINGS)
+                            && !launchDebugSettings(Settings.ACTION_SETTINGS)) {
+                        Toast.makeText(this, R.string.wireless_debugging_settings_unavailable,
+                                Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
     }
 
     private boolean launchDebugSettings(String action) {
