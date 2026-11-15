@@ -50,6 +50,20 @@ public class SystemAdbQrPairingSessionTest {
         assertTrue(service.matches("studio-[A-Za-z0-9]{10}"));
     }
 
+    @Test public void acceptsTrailingDotOnAndroidDnsSdServiceType() {
+        String output = "List of discovered mdns services\\n"
+                + "studio-A1B2C3D4E5 _adb-tls-pairing._tcp. 192.168.1.17:41629\\n"
+                + "adb-TARGET _adb-tls-connect._tcp. 192.168.1.17:38019\\n";
+        LanDeviceDiscovery.Device result =
+                SystemAdbQrPairingSession.findMatchingAdbMdnsService(
+                        output, "studio-A1B2C3D4E5");
+        assertNotNull(result);
+        assertEquals(41629, result.pairingPort);
+        assertEquals(38019,
+                SystemAdbQrPairingSession.findAdbConnectPort(
+                        output, "192.168.1.17"));
+    }
+
     @Test public void ignoresInvalidPorts() {
         String output = "studio-A1B2C3D4E5 _adb-tls-pairing._tcp 192.168.1.17:65536\n";
         assertNull(SystemAdbQrPairingSession.findMatchingAdbMdnsService(
