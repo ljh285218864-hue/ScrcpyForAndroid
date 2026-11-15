@@ -63,13 +63,16 @@ public final class LanDeviceDiscovery {
         public final int wakePort;
         public final int adbPort;
         public final int pairingPort;
+        public final String pairingServiceName;
 
-        Device(String name, String address, int wakePort, int adbPort, int pairingPort) {
+        Device(String name, String address, int wakePort, int adbPort, int pairingPort,
+               String pairingServiceName) {
             this.name = name;
             this.address = address;
             this.wakePort = wakePort;
             this.adbPort = adbPort;
             this.pairingPort = pairingPort;
+            this.pairingServiceName = pairingServiceName;
         }
 
         public String label() {
@@ -205,7 +208,10 @@ public final class LanDeviceDiscovery {
         final boolean isPairing = ADB_PAIR_TYPE.equals(type);
         final int adbPort = isAdb ? info.getPort() : previous == null ? 0 : previous.adbPort;
         final int pairingPort = isPairing ? info.getPort() : previous == null ? 0 : previous.pairingPort;
-        discovered.put(address, new Device(name, address, wakePort, adbPort, pairingPort));
+        String serviceName = isPairing ? info.getServiceName() :
+                previous == null ? "" : previous.pairingServiceName;
+        discovered.put(address, new Device(name, address, wakePort, adbPort, pairingPort,
+                serviceName));
         listener.onChanged(available());
     }
 
