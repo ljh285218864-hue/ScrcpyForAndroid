@@ -1,4 +1,5 @@
 name: Build guided QR Android APK (reuse verified native ADB)
+# Rebuild corrected DNS-SD unit tests and the embedded QR camera.
 
 on:
   workflow_dispatch:
