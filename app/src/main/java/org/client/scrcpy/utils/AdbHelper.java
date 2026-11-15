@@ -186,6 +186,26 @@ public class AdbHelper {
         return false;
     }
 
+    /**
+     * System wireless-debugging pairing. Unlike adbCmd(), this preserves
+     * stderr and the process exit code so the UI can explain an actual error.
+     * Never log or persist the ephemeral six-digit pairing code.
+     */
+    public static ExecUtil.AdbCommandResult adbPair(
+            Context mContext, String host, int pairPort, String code) {
+        genKeyFile(mContext);
+        String executable = mContext.getApplicationInfo().nativeLibraryDir + "/libadb.so";
+        HashMap<String, String> env = new HashMap<>();
+        env.put("HOME", mContext.getFilesDir().getAbsolutePath());
+        env.put("TMPDIR", mContext.getCacheDir().getAbsolutePath());
+        env.put("ANDROID_ADB_SERVER_PORT", "5137");
+        env.put("ADB_VENDOR_KEYS",
+                new File(mContext.getFilesDir(), ".android").getAbsolutePath());
+        return ExecUtil.adbCommendWithResult(
+                new String[]{executable, "pair", host + ":" + pairPort, code},
+                env, mContext.getFilesDir(), 20);
+    }
+
     public static String adbCmd(Context mContext, String... cmd) {
         return adbCmd(mContext, true, cmd);
     }
