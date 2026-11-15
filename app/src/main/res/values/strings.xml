@@ -17,6 +17,22 @@
     <string name="quick_pair_help">请在一台手机显示配对码，另一台手机搜索并输入，双方确认后保存配对关系。</string>
     <string name="quick_pair_show">显示我的配对码</string>
     <string name="quick_pair_search">搜索附近手机</string>
+
+    <string name="quick_pair_scan">扫码配对</string>
+    <string name="qr_scan_prompt">对准另一台手机「显示我的配对码」里的二维码</string>
+    <string name="qr_invalid">二维码不是有效的屏幕同步配对码，请在对方手机重新显示二维码。</string>
+    <string name="qr_wifi_required">无法读取本机 Wi-Fi 地址。请连接 Wi-Fi，或使用原来的6位码配对。</string>
+    <string name="qr_app_show_hint">让另一台手机点击「扫码配对」，扫描此二维码。本机仍需点击「允许配对」，二维码3分钟内有效。</string>
+    <string name="qr_app_pair_failed">二维码配对没有完成：%1$s</string>
+    <string name="qr_device_already_paired">已有配对手机。如需更换，请先在设备管理中解除旧设备配对。</string>
+    <string name="qr_app_pair_success">扫码配对成功！接下来需要完成 Android 系统无线调试授权。</string>
+    <string name="qr_system_option">系统无线调试扫码授权</string>
+    <string name="qr_system_hint">请在被观看的手机打开「设置 → 开发者选项 → 无线调试 → 使用二维码配对设备」，扫描本二维码。扫描时保持两台手机在相同 Wi-Fi。若没有扫码入口，改用6位配对码授权。</string>
+    <string name="qr_system_waiting">等待被观看手机在系统无线调试设置中扫码…</string>
+    <string name="qr_system_pairing">发现系统无线调试配对服务，正在验证授权…</string>
+    <string name="qr_system_code_fallback">改用6位系统配对码</string>
+    <string name="qr_system_success">系统二维码配对成功，正在尝试连接…</string>
+
     <string name="quick_stage_saved_connection">正在检查已授权的连接…</string>
     <string name="quick_stage_discovering">正在寻找已配对手机和无线调试端口…</string>
     <string name="quick_stage_authorizing">正在验证配对手机和系统连接…</string>
