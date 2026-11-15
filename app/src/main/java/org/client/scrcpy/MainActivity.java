@@ -1634,17 +1634,38 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         return image;
     }
 
+    private static final int APP_QR_CAMERA_REQUEST = 8291;
+
     private void scanAppPairQr() {
         if (PairedDeviceStore.load(this) != null) {
             Toast.makeText(this, R.string.qr_device_already_paired, Toast.LENGTH_LONG).show();
             return;
         }
-        new IntentIntegrator(this)
-                .setDesiredBarcodeFormats(java.util.Collections.singletonList("QR_CODE"))
-                .setPrompt(getString(R.string.qr_scan_prompt))
-                .setBeepEnabled(false)
-                .setOrientationLocked(false)
-                .initiateScan();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+                && checkSelfPermission(Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.CAMERA},
+                    APP_QR_CAMERA_REQUEST);
+            return;
+        }
+        try {
+            new IntentIntegrator(this)
+                    .setCaptureActivity(AppQrCaptureActivity.class)
+                    .setDesiredBarcodeFormats(java.util.Collections.singletonList("QR_CODE"))
+                    .setPrompt(getString(R.string.qr_scan_prompt))
+                    .setBeepEnabled(false)
+                    .setOrientationLocked(true)
+                    .initiateScan();
+        } catch (RuntimeException exception) {
+            Log.e("Scrcpy", "In-app QR scanner failed to open", exception);
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle(R.string.guide_help_title)
+                    .setMessage(R.string.guide_qr_scan_error)
+                    .setPositiveButton(R.string.quick_pair_search,
+                            (d, which) -> startLanAutoDiscovery())
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show();
+        }
     }
 
     @Override
@@ -2715,6 +2736,14 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             // Receipt can still be verified in the app even if notification
             // permission is declined.
             runLocalWakeTest();
+        } else if (requestCode == APP_QR_CAMERA_REQUEST) {
+            if (grantResults.length > 0
+                    && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                scanAppPairQr();
+            } else {
+                Toast.makeText(this, R.string.guide_qr_permission,
+                        Toast.LENGTH_LONG).show();
+            }
         }
     }
 
