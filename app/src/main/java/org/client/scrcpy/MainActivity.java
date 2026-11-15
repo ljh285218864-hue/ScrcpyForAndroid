@@ -56,6 +56,11 @@ import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ImageView;
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.integration.android.IntentIntegrator;
+import com.google.zxing.integration.android.IntentResult;
+import com.journeyapps.barcodescanner.BarcodeEncoder;
 import android.widget.ListPopupWindow;
 import android.widget.ScrollView;
 import android.widget.Spinner;
@@ -114,6 +119,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     private OnBackInvokedCallback backInvokedCallback;
     private LanDeviceDiscovery lanDiscovery;
     private OneTapConnection oneTapConnection;
+    private SystemAdbQrPairingSession systemQrSession;
     private boolean oneTapConnecting;
     private boolean skipWakeRequestOnce;
     private List<LanDeviceDiscovery.Device> lanDevices = new ArrayList<>();
@@ -1074,6 +1080,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     @Override
     protected void onDestroy() {
         if (oneTapConnection != null) oneTapConnection.cancel();
+        if (systemQrSession != null) systemQrSession.stop();
         pairingHandler.removeCallbacks(pairingApprovalPoll);
         stopLanAutoDiscovery();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && backInvokedCallback != null) {
@@ -1580,18 +1587,121 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             Toast.makeText(this, R.string.wake_lan_start_failed, Toast.LENGTH_LONG).show();
             return;
         }
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        int pad = (int) (18 * getResources().getDisplayMetrics().density);
+        form.setPadding(pad, 6, pad, 6);
+        TextView hint = new TextView(this);
+        hint.setText(R.string.qr_app_show_hint);
+        hint.setTextSize(14);
+        form.addView(hint);
+        String localIp = PairQrCode.localWifiIp(this);
+        if (localIp != null) {
+            try {
+                String payload = PairQrCode.createAppPayload(localIp, code);
+                ImageView image = makeQrImage(payload);
+                form.addView(image);
+            } catch (Exception error) {
+                Log.w("Scrcpy", "App QR render failed", error);
+            }
+        } else {
+            Toast.makeText(this, R.string.qr_wifi_required, Toast.LENGTH_LONG).show();
+        }
         TextView codeText = new TextView(this);
         codeText.setText(code);
-        codeText.setTextSize(30);
+        codeText.setTextSize(27);
         codeText.setTextIsSelectable(true);
         codeText.setGravity(android.view.Gravity.CENTER);
-        int pad = (int) (24 * getResources().getDisplayMetrics().density);
-        codeText.setPadding(pad, pad, pad, pad);
+        codeText.setPadding(0, pad / 2, 0, pad / 2);
+        form.addView(codeText);
         new android.app.AlertDialog.Builder(this)
                 .setTitle(R.string.pair_code_title)
-                .setMessage(R.string.pair_code_instructions)
-                .setView(codeText)
+                .setView(form)
                 .setPositiveButton(R.string.pair_code_ack, null).show();
+    }
+
+    private ImageView makeQrImage(String payload) throws Exception {
+        android.graphics.Bitmap bitmap = new BarcodeEncoder()
+                .encodeBitmap(payload, BarcodeFormat.QR_CODE, 620, 620);
+        ImageView image = new ImageView(this);
+        image.setImageBitmap(bitmap);
+        image.setAdjustViewBounds(true);
+        image.setMaxWidth(620);
+        image.setMaxHeight(620);
+        image.setContentDescription("扫描二维码进行配对");
+        return image;
+    }
+
+    private void scanAppPairQr() {
+        if (PairedDeviceStore.load(this) != null) {
+            Toast.makeText(this, R.string.qr_device_already_paired, Toast.LENGTH_LONG).show();
+            return;
+        }
+        new IntentIntegrator(this)
+                .setDesiredBarcodeFormats(IntentIntegrator.QR_CODE_TYPES)
+                .setPrompt(getString(R.string.qr_scan_prompt))
+                .setBeepEnabled(false)
+                .setOrientationLocked(false)
+                .initiateScan();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        IntentResult scanned = IntentIntegrator.parseActivityResult(requestCode, resultCode, data);
+        if (scanned != null) {
+            if (scanned.getContents() != null) {
+                PairQrCode.Target target = PairQrCode.parseAppPayload(scanned.getContents());
+                if (target == null) {
+                    Toast.makeText(this, R.string.qr_invalid, Toast.LENGTH_LONG).show();
+                } else {
+                    requestAppPairFromQr(target);
+                }
+            }
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    private void requestAppPairFromQr(PairQrCode.Target target) {
+        if (PairedDeviceStore.load(this) != null) {
+            Toast.makeText(this, R.string.qr_device_already_paired, Toast.LENGTH_LONG).show();
+            return;
+        }
+        Progress.showDialog(this, getString(R.string.pair_waiting_owner));
+        ThreadUtils.workPost(() -> {
+            PairLanClient.Result result = PairLanClient.pair(target.host, target.port, target.code);
+            ThreadUtils.post(() -> {
+                Progress.closeDialog();
+                if (isFinishing() || isDestroyed()) return;
+                if (!result.ok()) {
+                    Toast.makeText(this, getString(R.string.qr_app_pair_failed, result.error),
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
+                if (PairedDeviceStore.load(this) != null) {
+                    Toast.makeText(this, R.string.qr_device_already_paired,
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
+                PairedDeviceStore.save(this, "已扫码手机", target.host, result.secret, 0);
+                try {
+                    WakeLanService.startByOwner(this);
+                } catch (RuntimeException error) {
+                    Log.w("Scrcpy", "Receiver could not start after QR pairing", error);
+                }
+                syncPeerToViewFields(PairedDeviceStore.load(this));
+                updatePairedDeviceUi();
+                new android.app.AlertDialog.Builder(this)
+                        .setTitle(R.string.pair_success_title)
+                        .setMessage(R.string.qr_app_pair_success)
+                        .setPositiveButton(R.string.qr_system_option,
+                                (d, which) -> showSystemAdbPairQr())
+                        .setNeutralButton(R.string.pair_authorize_button,
+                                (d, which) -> authorizeSystemAdb())
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show();
+            });
+        });
     }
 
     private void showIncomingPairConsent(WakeLanService.PendingPair pending) {
@@ -1647,11 +1757,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         Button primary = findViewById(R.id.quick_watch_button);
         Button showCode = findViewById(R.id.quick_show_pair_code);
         Button search = findViewById(R.id.quick_find_peer);
+        Button scanQr = findViewById(R.id.quick_scan_pair_qr);
         Button advanced = findViewById(R.id.quick_advanced_button);
         Switch receiver = findViewById(R.id.quick_receive_switch);
         if (primary != null) primary.setOnClickListener(v -> startOneTapWatch());
         if (showCode != null) showCode.setOnClickListener(v -> showLocalPairCode());
         if (search != null) search.setOnClickListener(v -> startLanAutoDiscovery());
+        if (scanQr != null) scanQr.setOnClickListener(v -> scanAppPairQr());
         if (advanced != null) advanced.setOnClickListener(v -> toggleQuickAdvanced());
         if (receiver != null) {
             receiver.setChecked(!TextUtils.isEmpty(WakeLanService.currentCode(this)));
@@ -1714,7 +1826,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                 .setTitle(R.string.quick_pair_title)
                 .setMessage(R.string.quick_pair_help)
                 .setPositiveButton(R.string.quick_pair_show, (d, which) -> showLocalPairCode())
-                .setNeutralButton(R.string.quick_pair_search, (d, which) -> startLanAutoDiscovery())
+                .setNeutralButton(R.string.quick_pair_scan, (d, which) -> scanAppPairQr())
                 .setNegativeButton(android.R.string.cancel, null).show();
     }
 
@@ -1954,13 +2066,102 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     private void authorizeSystemAdb() {
         PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
         if (peer == null) return;
+        CharSequence[] methods = {
+                getString(R.string.qr_system_option),
+                getString(R.string.pair_adb_find_port),
+                getString(R.string.pair_adb_manual_button)
+        };
         new android.app.AlertDialog.Builder(this)
                 .setTitle(R.string.pair_adb_guide_title)
                 .setMessage(R.string.pair_adb_guide_message)
-                .setPositiveButton(R.string.pair_adb_find_port, (d, which) ->
-                        discoverAdbPairingService(peer))
-                .setNeutralButton(R.string.pair_adb_manual_button, (d, which) ->
-                        promptManualSystemAdbPairing(peer))
+                .setItems(methods, (d, selection) -> {
+                    if (selection == 0) showSystemAdbPairQr();
+                    else if (selection == 1) discoverAdbPairingService(peer);
+                    else promptManualSystemAdbPairing(peer);
+                })
+                .setNegativeButton(android.R.string.cancel, null).show();
+    }
+
+    private void showSystemAdbPairQr() {
+        PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
+        if (peer == null) return;
+        stopLanAutoDiscovery();
+        if (systemQrSession != null) systemQrSession.stop();
+        String serviceName = PairQrCode.newSystemQrService();
+        String password = PairQrCode.newSystemQrPassword();
+        String payload = PairQrCode.createSystemQrPayload(serviceName, password);
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        int pad = (int) (18 * getResources().getDisplayMetrics().density);
+        content.setPadding(pad, pad, pad, pad);
+        TextView guide = new TextView(this);
+        guide.setText(R.string.qr_system_hint);
+        guide.setTextSize(14);
+        content.addView(guide);
+        try {
+            content.addView(makeQrImage(payload));
+        } catch (Exception error) {
+            Log.w("Scrcpy", "System QR generation failed", error);
+            Toast.makeText(this, R.string.pair_adb_failed, Toast.LENGTH_LONG).show();
+            return;
+        }
+        TextView state = new TextView(this);
+        state.setText(R.string.qr_system_waiting);
+        state.setTextSize(14);
+        state.setPadding(0, pad / 2, 0, 0);
+        content.addView(state);
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.qr_system_option)
+                .setView(content)
+                .setNegativeButton(R.string.qr_system_code_fallback,
+                        (d, which) -> authorizeSystemAdbCodeOnly())
+                .setPositiveButton(android.R.string.cancel, null)
+                .create();
+        systemQrSession = new SystemAdbQrPairingSession(this);
+        final SystemAdbQrPairingSession current = systemQrSession;
+        dialog.setOnDismissListener(d -> current.stop());
+        dialog.show();
+        current.start(serviceName, password, peer, new SystemAdbQrPairingSession.Listener() {
+            @Override public void onWaiting() {
+                if (!isFinishing()) state.setText(R.string.qr_system_waiting);
+            }
+
+            @Override public void onPairing() {
+                if (!isFinishing()) state.setText(R.string.qr_system_pairing);
+            }
+
+            @Override public void onSuccess(String verifiedHost, int connectPort) {
+                if (isFinishing() || isDestroyed()) return;
+                PairedDeviceStore.updateAddress(MainActivity.this, verifiedHost);
+                if (connectPort > 0) PairedDeviceStore.updatePort(MainActivity.this, connectPort);
+                PairedDeviceStore.Peer updated = PairedDeviceStore.load(MainActivity.this);
+                if (updated != null) syncPeerToViewFields(updated);
+                updatePairedDeviceUi();
+                dialog.dismiss();
+                Toast.makeText(MainActivity.this, R.string.qr_system_success,
+                        Toast.LENGTH_LONG).show();
+                startOneTapWatch();
+            }
+
+            @Override public void onError(String message) {
+                if (isFinishing() || isDestroyed()) return;
+                state.setText(message);
+                Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    private void authorizeSystemAdbCodeOnly() {
+        PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
+        if (peer == null) return;
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.pair_adb_guide_title)
+                .setMessage(R.string.pair_adb_guide_message)
+                .setPositiveButton(R.string.pair_adb_find_port,
+                        (d, which) -> discoverAdbPairingService(peer))
+                .setNeutralButton(R.string.pair_adb_manual_button,
+                        (d, which) -> promptManualSystemAdbPairing(peer))
                 .setNegativeButton(android.R.string.cancel, null).show();
     }
 
