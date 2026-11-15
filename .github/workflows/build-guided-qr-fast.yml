@@ -56,22 +56,22 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x gradlew
-          ./gradlew :app:assembleScrcpyDebug -PskipLibadb -PlibadbAbis=arm64-v8a --no-daemon --stacktrace
+          ./gradlew :app:testScrcpyDebugUnitTest :app:assembleScrcpyDebug -PskipLibadb -PlibadbAbis=arm64-v8a --no-daemon --stacktrace
           apk="$(find app/build/outputs/apk/scrcpy/debug -maxdepth 1 -name '*.apk' -print -quit)"
           test -n "$apk"
           test "$(stat -c '%s' "$apk")" -gt 1000000
           unzip -t "$apk" | tail -2
-          cp "$apk" ScreenSync-Guided-QR-arm64.apk
-          zip -j ScreenSync-Guided-QR-arm64.zip ScreenSync-Guided-QR-arm64.apk
-          sha256sum ScreenSync-Guided-QR-arm64.apk
+          cp "$apk" ScreenSync-QR-Fixed-arm64.apk
+          zip -j ScreenSync-QR-Fixed-arm64.zip ScreenSync-QR-Fixed-arm64.apk
+          sha256sum ScreenSync-QR-Fixed-arm64.apk
 
       - name: Upload APK build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ScreenSync-Guided-QR-debug
+          name: ScreenSync-QR-Fixed-debug
           path: |
-            ScreenSync-Guided-QR-arm64.apk
-            ScreenSync-Guided-QR-arm64.zip
+            ScreenSync-QR-Fixed-arm64.apk
+            ScreenSync-QR-Fixed-arm64.zip
           retention-days: 30
           if-no-files-found: error
 
@@ -81,7 +81,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release create screensync-guided-qr-20261115 \
-            ScreenSync-Guided-QR-arm64.apk ScreenSync-Guided-QR-arm64.zip \
-            --title 'ScreenSync 三步连接向导（扫码配对）' \
-            --notes "源码：$GITHUB_SHA。简洁三步向导：双方 App 配对、系统无线调试二维码授权、立即观看。扫码权限及异常回退、自动查找授权连接端口。安卓系统自带扫码页是否正常仍取决于手机系统。"
+          gh release create screensync-qr-fixed-20261115 \
+            ScreenSync-QR-Fixed-arm64.apk ScreenSync-QR-Fixed-arm64.zip \
+            --title 'ScreenSync 二维码配对修复版（扫码后不再无反馈）' \
+            --notes "源码：$GITHUB_SHA。修复扫码后长时间正在配对设备：双通道 mDNS 自动发现、ADB 握手超时与失败回调、系统授权后自动查找连接端口；无须手工输入 IP 和端口。仍受系统无线调试权限及 OEM 兼容性限制。"
