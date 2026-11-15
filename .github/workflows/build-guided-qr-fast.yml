@@ -61,17 +61,17 @@ jobs:
           test -n "$apk"
           test "$(stat -c '%s' "$apk")" -gt 1000000
           unzip -t "$apk" | tail -2
-          cp "$apk" ScreenSync-QR-Fixed-arm64.apk
-          zip -j ScreenSync-QR-Fixed-arm64.zip ScreenSync-QR-Fixed-arm64.apk
-          sha256sum ScreenSync-QR-Fixed-arm64.apk
+          cp "$apk" ScreenSync-QR-TwoWay-arm64.apk
+          zip -j ScreenSync-QR-TwoWay-arm64.zip ScreenSync-QR-TwoWay-arm64.apk
+          sha256sum ScreenSync-QR-TwoWay-arm64.apk
 
       - name: Upload APK build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ScreenSync-QR-Fixed-debug
+          name: ScreenSync-QR-TwoWay-debug
           path: |
-            ScreenSync-QR-Fixed-arm64.apk
-            ScreenSync-QR-Fixed-arm64.zip
+            ScreenSync-QR-TwoWay-arm64.apk
+            ScreenSync-QR-TwoWay-arm64.zip
           retention-days: 30
           if-no-files-found: error
 
@@ -81,7 +81,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release create screensync-qr-fixed-20261115 \
-            ScreenSync-QR-Fixed-arm64.apk ScreenSync-QR-Fixed-arm64.zip \
-            --title 'ScreenSync 二维码配对修复版（扫码后不再无反馈）' \
-            --notes "源码：$GITHUB_SHA。修复扫码后长时间正在配对设备：双通道 mDNS 自动发现、ADB 握手超时与失败回调、系统授权后自动查找连接端口；无须手工输入 IP 和端口。仍受系统无线调试权限及 OEM 兼容性限制。"
+          gh release create screensync-qr-two-way-20261115 \
+            ScreenSync-QR-TwoWay-arm64.apk ScreenSync-QR-TwoWay-arm64.zip \
+            --title 'ScreenSync 双向同屏与内置扫码修复版' \
+            --notes "源码：$GITHUB_SHA。修复 iQOO/小米双向观看：系统授权后自动多轮发现无线调试连接端口、兼容不同 mDNS 格式、无需填写 IP 端口；软件扫码使用内置相机，不再打开第三方扫码或百度。系统的无线调试扫码页仍由 Android 管理，ROM 兼容性需真机验证。"
