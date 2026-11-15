@@ -131,6 +131,30 @@ public final class OneTapConnection {
                 return;
             }
         }
+        // Direct authenticated ADB fallback for the saved App-paired host.
+        // On some Android ROMs the ScreenSync wake mDNS record is suppressed,
+        // while the official ADB TLS connect service remains discoverable.
+        // This does not bypass Android's own TLS pairing/authorization.
+        if (isCurrent(request)) {
+            try {
+                org.client.scrcpy.utils.ExecUtil.AdbCommandResult mdns =
+                        AdbHelper.adbMdnsServices(context);
+                int port = SystemAdbQrPairingSession.findAdbConnectPort(
+                        mdns.combinedOutput(), peer.host);
+                if (port > 0 && checkOnline(peer.host, port)) {
+                    final int verifiedPort = port;
+                    main.post(() -> {
+                        if (isCurrent(request)) {
+                            complete(request, callback, peer.host, verifiedPort);
+                        }
+                    });
+                    return;
+                }
+            } catch (RuntimeException error) {
+                android.util.Log.w("Scrcpy", "Saved peer ADB mDNS fallback failed", error);
+            }
+        }
+
         final Failure reason = trustedPeerFound
                 ? Failure.WIRELESS_DEBUGGING_NOT_READY
                 : Failure.DEVICE_NOT_FOUND;
