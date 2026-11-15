@@ -62,17 +62,17 @@ jobs:
           test -n "$apk"
           test "$(stat -c '%s' "$apk")" -gt 1000000
           unzip -t "$apk" | tail -2
-          cp "$apk" ScreenSync-QR-TwoWay-arm64.apk
-          zip -j ScreenSync-QR-TwoWay-arm64.zip ScreenSync-QR-TwoWay-arm64.apk
-          sha256sum ScreenSync-QR-TwoWay-arm64.apk
+          cp "$apk" ScreenSync-DisconnectView-arm64.apk
+          zip -j ScreenSync-DisconnectView-arm64.zip ScreenSync-DisconnectView-arm64.apk
+          sha256sum ScreenSync-DisconnectView-arm64.apk
 
       - name: Upload APK build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ScreenSync-QR-TwoWay-debug
+          name: ScreenSync-DisconnectView-debug
           path: |
-            ScreenSync-QR-TwoWay-arm64.apk
-            ScreenSync-QR-TwoWay-arm64.zip
+            ScreenSync-DisconnectView-arm64.apk
+            ScreenSync-DisconnectView-arm64.zip
           retention-days: 30
           if-no-files-found: error
 
@@ -82,7 +82,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release create screensync-qr-two-way-20261115 \
-            ScreenSync-QR-TwoWay-arm64.apk ScreenSync-QR-TwoWay-arm64.zip \
-            --title 'ScreenSync 双向同屏与内置扫码修复版' \
-            --notes "源码：$GITHUB_SHA。修复 iQOO/小米双向观看：系统授权后自动多轮发现无线调试连接端口、兼容不同 mDNS 格式、无需填写 IP 端口；软件扫码使用内置相机，不再打开第三方扫码或百度。系统的无线调试扫码页仍由 Android 管理，ROM 兼容性需真机验证。"
+          gh release create screensync-disconnect-view-20261115 \
+            ScreenSync-DisconnectView-arm64.apk ScreenSync-DisconnectView-arm64.zip \
+            --title 'ScreenSync 双向同屏 · 一键断开观看版' \
+            --notes "源码：$GITHUB_SHA。增加观看画面右上角「断开观看」按钮；一键停止当前视频流并返回首页，保留两台手机配对、系统 ADB 授权与下次立即观看能力。保留双向观看与内置扫码修复。"
