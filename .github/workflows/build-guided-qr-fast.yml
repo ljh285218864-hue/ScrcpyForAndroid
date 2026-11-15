@@ -1,4 +1,5 @@
 name: Build guided QR Android APK (reuse verified native ADB)
+# Parent-friendly notification settings built using public Android APIs.
 # Rebuild corrected DNS-SD unit tests and the embedded QR camera.
 
 on:
