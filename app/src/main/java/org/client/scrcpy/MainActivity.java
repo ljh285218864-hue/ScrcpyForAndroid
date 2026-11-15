@@ -120,6 +120,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     private LanDeviceDiscovery lanDiscovery;
     private OneTapConnection oneTapConnection;
     private SystemAdbQrPairingSession systemQrSession;
+    private boolean systemQrActive;
     private boolean oneTapConnecting;
     private boolean skipWakeRequestOnce;
     private List<LanDeviceDiscovery.Device> lanDevices = new ArrayList<>();
@@ -1081,6 +1082,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     protected void onDestroy() {
         if (oneTapConnection != null) oneTapConnection.cancel();
         if (systemQrSession != null) systemQrSession.stop();
+        systemQrActive = false;
         pairingHandler.removeCallbacks(pairingApprovalPoll);
         stopLanAutoDiscovery();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && backInvokedCallback != null) {
@@ -1735,15 +1737,31 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                 ? getString(R.string.quick_device_none) : peer.name);
         LinearLayout pairActions = findViewById(R.id.quick_pair_actions);
         if (pairActions != null) pairActions.setVisibility(peer == null ? View.VISIBLE : View.GONE);
+        // Keep system QR accessible even AFTER App pairing, and after any
+        // wireless-debugging port change. It never depends on advanced panels.
+        LinearLayout authorizeActions = findViewById(R.id.quick_authorize_actions);
+        if (authorizeActions != null) {
+            authorizeActions.setVisibility(peer == null ? View.GONE : View.VISIBLE);
+        }
+        TextView step = findViewById(R.id.quick_guide_step);
+        TextView hint = findViewById(R.id.quick_guide_hint);
+        boolean systemAuthorizationKnown = peer != null && peer.adbPort > 0;
+        if (step != null) step.setText(peer == null ? R.string.guide_step_one
+                : systemAuthorizationKnown ? R.string.guide_step_three : R.string.guide_step_two);
+        if (hint != null) hint.setText(peer == null ? R.string.guide_step_one_hint
+                : systemAuthorizationKnown ? R.string.guide_step_three_hint
+                : R.string.guide_step_two_hint);
+        // Both legacy receiver toggle and raw ADB fields stay out of normal UI.
         Switch receiver = findViewById(R.id.quick_receive_switch);
-        if (receiver != null) receiver.setVisibility(peer == null ? View.GONE : View.VISIBLE);
+        if (receiver != null) receiver.setVisibility(View.GONE);
         Button quickWatch = findViewById(R.id.quick_watch_button);
         if (quickWatch != null && !oneTapConnecting) {
-            quickWatch.setText(peer == null ? R.string.quick_watch_add : R.string.quick_watch_start);
-            quickWatch.setEnabled(true);
+            quickWatch.setVisibility(peer == null ? View.GONE : View.VISIBLE);
+            quickWatch.setText(R.string.quick_watch_start);
+            quickWatch.setEnabled(peer != null);
         }
         TextView quickStatus = findViewById(R.id.quick_connection_status);
-        if (quickStatus != null && !oneTapConnecting) {
+        if (quickStatus != null && !oneTapConnecting && !systemQrActive) {
             quickStatus.setText(peer == null
                     ? R.string.quick_status_unpaired : R.string.quick_status_paired);
         }
@@ -1758,13 +1776,35 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         Button showCode = findViewById(R.id.quick_show_pair_code);
         Button search = findViewById(R.id.quick_find_peer);
         Button scanQr = findViewById(R.id.quick_scan_pair_qr);
+        Button authorizeQr = findViewById(R.id.quick_system_qr_button);
+        Button openSystemSettings = findViewById(R.id.quick_open_debug_button);
+        Button enableReceiver = findViewById(R.id.quick_receive_button);
         Button advanced = findViewById(R.id.quick_advanced_button);
         Switch receiver = findViewById(R.id.quick_receive_switch);
         if (primary != null) primary.setOnClickListener(v -> startOneTapWatch());
         if (showCode != null) showCode.setOnClickListener(v -> showLocalPairCode());
         if (search != null) search.setOnClickListener(v -> startLanAutoDiscovery());
         if (scanQr != null) scanQr.setOnClickListener(v -> scanAppPairQr());
-        if (advanced != null) advanced.setOnClickListener(v -> toggleQuickAdvanced());
+        if (authorizeQr != null) authorizeQr.setOnClickListener(v -> showSystemAdbPairQr());
+        if (openSystemSettings != null) openSystemSettings.setOnClickListener(v ->
+                openWirelessDebugSettings());
+        if (enableReceiver != null) enableReceiver.setOnClickListener(v -> {
+            try {
+                WakeLanService.startByOwner(this);
+                Toast.makeText(this, R.string.guide_receiver_started, Toast.LENGTH_LONG).show();
+            } catch (RuntimeException error) {
+                Log.w("Scrcpy", "Failed to enable explicit receiver", error);
+                Toast.makeText(this, R.string.quick_receive_failed, Toast.LENGTH_LONG).show();
+            }
+        });
+        if (advanced != null) advanced.setOnClickListener(v -> {
+            LinearLayout details = findViewById(R.id.layout_advanced_controls);
+            if (details != null && details.getVisibility() == View.VISIBLE) {
+                toggleQuickAdvanced();
+            } else {
+                showGuidedHelp();
+            }
+        });
         if (receiver != null) {
             receiver.setChecked(!TextUtils.isEmpty(WakeLanService.currentCode(this)));
             receiver.setOnCheckedChangeListener((view, enabled) -> {
@@ -1818,7 +1858,38 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (details == null || button == null) return;
         boolean willShow = details.getVisibility() != View.VISIBLE;
         details.setVisibility(willShow ? View.VISIBLE : View.GONE);
-        button.setText(willShow ? R.string.quick_close_advanced : R.string.quick_open_advanced);
+        button.setText(willShow ? R.string.guide_help_close_advanced : R.string.guide_help_button);
+    }
+
+    private void showGuidedHelp() {
+        PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
+        if (peer == null) {
+            String[] items = {
+                    getString(R.string.quick_pair_search),
+                    getString(R.string.guide_help_three)
+            };
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle(R.string.guide_help_title)
+                    .setItems(items, (d, which) -> {
+                        if (which == 0) startLanAutoDiscovery();
+                        else toggleQuickAdvanced();
+                    })
+                    .setNegativeButton(android.R.string.cancel, null).show();
+            return;
+        }
+        String[] items = {
+                getString(R.string.guide_help_one),
+                getString(R.string.guide_help_two),
+                getString(R.string.guide_help_three)
+        };
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.guide_help_title)
+                .setItems(items, (d, which) -> {
+                    if (which == 0) showSystemAdbPairQr();
+                    else if (which == 1) discoverAdbPairingService(peer);
+                    else toggleQuickAdvanced();
+                })
+                .setNegativeButton(android.R.string.cancel, null).show();
     }
 
     private void showFirstUseQuickPair() {
@@ -2120,7 +2191,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                 .create();
         systemQrSession = new SystemAdbQrPairingSession(this);
         final SystemAdbQrPairingSession current = systemQrSession;
-        dialog.setOnDismissListener(d -> current.stop());
+        systemQrActive = true;
+        dialog.setOnDismissListener(d -> {
+            current.stop();
+            if (systemQrSession == current) systemQrSession = null;
+            systemQrActive = false;
+            if (!isFinishing() && !isDestroyed()) updatePairedDeviceUi();
+        });
         dialog.show();
         current.start(serviceName, password, peer, new SystemAdbQrPairingSession.Listener() {
             @Override public void onWaiting() {
