@@ -62,17 +62,17 @@ jobs:
           test -n "$apk"
           test "$(stat -c '%s' "$apk")" -gt 1000000
           unzip -t "$apk" | tail -2
-          cp "$apk" ScreenSync-DisconnectView-arm64.apk
-          zip -j ScreenSync-DisconnectView-arm64.zip ScreenSync-DisconnectView-arm64.apk
-          sha256sum ScreenSync-DisconnectView-arm64.apk
+          cp "$apk" ScreenSync-ElderNotifications-arm64.apk
+          zip -j ScreenSync-ElderNotifications-arm64.zip ScreenSync-ElderNotifications-arm64.apk
+          sha256sum ScreenSync-ElderNotifications-arm64.apk
 
       - name: Upload APK build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ScreenSync-DisconnectView-debug
+          name: ScreenSync-ElderNotifications-debug
           path: |
-            ScreenSync-DisconnectView-arm64.apk
-            ScreenSync-DisconnectView-arm64.zip
+            ScreenSync-ElderNotifications-arm64.apk
+            ScreenSync-ElderNotifications-arm64.zip
           retention-days: 30
           if-no-files-found: error
 
@@ -82,7 +82,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release create screensync-disconnect-view-20261115 \
-            ScreenSync-DisconnectView-arm64.apk ScreenSync-DisconnectView-arm64.zip \
-            --title 'ScreenSync 双向同屏 · 一键断开观看版' \
-            --notes "源码：$GITHUB_SHA。增加观看画面右上角「断开观看」按钮；一键停止当前视频流并返回首页，保留两台手机配对、系统 ADB 授权与下次立即观看能力。保留双向观看与内置扫码修复。"
+          gh release create screensync-elder-notifications-20261115 \
+            ScreenSync-ElderNotifications-arm64.apk ScreenSync-ElderNotifications-arm64.zip \
+            --title 'ScreenSync 长辈模式 · 通知整理版' \
+            --notes "源码：$GITHUB_SHA。加入长辈模式的通知整理入口：集中打开手机普通应用通知设置、ScreenSync 自身通知设置，指导减少广告推送和误点；不会自动关闭系统无线调试、正在共享屏幕等安全提示。保留断开观看、双向观看和内置扫码。"
