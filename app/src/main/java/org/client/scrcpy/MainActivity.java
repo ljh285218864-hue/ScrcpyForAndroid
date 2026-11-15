@@ -121,6 +121,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     private OneTapConnection oneTapConnection;
     private SystemAdbQrPairingSession systemQrSession;
     private boolean systemQrActive;
+    private boolean autoFindingAdb;
     private boolean oneTapConnecting;
     private boolean skipWakeRequestOnce;
     private List<LanDeviceDiscovery.Device> lanDevices = new ArrayList<>();
@@ -1083,6 +1084,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (oneTapConnection != null) oneTapConnection.cancel();
         if (systemQrSession != null) systemQrSession.stop();
         systemQrActive = false;
+        autoFindingAdb = false;
         pairingHandler.removeCallbacks(pairingApprovalPoll);
         stopLanAutoDiscovery();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && backInvokedCallback != null) {
@@ -1782,7 +1784,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             quickWatch.setEnabled(peer != null);
         }
         TextView quickStatus = findViewById(R.id.quick_connection_status);
-        if (quickStatus != null && !oneTapConnecting && !systemQrActive) {
+        if (quickStatus != null && !oneTapConnecting && !systemQrActive && !autoFindingAdb) {
             quickStatus.setText(peer == null
                     ? R.string.quick_status_unpaired : R.string.quick_status_paired);
         }
@@ -2522,6 +2524,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
         if (peer == null || !trustedHost.equals(peer.host)) return;
         stopLanAutoDiscovery();
+        autoFindingAdb = true;
         setQuickStage(R.string.guide_adb_connect_searching);
         final LanDeviceDiscovery scan = new LanDeviceDiscovery(this,
                 new LanDeviceDiscovery.Listener() {
@@ -2540,6 +2543,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                 }
             }
             scan.stop();
+            autoFindingAdb = false;
             if (isFinishing() || isDestroyed()) return;
             final int newPort = discoveredPort;
             if (newPort <= 0) {
