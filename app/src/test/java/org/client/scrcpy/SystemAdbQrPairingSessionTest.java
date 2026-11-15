@@ -51,9 +51,9 @@ public class SystemAdbQrPairingSessionTest {
     }
 
     @Test public void acceptsTrailingDotOnAndroidDnsSdServiceType() {
-        String output = "List of discovered mdns services\\n"
-                + "studio-A1B2C3D4E5 _adb-tls-pairing._tcp. 192.168.1.17:41629\\n"
-                + "adb-TARGET _adb-tls-connect._tcp. 192.168.1.17:38019\\n";
+        String output = "List of discovered mdns services\n"
+                + "studio-A1B2C3D4E5 _adb-tls-pairing._tcp. 192.168.1.17:41629\n"
+                + "adb-TARGET _adb-tls-connect._tcp. 192.168.1.17:38019\n";
         LanDeviceDiscovery.Device result =
                 SystemAdbQrPairingSession.findMatchingAdbMdnsService(
                         output, "studio-A1B2C3D4E5");
