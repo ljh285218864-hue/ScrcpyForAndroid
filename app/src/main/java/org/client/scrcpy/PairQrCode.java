@@ -92,7 +92,7 @@ public final class PairQrCode {
 
     /** Only same-LAN RFC1918 IPv4 hosts are accepted from untrusted scans. */
     public static boolean isPrivateIpv4(String host) {
-        if (TextUtils.isEmpty(host)) return false;
+        if (host == null || host.isEmpty()) return false;
         String[] octets = host.split("[.]");
         if (octets.length != 4) return false;
         int[] p = new int[4];
