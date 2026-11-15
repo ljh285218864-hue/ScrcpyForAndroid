@@ -33,6 +33,14 @@
     <string name="guide_enable_receiver">允许已配对手机连接本机</string>
     <string name="guide_receiver_started">已请求开启接收服务，手机可能显示系统通知</string>
     <string name="guide_help_button">遇到问题？查看帮助与高级选项</string>
+
+    <string name="elder_notification_cleanup">长辈模式 · 整理通知</string>
+    <string name="elder_notifications_title">帮家人减少无用通知</string>
+    <string name="elder_notifications_description">可以整理广告促销和不重要的应用推送，减少误点。建议保留电话、短信、支付提醒以及手机安全和屏幕共享状态提示。调整其他应用通知需在本机系统设置中确认。</string>
+    <string name="elder_notifications_all_apps">管理手机应用通知</string>
+    <string name="elder_notifications_this_app">管理 ScreenSync 通知</string>
+    <string name="elder_notifications_unavailable">手机未提供这个设置入口，请打开系统设置中的通知管理</string>
+
     <string name="guide_help_title">连接帮助</string>
     <string name="guide_help_one">重新生成系统无线调试二维码</string>
     <string name="guide_help_two">自动查找系统配对码端口（只输入6位码）</string>
