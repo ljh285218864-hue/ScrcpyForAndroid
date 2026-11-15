@@ -202,6 +202,9 @@ public class AdbHelper {
         env.put("HOME", context.getFilesDir().getAbsolutePath());
         env.put("TMPDIR", context.getCacheDir().getAbsolutePath());
         env.put("ANDROID_ADB_SERVER_PORT", "5137");
+        // The Android-side adb binary must use embedded Openscreen mDNS;
+        // Bonjour/mdnsResponder is not generally available on OEM phones.
+        env.put("ADB_MDNS_OPENSCREEN", "1");
         env.put("ADB_VENDOR_KEYS",
                 new File(context.getFilesDir(), ".android").getAbsolutePath());
         return ExecUtil.adbCommendWithResult(
@@ -216,6 +219,9 @@ public class AdbHelper {
         env.put("HOME", mContext.getFilesDir().getAbsolutePath());
         env.put("TMPDIR", mContext.getCacheDir().getAbsolutePath());
         env.put("ANDROID_ADB_SERVER_PORT", "5137");
+        // The Android-side adb binary must use embedded Openscreen mDNS;
+        // Bonjour/mdnsResponder is not generally available on OEM phones.
+        env.put("ADB_MDNS_OPENSCREEN", "1");
         env.put("ADB_VENDOR_KEYS",
                 new File(mContext.getFilesDir(), ".android").getAbsolutePath());
         return ExecUtil.adbCommendWithResult(
@@ -239,6 +245,9 @@ public class AdbHelper {
         env.put("HOME", mContext.getFilesDir().getAbsolutePath());
         env.put("TMPDIR", mContext.getCacheDir().getAbsolutePath());
         env.put("ANDROID_ADB_SERVER_PORT", "5137");
+        // The Android-side adb binary must use embedded Openscreen mDNS;
+        // Bonjour/mdnsResponder is not generally available on OEM phones.
+        env.put("ADB_MDNS_OPENSCREEN", "1");
         // 尝试使用可构建的 adb 二进制文件
         // https://github.com/lzhiyong/android-sdk-tools
         // 此工具需要设置 $ADB_VENDOR_KEYS
@@ -300,6 +309,9 @@ public class AdbHelper {
             env.put("HOME", mContext.getFilesDir().getAbsolutePath());
             env.put("TMPDIR", mContext.getCacheDir().getAbsolutePath());
             env.put("ANDROID_ADB_SERVER_PORT", "5137");
+        // The Android-side adb binary must use embedded Openscreen mDNS;
+        // Bonjour/mdnsResponder is not generally available on OEM phones.
+        env.put("ADB_MDNS_OPENSCREEN", "1");
             File keyDir = new File(mContext.getFilesDir().getAbsolutePath(), ".android");
             env.put("ADB_VENDOR_KEYS", keyDir.getAbsolutePath());
 
