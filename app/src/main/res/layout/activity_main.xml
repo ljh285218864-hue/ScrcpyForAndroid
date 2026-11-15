@@ -181,6 +181,15 @@
                     android:textSize="18sp"
                     android:textStyle="bold" />
 
+                <!-- Parent-friendly helper; does not alter protected security notices. -->
+                <Button
+                    android:id="@+id/quick_notification_cleanup"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/elder_notification_cleanup"
+                    android:textSize="15sp" />
+
                 <Button
                     android:id="@+id/quick_advanced_button"
                     android:layout_width="match_parent"
