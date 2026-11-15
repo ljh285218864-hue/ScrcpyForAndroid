@@ -157,6 +157,71 @@ public class ExecUtil {
         return "";
     }
 
+    /**
+     * Structured ADB result for commands that need reliable success/failure
+     * diagnostics (especially wireless TLS pairing). The legacy adbCommend()
+     * intentionally remains unchanged for existing scrcpy call paths.
+     */
+    public static final class AdbCommandResult {
+        public final int exitCode;
+        public final String stdout;
+        public final String stderr;
+        public final boolean timedOut;
+
+        public AdbCommandResult(int exitCode, String stdout, String stderr, boolean timedOut) {
+            this.exitCode = exitCode;
+            this.stdout = stdout;
+            this.stderr = stderr;
+            this.timedOut = timedOut;
+        }
+
+        public String combinedOutput() {
+            if (stdout.isEmpty()) return stderr;
+            if (stderr.isEmpty()) return stdout;
+            return stdout + "\n" + stderr;
+        }
+    }
+
+    /**
+     * Collect BOTH adb output streams and process status. Limit pairing waits
+     * so a stale endpoint cannot leave the UI spinning indefinitely.
+     */
+    public static AdbCommandResult adbCommendWithResult(
+            String[] cmd, Map<String, String> env, File workDir, long timeoutSeconds) {
+        Process process = null;
+        StringBuilder stdout = new StringBuilder();
+        StringBuilder stderr = new StringBuilder();
+        Thread outThread = null;
+        Thread errThread = null;
+        try {
+            ProcessBuilder builder = new ProcessBuilder(cmd).directory(workDir);
+            builder.environment().putAll(env);
+            process = builder.start();
+            process.getOutputStream().close();
+            outThread = drainAsync(process.getInputStream(), stdout, false);
+            errThread = drainAsync(process.getErrorStream(), stderr, false);
+            if (!process.waitFor(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                if (outThread != null) outThread.join(1200);
+                if (errThread != null) errThread.join(1200);
+                return new AdbCommandResult(-1, stdout.toString(), stderr.toString(), true);
+            }
+            int exitCode = process.exitValue();
+            if (outThread != null) outThread.join(1500);
+            if (errThread != null) errThread.join(1500);
+            return new AdbCommandResult(exitCode, stdout.toString(), stderr.toString(), false);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            return new AdbCommandResult(-1, stdout.toString(),
+                    "ADB command interrupted", true);
+        } catch (IOException error) {
+            return new AdbCommandResult(-1, stdout.toString(),
+                    "ADB could not start: " + error.getMessage(), false);
+        } finally {
+            if (process != null) process.destroy();
+        }
+    }
+
     private static Thread drainAsync(InputStream stream, StringBuilder sink, boolean logAll) {
         Thread thread = new Thread(() -> {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream))) {
