@@ -1,0 +1,40 @@
+name: Publish QR pairing APK download
+
+on:
+  push:
+    paths:
+      - '.github/workflows/publish-qr-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download previously verified successful Android APK artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/qr-apk"
+          gh run download 43665654298 --name ScrcpyForAndroid-arm64-debug --dir "$RUNNER_TEMP/qr-apk"
+          find "$RUNNER_TEMP/qr-apk" -type f -maxdepth 3 -print
+          candidate="$(find "$RUNNER_TEMP/qr-apk" -type f -name '*.apk' -print -quit)"
+          test -n "$candidate"
+          cp "$candidate" ScreenSync-QR-arm64.apk
+          test "$(stat -c '%s' ScreenSync-QR-arm64.apk)" -gt 1000000
+          zip -j ScreenSync-QR-arm64.zip ScreenSync-QR-arm64.apk
+          sha256sum ScreenSync-QR-arm64.apk
+      - name: Create permanent browser download links
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release create screensync-qr-20261115 ScreenSync-QR-arm64.apk ScreenSync-QR-arm64.zip \
+            --title 'ScreenSync 二维码配对版（Android ARM64）' \
+            --notes '已通过 GitHub Android APK 构建（run 43665654298, commit 195aac3）。包含应用扫码配对与无线调试二维码授权；首次系统权限仍需用户操作。若旧安装签名不同，请先备份配对信息。'
