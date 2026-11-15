@@ -250,6 +250,8 @@
     <string name="connect_faild_ask">Do you want to retry the connection?</string>
 
     <string name="disconnect">Disconnect</string>
+    <string name="mirror_disconnect_watch">断开观看</string>
+    <string name="mirror_disconnected_saved">已断开观看，设备配对已保留</string>
     <string name="disconnect_ask">The connection is detected to be disconnected, please exit and reconnect</string>
 
     <string name="need_register">Registration required</string>
