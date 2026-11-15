@@ -1901,7 +1901,9 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         try {
             Intent intent = new Intent(thisApp
                     ? Settings.ACTION_APP_NOTIFICATION_SETTINGS
-                    : Settings.ACTION_NOTIFICATION_SETTINGS);
+                    : Build.VERSION.SDK_INT >= 33
+                        ? Settings.ACTION_ALL_APPS_NOTIFICATION_SETTINGS
+                        : Settings.ACTION_SETTINGS);
             if (thisApp) intent.putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
             startActivity(intent);
         } catch (ActivityNotFoundException | SecurityException error) {
