@@ -169,6 +169,26 @@ public final class SystemAdbQrPairingSession {
         return null;
     }
 
+    /** Return only the ADB TLS connect port advertised by the trusted IP. */
+    static int findAdbConnectPort(String output, String trustedHost) {
+        if (output == null || !PairQrCode.isPrivateIpv4(trustedHost)) return 0;
+        for (String line : output.split("\\r?\\n")) {
+            String[] parts = line.trim().split("\\s+");
+            if (parts.length < 3 || !"_adb-tls-connect._tcp".equals(parts[1])) {
+                continue;
+            }
+            int colon = parts[2].lastIndexOf(':');
+            if (colon <= 0 || !trustedHost.equals(parts[2].substring(0, colon))) {
+                continue;
+            }
+            try {
+                int port = Integer.parseInt(parts[2].substring(colon + 1));
+                if (port >= 1 && port <= 65535) return port;
+            } catch (NumberFormatException ignored) { }
+        }
+        return 0;
+    }
+
     private void beginPairing(int id, LanDeviceDiscovery.Device device,
                               String password, PairedDeviceStore.Peer trustedPeer,
                               Listener listener) {
