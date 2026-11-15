@@ -1829,6 +1829,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         Button openSystemSettings = findViewById(R.id.quick_open_debug_button);
         Button enableReceiver = findViewById(R.id.quick_receive_button);
         Button advanced = findViewById(R.id.quick_advanced_button);
+        Button cleanupNotifications = findViewById(R.id.quick_notification_cleanup);
         Switch receiver = findViewById(R.id.quick_receive_switch);
         if (primary != null) primary.setOnClickListener(v -> startOneTapWatch());
         if (showCode != null) showCode.setOnClickListener(v -> showLocalPairCode());
@@ -1846,6 +1847,9 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                 Toast.makeText(this, R.string.quick_receive_failed, Toast.LENGTH_LONG).show();
             }
         });
+        if (cleanupNotifications != null) {
+            cleanupNotifications.setOnClickListener(v -> showElderNotificationHelper());
+        }
         if (advanced != null) advanced.setOnClickListener(v -> {
             LinearLayout details = findViewById(R.id.layout_advanced_controls);
             if (details != null && details.getVisibility() == View.VISIBLE) {
@@ -1877,6 +1881,43 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             });
         }
         updatePairedDeviceUi();
+    }
+
+    /** Parent-friendly guided notification settings. Only opens user-facing
+     * OS settings; never disables other apps' notifications or security alerts. */
+    private void showElderNotificationHelper() {
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.elder_notifications_title)
+                .setMessage(R.string.elder_notifications_description)
+                .setPositiveButton(R.string.elder_notifications_all_apps,
+                        (d, which) -> openNotificationSettings(false))
+                .setNeutralButton(R.string.elder_notifications_this_app,
+                        (d, which) -> openNotificationSettings(true))
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void openNotificationSettings(boolean thisApp) {
+        try {
+            Intent intent = new Intent(thisApp
+                    ? Settings.ACTION_APP_NOTIFICATION_SETTINGS
+                    : Settings.ACTION_NOTIFICATION_SETTINGS);
+            if (thisApp) intent.putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+            startActivity(intent);
+        } catch (ActivityNotFoundException | SecurityException error) {
+            try {
+                if (thisApp) {
+                    Intent fallback = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                    fallback.setData(Uri.parse("package:" + getPackageName()));
+                    startActivity(fallback);
+                } else {
+                    startActivity(new Intent(Settings.ACTION_SETTINGS));
+                }
+            } catch (RuntimeException fallbackError) {
+                Toast.makeText(this, R.string.elder_notifications_unavailable,
+                        Toast.LENGTH_LONG).show();
+            }
+        }
     }
 
     private void initQuickReceiverListener(Switch receiver) {
