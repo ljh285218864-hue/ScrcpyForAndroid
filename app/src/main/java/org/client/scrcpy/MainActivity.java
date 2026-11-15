@@ -1021,6 +1021,34 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         bindMirrorSurfaceHolder();
         setupNavBar();
         linearLayout = findViewById(R.id.container1);
+        // Rebind after every surface recreation, including device rotation.
+        Button disconnect = findViewById(R.id.button_disconnect_watch);
+        if (disconnect != null) {
+            disconnect.setOnClickListener(v -> disconnectCurrentViewing());
+        }
+    }
+
+    /**
+     * End ONLY the active viewing session. Keep the trusted App peer, ADB
+     * pairing keys, wireless debugging settings and the owner's LAN receiver.
+     * Returning to the home screen must not auto-resume the old stream.
+     */
+    private void disconnectCurrentViewing() {
+        if (oneTapConnection != null) oneTapConnection.cancel();
+        oneTapConnecting = false;
+        resumeScrcpy = false;
+        result_of_Rotation = false;
+        first_time = true;
+        timestamp = 0;
+        stopAutoAdbSearch();
+        showMainView(true);
+        // Covers the race where the viewer leaves before the service is bound.
+        try {
+            stopService(new Intent(this, Scrcpy.class));
+        } catch (RuntimeException error) {
+            Log.w("Scrcpy", "Stop service after user disconnect", error);
+        }
+        Toast.makeText(this, R.string.mirror_disconnected_saved, Toast.LENGTH_SHORT).show();
     }
 
     @Override
