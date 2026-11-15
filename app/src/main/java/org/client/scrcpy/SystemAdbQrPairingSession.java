@@ -152,7 +152,7 @@ public final class SystemAdbQrPairingSession {
         for (String line : lines) {
             String[] parts = line.trim().split("\\s+");
             if (parts.length < 3 || !expectedName.equals(parts[0])
-                    || !PAIR_TYPE.equals(parts[1])) continue;
+                    || !serviceTypeMatches(parts[1], PAIR_TYPE)) continue;
             String endpoint = parts[2];
             int colon = endpoint.lastIndexOf(':');
             if (colon < 1 || colon == endpoint.length() - 1) continue;
@@ -169,12 +169,18 @@ public final class SystemAdbQrPairingSession {
         return null;
     }
 
+    /** Android's mdns printers may append a DNS-SD trailing dot. */
+    private static boolean serviceTypeMatches(String actual, String expected) {
+        return expected.equals(actual) || (expected + ".").equals(actual);
+    }
+
     /** Return only the ADB TLS connect port advertised by the trusted IP. */
     static int findAdbConnectPort(String output, String trustedHost) {
         if (output == null || !PairQrCode.isPrivateIpv4(trustedHost)) return 0;
         for (String line : output.split("\\r?\\n")) {
             String[] parts = line.trim().split("\\s+");
-            if (parts.length < 3 || !"_adb-tls-connect._tcp".equals(parts[1])) {
+            if (parts.length < 3
+                    || !serviceTypeMatches(parts[1], "_adb-tls-connect._tcp")) {
                 continue;
             }
             int colon = parts[2].lastIndexOf(':');
