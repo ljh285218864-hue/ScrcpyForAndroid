@@ -78,10 +78,22 @@
     <string name="pair_adb_code_message">请填写对方手机“使用配对码配对设备”页面显示的6位数字，不是 App 的配对码。</string>
     <string name="pair_adb_running">正在验证系统无线调试配对…</string>
     <string name="pair_adb_success">系统配对成功！返回首页，搜索一次对方设备后即可观看。</string>
-    <string name="pair_adb_failed">系统配对失败，请检查系统配对码是否过期，并重试。</string>
+    <string name="pair_adb_failed">系统配对失败。请查看弹窗中的具体原因。</string>
     <string name="pair_adb_manual_button">手动输入配对端口</string>
-    <string name="pair_adb_manual_detail">自动搜索失败时，请在对方手机「无线调试 → 使用配对码配对设备」页面查看 IP 地址和端口。核对 IP 是 %1$s，然后在下面填写冒号后面的端口数字以及该页的6位配对码。IP 不一致时请先重新搜索已配对设备。</string>
+    <string name="pair_adb_manual_detail">请照抄对方手机「无线调试 → 使用配对码配对设备」弹窗中的 IP、配对端口和6位数字。下面预填的是旧 IP：%1$s；如果现在不同，请直接修改 IP，无需先重新配对 App。</string>
     <string name="pair_adb_manual_pair_port_hint">系统配对端口（冒号后数字）</string>
+
+    <string name="pair_adb_manual_ip_hint">对方手机无线调试 IP（如192.168.1.108）</string>
+    <string name="pair_adb_bad_ip">请输入对方手机当前显示的局域网 IPv4 地址，不能使用旧 IP。</string>
+    <string name="pair_adb_failure_title">系统配对未成功</string>
+    <string name="pair_adb_failure_timeout">连接系统配对服务超时。请保持对方手机配对码窗口打开，检查 IP、端口和相同 Wi-Fi。</string>
+    <string name="pair_adb_failure_network">无法连接到对方手机的系统配对端口。请重新查看配对码弹窗中的 IP 和端口，确认两台手机在同一个 Wi-Fi。</string>
+    <string name="pair_adb_failure_code">系统拒绝了配对码。请在对方手机重新生成配对码，并尽快填写新代码。</string>
+    <string name="pair_adb_failure_unsupported">当前安装包中的 ADB 工具不支持系统无线配对命令，需要更新安装包。</string>
+    <string name="pair_adb_failure_unknown">系统配对失败（ADB 退出码 %1$d）。\n系统返回：%2$s</string>
+    <string name="pair_adb_failure_empty_output">没有收到 ADB 返回信息，请检查对方手机的无线调试是否开启。</string>
+    <string name="pair_adb_success_host_verify_fail">系统 ADB 配对已成功，但新 IP 无法通过原 App 配对密钥验证，所以没有覆盖原设备地址。请在对方手机开启「允许已配对手机连接」，然后重新搜索附近设备以验证地址。</string>
+
     <string name="pair_adb_manual_port_invalid">请输入正确的系统无线调试端口（1～65535）</string>
     <string name="pair_adb_connect_manual_button">手动输入连接端口</string>
     <string name="pair_adb_connect_manual_detail">系统 ADB 配对后，请返回对方手机「无线调试」主页面，找到「IP 地址和端口」。确认 IP 为 %1$s，输入主页面冒号后面的端口数字。注意这里的连接端口和配对码页面的配对端口不同。</string>
