@@ -41,6 +41,12 @@
     <string name="guide_qr_permission">扫码需要相机权限，允许后再点击扫码</string>
     <string name="guide_qr_scan_error">扫码界面启动失败，可点击搜索附近手机配对；系统无线调试二维码由另一台手机的系统扫描。</string>
 
+    <string name="guide_adb_connect_searching">系统授权已接受，正在自动查找连接服务…</string>
+    <string name="guide_adb_connect_not_found">系统配对已成功，但暂时没有发现无线调试连接服务。请保持被观看手机无线调试开启、两台手机同一 Wi-Fi，然后重试自动连接。</string>
+    <string name="guide_adb_connect_retry">重试自动连接</string>
+    <string name="guide_adb_connect_open_settings">打开本机无线调试设置</string>
+
+
 
     <string name="quick_pair_scan">扫码配对</string>
     <string name="qr_scan_prompt">对准另一台手机「显示我的配对码」里的二维码</string>
