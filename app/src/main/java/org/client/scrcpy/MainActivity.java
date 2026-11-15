@@ -2248,7 +2248,22 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             @Override public void onError(String message) {
                 if (isFinishing() || isDestroyed()) return;
                 state.setText(message);
-                Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
+                setQuickStage(R.string.pair_adb_failed);
+                new android.app.AlertDialog.Builder(MainActivity.this)
+                        .setTitle(R.string.pair_adb_failure_title)
+                        .setMessage(message)
+                        .setPositiveButton(R.string.guide_system_qr_button,
+                                (d, which) -> {
+                                    dialog.dismiss();
+                                    showSystemAdbPairQr();
+                                })
+                        .setNeutralButton(R.string.qr_system_code_fallback,
+                                (d, which) -> {
+                                    dialog.dismiss();
+                                    authorizeSystemAdbCodeOnly();
+                                })
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show();
             }
         });
     }
@@ -2543,16 +2558,27 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                 }
             }
             scan.stop();
-            autoFindingAdb = false;
             if (isFinishing() || isDestroyed()) return;
-            final int newPort = discoveredPort;
-            if (newPort <= 0) {
-                showAutoAdbRecovery(trustedHost);
-                return;
-            }
-            ThreadUtils.workPost(() -> {
-                boolean connected = AdbHelper.isDeviceOnline(this, trustedHost, newPort);
+            final int nsdPort = discoveredPort;
+            // Android's NSD can miss connect-service records on some OEM
+            // devices. Use the native adb mDNS cache as a second source.
+            ThreadUtils.execute(() -> {
+                int port = nsdPort;
+                if (port <= 0) {
+                    try {
+                        org.client.scrcpy.utils.ExecUtil.AdbCommandResult result =
+                                AdbHelper.adbMdnsServices(this);
+                        port = SystemAdbQrPairingSession.findAdbConnectPort(
+                                result.combinedOutput(), trustedHost);
+                    } catch (RuntimeException error) {
+                        Log.w("Scrcpy", "Native ADB connect discovery failed", error);
+                    }
+                }
+                final int newPort = port;
+                boolean connected = newPort > 0
+                        && AdbHelper.isDeviceOnline(this, trustedHost, newPort);
                 ThreadUtils.post(() -> {
+                    autoFindingAdb = false;
                     if (isFinishing() || isDestroyed()) return;
                     PairedDeviceStore.Peer latest = PairedDeviceStore.load(this);
                     if (latest == null || !trustedHost.equals(latest.host)) return;
@@ -2566,7 +2592,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                     }
                 });
             });
-        }, 8000);
+        }, 6500);
     }
 
     private void showAutoAdbRecovery(String trustedHost) {
