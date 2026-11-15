@@ -35,9 +35,16 @@ public final class PairedDeviceStore {
         return new Peer(p.getString("name", "Android"), host, code, p.getInt("adb_port", 0));
     }
     public static void updateAddress(Context context, String newHost) {
-        if (TextUtils.isEmpty(newHost) || load(context) == null) return;
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().putString("host", newHost).apply();
+        if (TextUtils.isEmpty(newHost)) return;
+        Peer previous = load(context);
+        if (previous == null) return;
+        // ADB connect ports are assigned by Android and may change whenever
+        // the target rejoins Wi-Fi. Never reuse the former IP's port blindly.
+        android.content.SharedPreferences.Editor edit = context
+                .getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString("host", newHost);
+        if (!newHost.equals(previous.host)) edit.putInt("adb_port", 0);
+        edit.apply();
     }
 
     public static void updatePort(Context context, int newPort) {
