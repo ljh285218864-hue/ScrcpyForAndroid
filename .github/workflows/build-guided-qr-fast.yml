@@ -1,0 +1,87 @@
+name: Build guided QR Android APK (reuse verified native ADB)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-guided-qr-fast.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out guided pairing source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Android 36 SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: 'false'
+
+      - name: Install Android build platform
+        run: |
+          set -euo pipefail
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Reuse previously verified arm64 ADB binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/old-apk" app/src/main/jniLibs/arm64-v8a
+          gh release download screensync-qr-20261115 \
+            --pattern 'ScreenSync-QR-arm64.apk' \
+            --dir "$RUNNER_TEMP/old-apk"
+          unzip -p "$RUNNER_TEMP/old-apk/ScreenSync-QR-arm64.apk" \
+            'lib/arm64-v8a/libadb.so' > app/src/main/jniLibs/arm64-v8a/libadb.so
+          test "$(stat -c '%s' app/src/main/jniLibs/arm64-v8a/libadb.so)" -gt 3000000
+          file app/src/main/jniLibs/arm64-v8a/libadb.so
+          sha256sum app/src/main/jniLibs/arm64-v8a/libadb.so
+
+      - name: Compile guided QR application without native tool rebuild
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew :app:assembleScrcpyDebug -PskipLibadb -PlibadbAbis=arm64-v8a --no-daemon --stacktrace
+          apk="$(find app/build/outputs/apk/scrcpy/debug -maxdepth 1 -name '*.apk' -print -quit)"
+          test -n "$apk"
+          test "$(stat -c '%s' "$apk")" -gt 1000000
+          unzip -t "$apk" | tail -2
+          cp "$apk" ScreenSync-Guided-QR-arm64.apk
+          zip -j ScreenSync-Guided-QR-arm64.zip ScreenSync-Guided-QR-arm64.apk
+          sha256sum ScreenSync-Guided-QR-arm64.apk
+
+      - name: Upload APK build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScreenSync-Guided-QR-debug
+          path: |
+            ScreenSync-Guided-QR-arm64.apk
+            ScreenSync-Guided-QR-arm64.zip
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish easy browser download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release create screensync-guided-qr-20261115 \
+            ScreenSync-Guided-QR-arm64.apk ScreenSync-Guided-QR-arm64.zip \
+            --title 'ScreenSync 三步连接向导（扫码配对）' \
+            --notes "源码：$GITHUB_SHA。简洁三步向导：双方 App 配对、系统无线调试二维码授权、立即观看。扫码权限及异常回退、自动查找授权连接端口。安卓系统自带扫码页是否正常仍取决于手机系统。"
