@@ -120,6 +120,8 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     private SystemAdbQrPairingSession systemQrSession;
     private boolean systemQrActive;
     private boolean autoFindingAdb;
+    private int autoAdbFindGeneration;
+    private LanDeviceDiscovery autoAdbDiscovery;
     private boolean oneTapConnecting;
     private boolean skipWakeRequestOnce;
     private List<LanDeviceDiscovery.Device> lanDevices = new ArrayList<>();
@@ -1082,7 +1084,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (oneTapConnection != null) oneTapConnection.cancel();
         if (systemQrSession != null) systemQrSession.stop();
         systemQrActive = false;
-        autoFindingAdb = false;
+        stopAutoAdbSearch();
         pairingHandler.removeCallbacks(pairingApprovalPoll);
         stopLanAutoDiscovery();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && backInvokedCallback != null) {
@@ -2531,64 +2533,109 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
      * port. Discover it automatically after QR/code authorization, rather than
      * forcing users to transcribe an IP or port.
      */
+    /**
+     * Wireless debugging uses a DIFFERENT connection port from the pairing
+     * port. System pairing succeeding does not imply an immediately published
+     * mDNS connect service, especially on Xiaomi/vivo ROMs. Poll NSD and native
+     * ADB for up to 35 seconds and verify every candidate using ADB TLS.
+     */
+    private void stopAutoAdbSearch() {
+        autoAdbFindGeneration++;
+        autoFindingAdb = false;
+        if (autoAdbDiscovery != null) {
+            autoAdbDiscovery.stop();
+            autoAdbDiscovery = null;
+        }
+    }
+
     private void autoFindAdbAfterPair(String trustedHost) {
         PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
         if (peer == null || !trustedHost.equals(peer.host)) return;
+        stopAutoAdbSearch();
         stopLanAutoDiscovery();
         autoFindingAdb = true;
         setQuickStage(R.string.guide_adb_connect_searching);
-        final LanDeviceDiscovery scan = new LanDeviceDiscovery(this,
+        final int searchId = autoAdbFindGeneration;
+        autoAdbDiscovery = new LanDeviceDiscovery(this,
                 new LanDeviceDiscovery.Listener() {
                     @Override public void onChanged(List<LanDeviceDiscovery.Device> devices) { }
-                    @Override public void onError(String message) {
-                        Log.d("Scrcpy", "ADB post-pair discovery: " + message);
+                    @Override public void onError(String error) {
+                        Log.d("Scrcpy", "Wireless ADB connect discovery: " + error);
                     }
                 });
-        scan.start();
+        autoAdbDiscovery.start();
+
+        // A separate UI watchdog still completes if an OEM ADB command stalls.
         pairingHandler.postDelayed(() -> {
-            int discoveredPort = 0;
-            for (LanDeviceDiscovery.Device device : scan.allDiscovered()) {
+            if (!autoFindingAdb || searchId != autoAdbFindGeneration) return;
+            stopAutoAdbSearch();
+            if (!isFinishing() && !isDestroyed()) showAutoAdbRecovery(trustedHost);
+        }, 38_000);
+        pollAutoAdbConnection(trustedHost, searchId);
+    }
+
+    private void pollAutoAdbConnection(String trustedHost, int searchId) {
+        if (!autoFindingAdb || searchId != autoAdbFindGeneration
+                || isFinishing() || isDestroyed()) return;
+        int nsdPort = 0;
+        if (autoAdbDiscovery != null) {
+            for (LanDeviceDiscovery.Device device : autoAdbDiscovery.allDiscovered()) {
                 if (trustedHost.equals(device.address) && device.adbPort > 0) {
-                    discoveredPort = device.adbPort;
+                    nsdPort = device.adbPort;
                     break;
                 }
             }
-            scan.stop();
-            if (isFinishing() || isDestroyed()) return;
-            final int nsdPort = discoveredPort;
-            // Android's NSD can miss connect-service records on some OEM
-            // devices. Use the native adb mDNS cache as a second source.
-            ThreadUtils.execute(() -> {
-                int port = nsdPort;
-                if (port <= 0) {
-                    try {
-                        org.client.scrcpy.utils.ExecUtil.AdbCommandResult result =
-                                AdbHelper.adbMdnsServices(this);
-                        port = SystemAdbQrPairingSession.findAdbConnectPort(
-                                result.combinedOutput(), trustedHost);
-                    } catch (RuntimeException error) {
-                        Log.w("Scrcpy", "Native ADB connect discovery failed", error);
-                    }
+        }
+        final int discoveredPort = nsdPort;
+        ThreadUtils.execute(() -> {
+            int port = discoveredPort;
+            try {
+                if (port == 0) {
+                    org.client.scrcpy.utils.ExecUtil.AdbCommandResult result =
+                            AdbHelper.adbMdnsServices(this);
+                    port = SystemAdbQrPairingSession.findAdbConnectPort(
+                            result.combinedOutput(), trustedHost);
                 }
-                final int newPort = port;
-                boolean connected = newPort > 0
-                        && AdbHelper.isDeviceOnline(this, trustedHost, newPort);
-                ThreadUtils.post(() -> {
-                    autoFindingAdb = false;
-                    if (isFinishing() || isDestroyed()) return;
-                    PairedDeviceStore.Peer latest = PairedDeviceStore.load(this);
-                    if (latest == null || !trustedHost.equals(latest.host)) return;
-                    if (connected) {
-                        PairedDeviceStore.updatePort(this, newPort);
-                        syncPeerToViewFields(PairedDeviceStore.load(this));
-                        updatePairedDeviceUi();
-                        startOneTapWatch();
-                    } else {
-                        showAutoAdbRecovery(trustedHost);
-                    }
-                });
+            } catch (RuntimeException error) {
+                Log.w("Scrcpy", "Native ADB discovery unavailable", error);
+            }
+            if (port == 0) {
+                PairedDeviceStore.Peer latest = PairedDeviceStore.load(this);
+                if (latest != null && trustedHost.equals(latest.host)) {
+                    port = latest.adbPort;
+                }
+            }
+            final int candidatePort = port;
+            boolean connected = false;
+            if (candidatePort > 0) {
+                try {
+                    connected = AdbHelper.isDeviceOnline(this, trustedHost, candidatePort);
+                } catch (RuntimeException error) {
+                    Log.w("Scrcpy", "ADB connect failed", error);
+                }
+            }
+            final boolean online = connected;
+            ThreadUtils.post(() -> {
+                if (!autoFindingAdb || searchId != autoAdbFindGeneration
+                        || isFinishing() || isDestroyed()) return;
+                PairedDeviceStore.Peer current = PairedDeviceStore.load(this);
+                if (current == null || !trustedHost.equals(current.host)) {
+                    stopAutoAdbSearch();
+                    return;
+                }
+                if (online) {
+                    stopAutoAdbSearch();
+                    PairedDeviceStore.updatePort(this, candidatePort);
+                    syncPeerToViewFields(PairedDeviceStore.load(this));
+                    updatePairedDeviceUi();
+                    startOneTapWatch();
+                } else {
+                    // Persist the same discovery session; mDNS can appear late.
+                    pairingHandler.postDelayed(
+                            () -> pollAutoAdbConnection(trustedHost, searchId), 2_000);
+                }
             });
-        }, 6500);
+        });
     }
 
     private void showAutoAdbRecovery(String trustedHost) {
