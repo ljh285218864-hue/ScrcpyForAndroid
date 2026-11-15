@@ -48,34 +48,35 @@
             android:orientation="vertical"
             tools:context=".MainActivity">
 
-            <!-- Everyday screen: one primary action, all legacy tools retained below. -->
+            <!-- Guided workflow: regular users never need to see ADB IP, keys,
+                 connection ports or native codec settings. -->
             <LinearLayout
                 android:id="@+id/quick_home"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginLeft="8dp"
-                android:layout_marginTop="8dp"
-                android:layout_marginRight="8dp"
+                android:layout_marginLeft="4dp"
+                android:layout_marginTop="6dp"
+                android:layout_marginRight="4dp"
                 android:orientation="vertical"
-                android:padding="16dp"
+                android:padding="18dp"
                 android:background="#28313B">
 
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/quick_device_title"
+                    android:text="@string/guide_title"
                     android:textColor="@color/white"
-                    android:textSize="15sp" />
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
 
                 <TextView
                     android:id="@+id/quick_device_name"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
+                    android:layout_marginTop="10dp"
                     android:text="@string/quick_device_none"
-                    android:textColor="@color/white"
-                    android:textSize="21sp"
-                    android:textStyle="bold" />
+                    android:textColor="#D4E6F5"
+                    android:textSize="16sp" />
 
                 <TextView
                     android:id="@+id/quick_connection_status"
@@ -85,6 +86,89 @@
                     android:text="@string/quick_status_unpaired"
                     android:textColor="#B9D6F1"
                     android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/quick_guide_step"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="20dp"
+                    android:text="@string/guide_step_one"
+                    android:textColor="@color/white"
+                    android:textSize="19sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/quick_guide_hint"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/guide_step_one_hint"
+                    android:textColor="#C4D6E5"
+                    android:textSize="14sp" />
+
+                <LinearLayout
+                    android:id="@+id/quick_pair_actions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:orientation="vertical">
+
+                    <Button
+                        android:id="@+id/quick_show_pair_code"
+                        android:layout_width="match_parent"
+                        android:layout_height="54dp"
+                        android:text="@string/guide_show_app_qr"
+                        android:textSize="16sp" />
+
+                    <Button
+                        android:id="@+id/quick_scan_pair_qr"
+                        android:layout_width="match_parent"
+                        android:layout_height="54dp"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/guide_scan_app_qr"
+                        android:textSize="16sp" />
+
+                    <Button
+                        android:id="@+id/quick_find_peer"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/guide_find_peer_fallback"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/quick_authorize_actions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <Button
+                        android:id="@+id/quick_system_qr_button"
+                        android:layout_width="match_parent"
+                        android:layout_height="58dp"
+                        android:text="@string/guide_system_qr_button"
+                        android:textSize="17sp"
+                        android:textStyle="bold" />
+
+                    <Button
+                        android:id="@+id/quick_open_debug_button"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/guide_open_debug_settings"
+                        android:textSize="14sp" />
+
+                    <Button
+                        android:id="@+id/quick_receive_button"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/guide_enable_receiver"
+                        android:textSize="14sp" />
+                </LinearLayout>
 
                 <Button
                     android:id="@+id/quick_watch_button"
@@ -97,54 +181,20 @@
                     android:textSize="18sp"
                     android:textStyle="bold" />
 
-                <LinearLayout
-                    android:id="@+id/quick_pair_actions"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:orientation="horizontal">
-                    <Button
-                        android:id="@+id/quick_show_pair_code"
-                        android:layout_width="0dp"
-                        android:layout_height="48dp"
-                        android:layout_weight="1"
-                        android:layout_marginRight="4dp"
-                        android:text="@string/quick_pair_show"
-                        android:textSize="13sp" />
-                    <Button
-                        android:id="@+id/quick_scan_pair_qr"
-                        android:layout_width="0dp"
-                        android:layout_height="48dp"
-                        android:layout_weight="1"
-                        android:layout_marginRight="4dp"
-                        android:text="@string/quick_pair_scan"
-                        android:textSize="13sp" />
-                    <Button
-                        android:id="@+id/quick_find_peer"
-                        android:layout_width="0dp"
-                        android:layout_height="48dp"
-                        android:layout_weight="1"
-                        android:layout_marginLeft="4dp"
-                        android:text="@string/quick_pair_search"
-                        android:textSize="13sp" />
-                </LinearLayout>
-
-                <Switch
-                    android:id="@+id/quick_receive_switch"
-                    android:layout_width="match_parent"
-                    android:layout_height="52dp"
-                    android:layout_marginTop="10dp"
-                    android:text="@string/quick_allow_receiver"
-                    android:textColor="@color/white"
-                    android:textSize="14sp" />
-
                 <Button
                     android:id="@+id/quick_advanced_button"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:layout_marginTop="8dp"
-                    android:text="@string/quick_open_advanced"
-                    android:textSize="14sp" />
+                    android:layout_height="46dp"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/guide_help_button"
+                    android:textSize="13sp" />
+
+                <!-- Legacy switch is retained only to avoid removing existing IDs. -->
+                <Switch
+                    android:id="@+id/quick_receive_switch"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:visibility="gone" />
             </LinearLayout>
 
             <!-- Original inputs/actions remain available and initialized, but hidden
