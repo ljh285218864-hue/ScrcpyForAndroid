@@ -93,6 +93,8 @@ androidComponents {
 
 
 dependencies {
+    // In-app QR creation and offline camera scanning for first-time pairing.
+    implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
     testImplementation 'junit:junit:4.13.2'
 
     androidTestImplementation 'androidx.test:runner:1.6.2'
