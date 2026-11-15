@@ -58,8 +58,6 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ImageView;
 import com.google.zxing.BarcodeFormat;
-import com.google.zxing.integration.android.IntentIntegrator;
-import com.google.zxing.integration.android.IntentResult;
 import com.journeyapps.barcodescanner.BarcodeEncoder;
 import android.widget.ListPopupWindow;
 import android.widget.ScrollView;
@@ -1637,6 +1635,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     }
 
     private static final int APP_QR_CAMERA_REQUEST = 8291;
+    private static final int APP_QR_SCAN_REQUEST = 8292;
 
     private void scanAppPairQr() {
         if (PairedDeviceStore.load(this) != null) {
@@ -1651,13 +1650,10 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             return;
         }
         try {
-            new IntentIntegrator(this)
-                    .setCaptureActivity(AppQrCaptureActivity.class)
-                    .setDesiredBarcodeFormats(java.util.Collections.singletonList("QR_CODE"))
-                    .setPrompt(getString(R.string.qr_scan_prompt))
-                    .setBeepEnabled(false)
-                    .setOrientationLocked(true)
-                    .initiateScan();
+            // Explicit internal Activity: never resolve an external QR app or
+            // browser, which could send pairing text to Baidu or crash.
+            Intent cameraIntent = new Intent(this, AppQrCaptureActivity.class);
+            startActivityForResult(cameraIntent, APP_QR_SCAN_REQUEST);
         } catch (RuntimeException exception) {
             Log.e("Scrcpy", "In-app QR scanner failed to open", exception);
             new android.app.AlertDialog.Builder(this)
@@ -1672,10 +1668,10 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        IntentResult scanned = IntentIntegrator.parseActivityResult(requestCode, resultCode, data);
-        if (scanned != null) {
-            if (scanned.getContents() != null) {
-                PairQrCode.Target target = PairQrCode.parseAppPayload(scanned.getContents());
+        if (requestCode == APP_QR_SCAN_REQUEST) {
+            if (resultCode == Activity.RESULT_OK && data != null) {
+                String value = data.getStringExtra(AppQrCaptureActivity.EXTRA_RESULT);
+                PairQrCode.Target target = PairQrCode.parseAppPayload(value);
                 if (target == null) {
                     Toast.makeText(this, R.string.qr_invalid, Toast.LENGTH_LONG).show();
                 } else {
