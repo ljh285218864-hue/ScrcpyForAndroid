@@ -1638,7 +1638,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             return;
         }
         new IntentIntegrator(this)
-                .setDesiredBarcodeFormats(IntentIntegrator.QR_CODE_TYPES)
+                .setDesiredBarcodeFormats(java.util.Collections.singletonList("QR_CODE"))
                 .setPrompt(getString(R.string.qr_scan_prompt))
                 .setBeepEnabled(false)
                 .setOrientationLocked(false)
