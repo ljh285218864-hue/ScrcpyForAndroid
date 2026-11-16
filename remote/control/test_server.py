@@ -35,6 +35,7 @@ class ControlPlaneTests(unittest.TestCase):
             mock.patch.object(backend, "peer_set"),
             mock.patch.object(backend, "peer_remove"),
             mock.patch.object(backend, "apply_acl"),
+            mock.patch.object(backend, "assert_exclusive_wireguard_interface"),
         ]
         self.patches = [p.start() for p in self.mocks]
         for p in self.mocks:
@@ -54,6 +55,27 @@ class ControlPlaneTests(unittest.TestCase):
             b = backend.api_join(db, {"invite_code": invite, "name": "vivo",
                                       "public_key": BKEY})
         return owner, b
+
+    def test_exclusive_interface_rejects_unknown_legacy_peers(self):
+        from types import SimpleNamespace
+        legacy = SimpleNamespace(stdout=AKEY + "\t100.80.0.2/32\n")
+        with mock.patch.object(backend, "cmd", return_value=legacy):
+            with self.assertRaisesRegex(RuntimeError, "unmanaged or legacy"):
+                backend.assert_exclusive_wireguard_interface([])
+        # A matching peer created by this DB is allowed.
+        with mock.patch.object(backend, "cmd", return_value=legacy):
+            backend.assert_exclusive_wireguard_interface([
+                {"public_key": AKEY, "ip": backend.IP_OWNER}
+            ])
+
+    def test_exclusive_interface_does_not_accept_same_ip_wrong_key(self):
+        from types import SimpleNamespace
+        legacy = SimpleNamespace(stdout=BKEY + "\t100.80.0.2/32\n")
+        with mock.patch.object(backend, "cmd", return_value=legacy):
+            with self.assertRaises(RuntimeError):
+                backend.assert_exclusive_wireguard_interface([
+                    {"public_key": AKEY, "ip": backend.IP_OWNER}
+                ])
 
     def test_owner_uses_bootstrap_once(self):
         with backend.connect_db() as db:
