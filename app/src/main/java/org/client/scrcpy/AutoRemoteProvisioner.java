@@ -211,6 +211,26 @@ public final class AutoRemoteProvisioner {
      * stays in app-private storage; no Android file picker or public downloads.
      * An existing active tunnel must be stopped before replacing its identity.
      */
+    private static boolean containsIpv4(com.wireguard.config.InetNetwork range,
+                                        String candidate) {
+        try {
+            byte[] subnet = range.getAddress().getAddress();
+            java.net.InetAddress address = java.net.InetAddress.getByName(candidate);
+            if (!(address instanceof java.net.Inet4Address) || subnet.length != 4)
+                return false;
+            byte[] peer = address.getAddress();
+            int bits = range.getMask();
+            for (int i = 0; i < 4; i++) {
+                int mask = bits >= 8 ? 255 : bits <= 0 ? 0 : (255 << (8 - bits)) & 255;
+                if ((subnet[i] & mask) != (peer[i] & mask)) return false;
+                bits -= 8;
+            }
+            return true;
+        } catch (Exception error) {
+            return false;
+        }
+    }
+
     public static void applyPairedConfig(Context context, JSONObject status) throws Exception {
         if (!"paired".equals(status.optString("state")))
             throw new Failure("双方尚未完成确认");
@@ -219,6 +239,19 @@ public final class AutoRemoteProvisioner {
         String serverKey = status.getString("server_public_key");
         String sharedSecret = status.getString("shared_secret");
         String endpoint = status.getString("endpoint");
+        // CIDR comes from the authenticated provisioning service. Dynamic
+        // client addresses can serve many independent pairs; no .2/.3 assumption.
+        String overlayCidr = status.getString("overlay_cidr");
+        com.wireguard.config.InetNetwork range =
+                com.wireguard.config.InetNetwork.parse(overlayCidr);
+        if (!(range.getAddress() instanceof java.net.Inet4Address)
+                || range.getMask() < 16
+                || !RemoteOverlayNetwork.isOverlayAddress(
+                        range.getAddress().getHostAddress())
+                || !containsIpv4(range, deviceIp)
+                || !containsIpv4(range, peerIp)) {
+            throw new Failure("服务器返回的独立加密网络地址段无效");
+        }
         String privateKey = prefs(context).getString("private_key", "");
         if (!RemoteOverlayNetwork.isOverlayAddress(deviceIp)
                 || !RemoteOverlayNetwork.isOverlayAddress(peerIp)
@@ -233,7 +266,7 @@ public final class AutoRemoteProvisioner {
         String config = "[Interface]\nAddress = " + deviceIp + "/32\n"
                 + "PrivateKey = " + privateKey + "\n\n"
                 + "[Peer]\nPublicKey = " + serverKey + "\n"
-                + "AllowedIPs = 100.80.0.0/24\n"
+                + "AllowedIPs = " + overlayCidr + "\n"
                 + "Endpoint = " + endpoint + "\n"
                 + "PersistentKeepalive = 25\n";
         // Migrate a Beta3 imported config only after it is stopped; skip
