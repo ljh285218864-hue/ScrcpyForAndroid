@@ -36,6 +36,7 @@ public final class RemoteSetupActivity extends Activity {
     private TextView status;
     private Button showInvite;
     private Button approve;
+    private Button decline;
     private Button revoke;
     private String pendingId;
     private boolean busy;
@@ -112,6 +113,22 @@ public final class RemoteSetupActivity extends Activity {
                             .setNegativeButton("取消", null).show();
                 });
 
+        decline = action(content, "拒绝待配对手机", v -> {
+            String id = pendingId;
+            if (id == null) return;
+            new AlertDialog.Builder(this)
+                    .setTitle("拒绝配对申请")
+                    .setMessage("拒绝后这台手机不能加入加密网络，可重新生成新的邀请。")
+                    .setPositiveButton("拒绝", (d, w) ->
+                            perform("正在拒绝配对…",
+                                    () -> AutoRemoteProvisioner.decline(this, id),
+                                    value -> {
+                                        pendingId = null;
+                                        updateStatus();
+                                    }, false))
+                    .setNegativeButton("取消", null).show();
+        });
+
         Button reload = action(content, "刷新连接状态", v -> updateStatus());
         revoke = action(content, "解绑并撤销异地访问", v -> {
             new AlertDialog.Builder(this)
@@ -182,6 +199,8 @@ public final class RemoteSetupActivity extends Activity {
         if (showInvite != null) showInvite.setEnabled(registered && owner && !busy);
         if (approve != null) approve.setEnabled(registered && owner &&
                 pendingId != null && !busy);
+        if (decline != null) decline.setEnabled(registered && owner &&
+                pendingId != null && !busy);
         if (revoke != null) revoke.setEnabled(registered && !busy);
     }
 
@@ -251,6 +270,9 @@ public final class RemoteSetupActivity extends Activity {
             }
         } else if ("pending".equals(state)) {
             showState("已提交配对请求，等待另一部手机的持有人明确同意。");
+        } else if ("expired".equals(state)) {
+            showState("配对码已过期，尚未获得远程访问权限。"
+                    + "点击「解绑并撤销异地访问」清除旧申请，再扫码新的二维码。");
         } else if ("paired".equals(state)) {
             try {
                 AutoRemoteProvisioner.applyPairedConfig(this, result);
