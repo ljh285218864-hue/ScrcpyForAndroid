@@ -23,6 +23,15 @@ PORT="$(wg show "$IFACE" listen-port)"
 [[ "$PORT" == "51820" ]] || {
   echo "现有 WireGuard 使用端口 $PORT，不是预期 51820。停止部署。"; exit 1;
 }
+# Installation is only safe on a dedicated, empty WireGuard interface.
+# The legacy Beta3 interface contains pre-registered Xiaomi/vivo peers.
+# Never overwrite their AllowedIPs or insert a broad FORWARD chain ahead of them.
+if [[ -n "$(wg show "$IFACE" peers)" ]]; then
+  echo "安全停止：接口 $IFACE 已登记 WireGuard peers（可能是 Beta3）。"
+  echo "Beta4 需要独立接口与未占用的 UDP 端口，禁止复用当前接口。"
+  echo "尚未创建文件、备份或改动防火墙。请先完成隔离网络设计。"
+  exit 1
+fi
 if ss -H -lnt '( sport = :8765 )' | grep -q .; then
   echo "回环端口 8765 已占用，停止部署。"; exit 1
 fi
