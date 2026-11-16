@@ -28,9 +28,9 @@ public final class PairLanClient {
         }
         try {
             InetAddress ip = InetAddress.getByName(host);
-            if (!(ip.isSiteLocalAddress() || ip.isLoopbackAddress())
+            if (!RemoteOverlayNetwork.isAllowedPeerIp(ip)
                     || port != WakeLanService.PORT) {
-                return new Result(null, "仅支持在同一局域网配对");
+                return new Result(null, "仅允许局域网或受保护的私有 VPN 配对");
             }
             String nonce = WakeAuth.randomHex(8);
             try (Socket socket = new Socket()) {
@@ -54,7 +54,7 @@ public final class PairLanClient {
                 return new Result(null, "A 手机未确认配对或请求已超时");
             }
         } catch (Exception e) {
-            return new Result(null, "未能完成配对；检查 A 手机是否开启接收及两个手机是否在同一 Wi-Fi");
+            return new Result(null, "未能完成配对；请检查双方是否在同一私有网络，并且 A 手机已开启接收");
         }
     }
 }
