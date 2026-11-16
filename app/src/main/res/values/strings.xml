@@ -20,11 +20,21 @@
 
     <string name="guide_title">屏幕同步 · 简单三步</string>
 
+    <string name="remote_embedded_import">导入设备配置</string>
+    <string name="remote_embedded_start">启用异地网络</string>
+    <string name="remote_embedded_stop">关闭异地网络</string>
+    <string name="remote_embedded_busy">正在连接…</string>
+    <string name="remote_embedded_needs_config">尚未导入 VPS 配置 · 点击「导入设备配置」</string>
+    <string name="remote_embedded_ready">设备已配置 · 点击「启用异地网络」</string>
+    <string name="remote_embedded_active">内置异地网络已启动 · 正在检查设备连通性</string>
+    <string name="remote_embedded_import_ok">配置已导入，仅本机可读取</string>
+    <string name="remote_embedded_import_fail">配置导入失败，请使用服务器为本手机生成的 .conf 文件</string>
+    <string name="remote_embedded_auth_denied">没有获得系统 VPN 授权，异地网络未启动</string>
     <string name="remote_vpn_connected">异地加密网络已连接 · 可尝试远程观看</string>
-    <string name="remote_vpn_not_connected">异地加密网络未连接 · 首次需两台手机加入相同 Tailscale 私有网络</string>
+    <string name="remote_vpn_not_connected">异地网络未连接 · 先在两台手机启用 ScreenSync 内置网络</string>
     <string name="remote_help_button">异地连接设置说明</string>
     <string name="remote_help_title">首次设置异地观看</string>
-    <string name="remote_help_detail">1. 两台手机安装 Tailscale，在相同的私有网络登录并启用 VPN。\n2. 首次仍由双方当面完成 ScreenSync 配对和系统无线调试授权。\n3. 两台手机还在同一 Wi-Fi 时，分别打开一次 ScreenSync，使软件交换加密网络地址。\n4. 以后不必切换模式，点击「立即观看」自动尝试连接。\n\n不需要填写 IP 或端口，不使用 Android MediaProjection 录屏。无线调试可能因重启、网络改变而关闭；系统授权及安全通知不会被隐藏。</string>
+    <string name="remote_help_detail">1. 两台手机只需安装 ScreenSync，不必安装 Tailscale。\n2. 管理员需先为每台手机从可信 VPS 生成单独的 WireGuard 配置文件，并在本机点击「导入设备配置」。\n3. 点击「启用异地网络」，首次同意 Android 系统 VPN 授权。双方必须使用不同的私有地址并连接同一可信 VPS。\n4. 首次仍需双方同意 ScreenSync 软件配对和 Android 无线调试授权；完成配对时双方可先在同一 Wi-Fi 上更新地址。\n5. 后续点击同一个「立即观看」按钮，软件自动使用加密网络。\n\n尚未部署 VPS 时，内置 VPN 不会自动连接。VPN 不会关闭系统安全提示。原有 ADB/scrcpy 不使用 MediaProjection，但异地无线调试能否通过 VPN 仍需真机验证。</string>
 
     <string name="guide_step_one">第 1 步｜让两台手机配对</string>
     <string name="guide_step_one_hint">被观看手机点「显示配对二维码」，观看手机点「扫码配对」；被观看手机再点击允许。</string>
