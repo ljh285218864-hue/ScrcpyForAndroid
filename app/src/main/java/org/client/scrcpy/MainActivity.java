@@ -23,6 +23,7 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.net.Uri;
+import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -79,6 +80,8 @@ import org.json.JSONArray;
 import org.json.JSONException;
 
 import java.io.File;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -1701,6 +1704,16 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REMOTE_VPN_IMPORT_REQUEST) {
+            if (resultCode == Activity.RESULT_OK) handlePrivateVpnImport(data);
+            return;
+        }
+        if (requestCode == REMOTE_VPN_PERMISSION_REQUEST) {
+            if (resultCode == Activity.RESULT_OK) startPrivateVpnAfterConsent();
+            else Toast.makeText(this, R.string.remote_embedded_auth_denied,
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
         if (requestCode == APP_QR_SCAN_REQUEST) {
             if (resultCode == Activity.RESULT_OK && data != null) {
                 String value = data.getStringExtra(AppQrCaptureActivity.EXTRA_RESULT);
@@ -1823,6 +1836,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             vpnState.setText(RemoteOverlayNetwork.localVpnIp(this) != null
                     ? R.string.remote_vpn_connected : R.string.remote_vpn_not_connected);
         }
+        refreshPrivateVpnStatus();
     }
 
     /**
@@ -1839,6 +1853,8 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         Button enableReceiver = findViewById(R.id.quick_receive_button);
         Button advanced = findViewById(R.id.quick_advanced_button);
         Button cleanupNotifications = findViewById(R.id.quick_notification_cleanup);
+        Button vpnSetup = findViewById(R.id.remote_vpn_setup_button);
+        Button vpnToggle = findViewById(R.id.remote_vpn_toggle_button);
         Switch receiver = findViewById(R.id.quick_receive_switch);
         if (primary != null) primary.setOnClickListener(v -> startOneTapWatch());
         if (showCode != null) showCode.setOnClickListener(v -> showLocalPairCode());
@@ -1859,6 +1875,9 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (cleanupNotifications != null) {
             cleanupNotifications.setOnClickListener(v -> showElderNotificationHelper());
         }
+        if (vpnSetup != null) vpnSetup.setOnClickListener(v -> importPrivateVpnConfig());
+        if (vpnToggle != null) vpnToggle.setOnClickListener(v -> togglePrivateVpn());
+        refreshPrivateVpnStatus();
         if (advanced != null) advanced.setOnClickListener(v -> {
             LinearLayout details = findViewById(R.id.layout_advanced_controls);
             if (details != null && details.getVisibility() == View.VISIBLE) {
@@ -1929,6 +1948,113 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                         Toast.LENGTH_LONG).show();
             }
         }
+    }
+
+    private static final int REMOTE_VPN_IMPORT_REQUEST = 8293;
+    private static final int REMOTE_VPN_PERMISSION_REQUEST = 8294;
+
+    private void refreshPrivateVpnStatus() {
+        TextView status = findViewById(R.id.quick_remote_network_status);
+        Button toggle = findViewById(R.id.remote_vpn_toggle_button);
+        boolean connected = EmbeddedRemoteTunnel.isActive();
+        boolean busy = EmbeddedRemoteTunnel.isStarting();
+        if (status != null) {
+            int text = connected ? R.string.remote_embedded_active
+                    : EmbeddedRemoteTunnel.hasConfig(this) ? R.string.remote_embedded_ready
+                    : R.string.remote_embedded_needs_config;
+            status.setText(text);
+        }
+        if (toggle != null) {
+            toggle.setEnabled(!busy);
+            toggle.setText(busy ? R.string.remote_embedded_busy
+                    : connected ? R.string.remote_embedded_stop
+                    : R.string.remote_embedded_start);
+        }
+    }
+
+    private void importPrivateVpnConfig() {
+        try {
+            Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            picker.addCategory(Intent.CATEGORY_OPENABLE);
+            picker.setType("*/*");
+            startActivityForResult(picker, REMOTE_VPN_IMPORT_REQUEST);
+        } catch (RuntimeException error) {
+            Toast.makeText(this, R.string.remote_embedded_import_fail,
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void handlePrivateVpnImport(Intent data) {
+        if (data == null || data.getData() == null) return;
+        final Uri source = data.getData();
+        ThreadUtils.execute(() -> {
+            boolean success = false;
+            try (InputStream in = getContentResolver().openInputStream(source);
+                 ByteArrayOutputStream bytes = new ByteArrayOutputStream()) {
+                if (in == null) throw new java.io.IOException("No config stream");
+                byte[] buf = new byte[4096];
+                int n;
+                while ((n = in.read(buf)) != -1) {
+                    if (bytes.size() + n > 20_000) throw new java.io.IOException("Too large");
+                    bytes.write(buf, 0, n);
+                }
+                EmbeddedRemoteTunnel.importConfig(this, bytes.toByteArray());
+                success = true;
+            } catch (Exception error) {
+                Log.w("Scrcpy", "Private VPN config import rejected: " +
+                        error.getClass().getSimpleName());
+            }
+            final boolean ok = success;
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                refreshPrivateVpnStatus();
+                Toast.makeText(this, ok ? R.string.remote_embedded_import_ok
+                        : R.string.remote_embedded_import_fail, Toast.LENGTH_LONG).show();
+            });
+        });
+    }
+
+    private void togglePrivateVpn() {
+        if (EmbeddedRemoteTunnel.isStarting()) return;
+        if (EmbeddedRemoteTunnel.isActive()) {
+            EmbeddedRemoteTunnel.stop(this, (running, message) -> {
+                if (isFinishing() || isDestroyed()) return;
+                refreshPrivateVpnStatus();
+                Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+            });
+            refreshPrivateVpnStatus();
+            return;
+        }
+        if (!EmbeddedRemoteTunnel.hasConfig(this)) {
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle(R.string.remote_help_title)
+                    .setMessage(R.string.remote_help_detail)
+                    .setPositiveButton(R.string.remote_embedded_import,
+                            (d, which) -> importPrivateVpnConfig())
+                    .setNegativeButton(android.R.string.cancel, null).show();
+            return;
+        }
+        try {
+            Intent consent = VpnService.prepare(this);
+            if (consent != null) {
+                startActivityForResult(consent, REMOTE_VPN_PERMISSION_REQUEST);
+            } else {
+                startPrivateVpnAfterConsent();
+            }
+        } catch (RuntimeException error) {
+            Toast.makeText(this, R.string.remote_embedded_auth_denied,
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void startPrivateVpnAfterConsent() {
+        EmbeddedRemoteTunnel.start(this, (running, message) -> {
+            if (isFinishing() || isDestroyed()) return;
+            refreshPrivateVpnStatus();
+            if (running) syncRemoteOverlayForSavedPair();
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+        });
+        refreshPrivateVpnStatus();
     }
 
     private long lastRemoteOverlaySyncAt;
