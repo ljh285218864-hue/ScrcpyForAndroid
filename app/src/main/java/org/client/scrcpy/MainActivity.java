@@ -1714,6 +1714,15 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                     Toast.LENGTH_LONG).show();
             return;
         }
+        if (requestCode == REMOTE_VPN_WATCH_PERMISSION_REQUEST) {
+            if (resultCode == Activity.RESULT_OK) startPrivateVpnAfterConsent(true);
+            else {
+                startingVpnForWatch = false;
+                Toast.makeText(this, R.string.remote_embedded_auth_denied,
+                        Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
         if (requestCode == APP_QR_SCAN_REQUEST) {
             if (resultCode == Activity.RESULT_OK && data != null) {
                 String value = data.getStringExtra(AppQrCaptureActivity.EXTRA_RESULT);
@@ -1952,6 +1961,8 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
 
     private static final int REMOTE_VPN_IMPORT_REQUEST = 8293;
     private static final int REMOTE_VPN_PERMISSION_REQUEST = 8294;
+    private static final int REMOTE_VPN_WATCH_PERMISSION_REQUEST = 8295;
+    private boolean startingVpnForWatch;
 
     private void refreshPrivateVpnStatus() {
         TextView status = findViewById(R.id.quick_remote_network_status);
@@ -2048,11 +2059,21 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     }
 
     private void startPrivateVpnAfterConsent() {
+        startPrivateVpnAfterConsent(false);
+    }
+
+    private void startPrivateVpnAfterConsent(boolean thenWatch) {
         EmbeddedRemoteTunnel.start(this, (running, message) -> {
             if (isFinishing() || isDestroyed()) return;
             refreshPrivateVpnStatus();
             if (running) syncRemoteOverlayForSavedPair();
-            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+            if (thenWatch) {
+                startingVpnForWatch = false;
+                if (running) startOneTapWatch();
+                else Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+            } else {
+                Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+            }
         });
         refreshPrivateVpnStatus();
     }
@@ -2184,10 +2205,31 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     }
 
     private void startOneTapWatch() {
-        if (oneTapConnecting || isFinishing() || isDestroyed()) return;
+        if (oneTapConnecting || startingVpnForWatch || isFinishing() || isDestroyed())
+            return;
         PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
         if (peer == null) {
             showFirstUseQuickPair();
+            return;
+        }
+        // Daily use stays one-tap. After the one-time admin VPN provisioning,
+        // launch the embedded tunnel automatically when the viewer taps Watch.
+        // Android VPN consent is still required whenever the OS requests it.
+        if (EmbeddedRemoteTunnel.hasConfig(this) && !EmbeddedRemoteTunnel.isActive()) {
+            if (EmbeddedRemoteTunnel.isStarting()) return;
+            startingVpnForWatch = true;
+            try {
+                Intent consent = VpnService.prepare(this);
+                if (consent != null) {
+                    startActivityForResult(consent, REMOTE_VPN_WATCH_PERMISSION_REQUEST);
+                } else {
+                    startPrivateVpnAfterConsent(true);
+                }
+            } catch (RuntimeException error) {
+                startingVpnForWatch = false;
+                Toast.makeText(this, R.string.remote_embedded_auth_denied,
+                        Toast.LENGTH_LONG).show();
+            }
             return;
         }
         if (oneTapConnection == null) oneTapConnection = new OneTapConnection(this);
