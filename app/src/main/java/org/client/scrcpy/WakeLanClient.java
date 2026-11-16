@@ -13,6 +13,72 @@ import java.nio.charset.StandardCharsets;
 public final class WakeLanClient {
     private WakeLanClient() { }
 
+    /** Only returned after BOTH client and receiver prove the saved pairing key. */
+    public static final class RemoteInfo {
+        public final String overlayHost;
+        public final int adbPort;
+        public final String error;
+        RemoteInfo(String overlayHost, int adbPort, String error) {
+            this.overlayHost = overlayHost;
+            this.adbPort = adbPort;
+            this.error = error;
+        }
+        public boolean ok() { return error == null; }
+    }
+
+    public static RemoteInfo queryRemoteInfo(
+            android.content.Context context, String host, String secret) {
+        if (!WakeAuth.isHex(secret, 32)) {
+            return new RemoteInfo(null, 0, "尚未完成软件双方配对");
+        }
+        try {
+            InetAddress ip = InetAddress.getByName(host);
+            if (!RemoteOverlayNetwork.isAllowedPeerIp(ip)) {
+                return new RemoteInfo(null, 0, "不允许连接未授权的公网地址");
+            }
+            String localVpn = RemoteOverlayNetwork.localVpnIp(context);
+            String nonce = WakeAuth.randomHex(8);
+            try (Socket socket = new Socket()) {
+                socket.connect(new InetSocketAddress(ip, WakeLanService.PORT), 3500);
+                socket.setSoTimeout(11500);
+                BufferedReader in = new BufferedReader(new InputStreamReader(
+                        socket.getInputStream(), StandardCharsets.US_ASCII));
+                BufferedWriter out = new BufferedWriter(new OutputStreamWriter(
+                        socket.getOutputStream(), StandardCharsets.US_ASCII));
+                out.write("INFO " + nonce + " " + (localVpn == null ? "-" : localVpn) + "\n");
+                out.flush();
+                String challenge = in.readLine();
+                if (challenge == null || !challenge.startsWith("CHALLENGE ")
+                        || !WakeAuth.isHex(challenge.substring(10), 32)) {
+                    return new RemoteInfo(null, 0, "对方接收服务未响应");
+                }
+                String serverNonce = challenge.substring(10);
+                out.write("AUTH " + WakeAuth.mac(secret, nonce, serverNonce) + "\n");
+                out.flush();
+                String ack = in.readLine();
+                String expected = WakeAuth.mac(secret, serverNonce, nonce);
+                String[] response = ack == null ? new String[0] : ack.split(" ");
+                if (response.length != 3 || !"OK".equals(response[0])
+                        || !nonce.equals(response[1])
+                        || !WakeAuth.verify(response[2], expected)) {
+                    return new RemoteInfo(null, 0, "对方身份无法验证，已拒绝连接");
+                }
+                String metadata = in.readLine();
+                String[] info = metadata == null ? new String[0] : metadata.split(" ");
+                if (info.length != 3 || !"META".equals(info[0])) {
+                    return new RemoteInfo(null, 0, "对方没有提供异地连接信息");
+                }
+                String remoteVpn = RemoteOverlayNetwork.isOverlayAddress(info[1])
+                        ? info[1] : null;
+                int adbPort = Integer.parseInt(info[2]);
+                if (adbPort < 0 || adbPort > 65535) adbPort = 0;
+                return new RemoteInfo(remoteVpn, adbPort, null);
+            }
+        } catch (Exception error) {
+            return new RemoteInfo(null, 0, "未连接到已配对手机，请检查双方 VPN 和无线调试状态");
+        }
+    }
+
     public static String request(String address, String code) {
         try {
             if (!WakeAuth.isHex(code, 32)) return "临时密钥格式不正确（应为32位十六进制）";
@@ -22,8 +88,8 @@ public final class WakeLanClient {
             int port = Integer.parseInt(parts[1]);
             if (port != WakeLanService.PORT) return "测试接收端口必须为10055";
             InetAddress ip = InetAddress.getByName(host);
-            if (!(ip.isSiteLocalAddress() || ip.isLoopbackAddress()))
-                return "仅允许局域网地址，暂不支持公网直连";
+            if (!RemoteOverlayNetwork.isAllowedPeerIp(ip))
+                return "仅允许经过授权的局域网或私有 VPN 地址";
             String nonce = WakeAuth.randomHex(8);
             try (Socket socket = new Socket()) {
                 socket.connect(new InetSocketAddress(ip, port), 3500);
