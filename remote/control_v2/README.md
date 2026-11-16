@@ -38,7 +38,7 @@ sudo systemctl status screensync-control-v2 --no-pager
 curl --fail http://127.0.0.1:8765/health
 ```
 
-4. 与 x-ui 原有 Reality 端口不冲突的情况下，配置 `screensync.privyluxe.com` DNS 和有效证书，反向代理 HTTPS :8443 → `127.0.0.1:8765`；8735 等控制端口严禁直接暴露公网。域名和 HTTPS **尚未配置**。
+4. 与 x-ui 原有 Reality 端口不冲突的情况下，配置 `screensync.privyluxe.com` DNS 和有效证书，反向代理 HTTPS :8443 → `127.0.0.1:8765`；8765 等控制端口严禁直接暴露公网。域名和 HTTPS **尚未配置**。
 5. 管理员通过 `sudo bash remote/control_v2/issue_owner_qr.sh` 给每组生成一次性主手机开通码（只在可信终端扫描，严禁外传）。
 6. 双方扫码、批准，验证两组互相不可达、同组可达、解绑后不可达，测试重启/网络切换/异常断网。Android 必须由本人确认 VPN 与无线调试授权。
 
