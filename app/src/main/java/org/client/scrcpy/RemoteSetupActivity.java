@@ -32,6 +32,7 @@ import java.util.function.Consumer;
  */
 public final class RemoteSetupActivity extends Activity {
     private static final int SCAN_REQUEST = 9371;
+    private static final int CAMERA_PERMISSION_REQUEST = 9372;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private TextView status;
     private Button showInvite;
@@ -80,9 +81,7 @@ public final class RemoteSetupActivity extends Activity {
         status.setText("准备检查设备状态…");
         content.addView(status);
 
-        Button scan = action(content, "扫码开通／加入异地配对", v ->
-                startActivityForResult(new Intent(this, AppQrCaptureActivity.class),
-                        SCAN_REQUEST));
+        Button scan = action(content, "扫码开通／加入异地配对", v -> openScanner());
         scan.setContentDescription("扫描管理员一次性开通码或另一部手机的配对邀请码");
 
         showInvite = action(content, "主手机：生成配对二维码（5分钟有效）",
@@ -327,6 +326,30 @@ public final class RemoteSetupActivity extends Activity {
                 .setView(image)
                 .setPositiveButton("完成", (d, w) -> updateStatus())
                 .show();
+    }
+
+    private void openScanner() {
+        if (android.os.Build.VERSION.SDK_INT >= 23
+                && checkSelfPermission(android.Manifest.permission.CAMERA)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{android.Manifest.permission.CAMERA},
+                    CAMERA_PERMISSION_REQUEST);
+            return;
+        }
+        startActivityForResult(new Intent(this, AppQrCaptureActivity.class), SCAN_REQUEST);
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode,
+                                                      String[] permissions,
+                                                      int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != CAMERA_PERMISSION_REQUEST) return;
+        if (grantResults.length > 0 &&
+                grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            openScanner();
+        } else {
+            message("扫码需要相机权限，请在系统设置中授权后重试");
+        }
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode,
