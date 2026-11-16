@@ -109,7 +109,8 @@ public final class PairQrCode {
             return false;
         }
         return p[0] == 10 || p[0] == 172 && p[1] >= 16 && p[1] <= 31
-                || p[0] == 192 && p[1] == 168;
+                || p[0] == 192 && p[1] == 168
+                || RemoteOverlayNetwork.isOverlayAddress(host);
     }
 
     /**
@@ -117,6 +118,10 @@ public final class PairQrCode {
      * Apps cannot silently enable Wi-Fi on the other device.
      */
     public static String localWifiIp(Context context) {
+        // An active user-configured private VPN can reach the same already
+        // authorized peer across networks; advertise it automatically.
+        String overlay = RemoteOverlayNetwork.localVpnIp(context);
+        if (overlay != null) return overlay;
         try {
             WifiManager wifi = (WifiManager) context.getApplicationContext()
                     .getSystemService(Context.WIFI_SERVICE);
