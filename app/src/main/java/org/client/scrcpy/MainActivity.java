@@ -1592,6 +1592,12 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (watch != null) watch.setOnClickListener(v -> watchPairedDevice());
         if (systemAdb != null) systemAdb.setOnClickListener(v -> authorizeSystemAdb());
         if (remove != null) remove.setOnClickListener(v -> {
+            if (AutoRemoteProvisioner.isRegistered(this)) {
+                // Remote unpair must revoke the server ACL and peer first.
+                // Local-only clear would leave a previously authorized tunnel.
+                openAutoRemoteSetup();
+                return;
+            }
             new android.app.AlertDialog.Builder(this)
                     .setTitle(R.string.pair_remove_title)
                     .setMessage(R.string.pair_remove_detail)
