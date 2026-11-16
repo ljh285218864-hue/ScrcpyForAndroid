@@ -167,11 +167,11 @@ public final class EmbeddedRemoteTunnel {
                 Log.w("EmbeddedRemoteTunnel", "VPN stop failed: " +
                         error.getClass().getSimpleName());
             }
-            active = false;
+            if (success) active = false;
             starting = false;
             final boolean ok = success;
             MAIN.post(() -> {
-                if (callback != null) callback.onResult(!ok,
+                if (callback != null) callback.onResult(false,
                         ok ? "内置异地网络已断开" : "异地网络断开遇到问题，请在系统 VPN 中检查");
             });
         });
