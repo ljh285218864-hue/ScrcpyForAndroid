@@ -63,17 +63,17 @@ jobs:
           test -n "$apk"
           test "$(stat -c '%s' "$apk")" -gt 1000000
           unzip -t "$apk" | tail -2
-          cp "$apk" ScreenSync-ElderNotifications-arm64.apk
-          zip -j ScreenSync-ElderNotifications-arm64.zip ScreenSync-ElderNotifications-arm64.apk
-          sha256sum ScreenSync-ElderNotifications-arm64.apk
+          cp "$apk" ScreenSync-RemoteVPN-arm64.apk
+          zip -j ScreenSync-RemoteVPN-arm64.zip ScreenSync-RemoteVPN-arm64.apk
+          sha256sum ScreenSync-RemoteVPN-arm64.apk
 
       - name: Upload APK build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ScreenSync-ElderNotifications-debug
+          name: ScreenSync-RemoteVPN-debug
           path: |
-            ScreenSync-ElderNotifications-arm64.apk
-            ScreenSync-ElderNotifications-arm64.zip
+            ScreenSync-RemoteVPN-arm64.apk
+            ScreenSync-RemoteVPN-arm64.zip
           retention-days: 30
           if-no-files-found: error
 
@@ -83,7 +83,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release create screensync-elder-notifications-20261115 \
-            ScreenSync-ElderNotifications-arm64.apk ScreenSync-ElderNotifications-arm64.zip \
-            --title 'ScreenSync 长辈模式 · 通知整理版' \
-            --notes "源码：$GITHUB_SHA。加入长辈模式的通知整理入口：集中打开手机普通应用通知设置、ScreenSync 自身通知设置，指导减少广告推送和误点；不会自动关闭系统无线调试、正在共享屏幕等安全提示。保留断开观看、双向观看和内置扫码。"
+          gh release create screensync-remote-vpn-prototype-20261116 \
+            ScreenSync-RemoteVPN-arm64.apk ScreenSync-RemoteVPN-arm64.zip \
+            --title 'ScreenSync 异地观看私有网络测试版' \
+            --notes "源码：$GITHUB_SHA。在原有 ADB/scrcpy 上加入私有 VPN 异地传输实验支持：同一 Tailscale 私有网络、已批准的 ScreenSync 配对及 Android 无线调试授权、自动交换私有地址和连接端口，单一立即观看入口。无需额外 MediaProjection 录屏授权，但不保证所有小米/vivo机型或换网后的 ADB 始终在线。保留原有安全提示和停止观看按钮。"
