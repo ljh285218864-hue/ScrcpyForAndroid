@@ -83,6 +83,10 @@ class ControlPlaneTests(unittest.TestCase):
             with self.assertRaises(backend.ApiError):
                 backend.api_approve(db, a, {"pending_id": "0"*32})
             backend.api_approve(db, a, {"pending_id": guest["device_id"]})
+            # sqlite3.Row is a snapshot: simulate the following authenticated
+            # API requests after the approval transaction has committed.
+            a = backend.authenticate(db, "Bearer " + owner["token"])
+            b = backend.authenticate(db, "Bearer " + guest["token"])
             sa, sb = backend.api_status(db, a), backend.api_status(db, b)
             self.assertEqual(sa["state"], "paired")
             self.assertEqual(sb["state"], "paired")
