@@ -193,6 +193,14 @@ public final class AutoRemoteProvisioner {
         return post(context, "/v1/approve", body, true);
     }
 
+    public static JSONObject decline(Context context, String pendingId) throws Exception {
+        if (!ID.matcher(pendingId == null ? "" : pendingId).matches())
+            throw new Failure("待审批设备无效");
+        JSONObject body = new JSONObject();
+        body.put("pending_id", pendingId);
+        return post(context, "/v1/decline", body, true);
+    }
+
     public static JSONObject status(Context context) throws Exception {
         if (!isRegistered(context)) throw new Failure("设备尚未开通");
         return post(context, "/v1/status", new JSONObject(), true);
@@ -242,7 +250,17 @@ public final class AutoRemoteProvisioner {
     }
 
     public static JSONObject revoke(Context context) throws Exception {
-        JSONObject result = post(context, "/v1/revoke", new JSONObject(), true);
+        JSONObject result;
+        try {
+            result = post(context, "/v1/revoke", new JSONObject(), true);
+        } catch (Failure error) {
+            // The owner may have rejected/revoked this credential already.
+            // Only a verified 401 response permits local cleanup here;
+            // ordinary network outages must NOT silently erase server state.
+            if (!error.reason.endsWith("AUTH_REQUIRED")) throw error;
+            result = new JSONObject();
+            result.put("state", "already_revoked");
+        }
         prefs(context).edit().clear().commit();
         PairedDeviceStore.clear(context);
         return result;
