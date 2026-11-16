@@ -63,7 +63,8 @@ public final class OneTapConnection {
             if (RemoteOverlayNetwork.localVpnIp(context) != null) {
                 String[] hosts = {peer.overlayHost, peer.host};
                 for (String target : hosts) {
-                    if (!isCurrent(request) || target == null || target.isEmpty()) break;
+                    if (!isCurrent(request)) return;
+                    if (target == null || target.isEmpty()) continue;
                     WakeLanClient.RemoteInfo info =
                             WakeLanClient.queryRemoteInfo(context, target, peer.secret);
                     if (!info.ok()) continue;
