@@ -5,6 +5,12 @@ set -euo pipefail
 umask 077
 
 if [[ $EUID -ne 0 ]]; then echo "请使用 sudo/root"; exit 1; fi
+# This first Beta4 prototype supports only one group. It must not be deployed
+# from a repository that includes the isolated multi-group implementation.
+if [[ -f remote/control_v2/server.py ]]; then
+  echo "安全停止：旧安装器只支持一对手机。请审查 remote/control_v2/README.md 后选择新版独立接口部署。"
+  exit 1
+fi
 if [[ ! -f remote/control/server.py ]]; then
   echo "请在 ScrcpyForAndroid 仓库根目录运行"; exit 1
 fi
