@@ -39,6 +39,7 @@ public final class RemoteSetupActivity extends Activity {
     private Button decline;
     private Button revoke;
     private String pendingId;
+    private boolean pendingExpired;
     private boolean busy;
     private boolean resumed;
     private boolean receiverRequested;
@@ -198,7 +199,7 @@ public final class RemoteSetupActivity extends Activity {
         boolean owner = "owner".equals(AutoRemoteProvisioner.registrationRole(this));
         if (showInvite != null) showInvite.setEnabled(registered && owner && !busy);
         if (approve != null) approve.setEnabled(registered && owner &&
-                pendingId != null && !busy);
+                pendingId != null && !pendingExpired && !busy);
         if (decline != null) decline.setEnabled(registered && owner &&
                 pendingId != null && !busy);
         if (revoke != null) revoke.setEnabled(registered && !busy);
@@ -261,10 +262,17 @@ public final class RemoteSetupActivity extends Activity {
         if ("ready".equals(state)) {
             JSONObject pending = result;
             pendingId = pending.optString("pending_id", null);
+            pendingExpired = pending.optBoolean("pending_expired", false);
             if (pendingId != null) {
-                showState("等待主手机确认："
-                        + pending.optString("pending_name", "另一台手机")
-                        + "\n请核实对方身份，再点击「同意待配对手机」。");
+                if (pendingExpired) {
+                    showState("配对申请已过期："
+                            + pending.optString("pending_name", "另一台手机")
+                            + "\n请先点击「拒绝待配对手机」，再重新生成二维码。");
+                } else {
+                    showState("等待主手机确认："
+                            + pending.optString("pending_name", "另一台手机")
+                            + "\n请核实对方身份，再点击「同意待配对手机」。");
+                }
             } else {
                 showState("主手机已开通。点击生成配对二维码，让另一部手机扫码。");
             }
