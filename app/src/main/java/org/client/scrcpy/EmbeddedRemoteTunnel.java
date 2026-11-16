@@ -59,6 +59,14 @@ public final class EmbeddedRemoteTunnel {
         return new File(context.getFilesDir(), CONFIG_FILE).isFile();
     }
 
+    /** Only erase the private VPN config when the tunnel is fully stopped. */
+    public static boolean removeConfig(Context context) {
+        synchronized (LOCK) {
+            if (active || starting) return false;
+            return !hasConfig(context) || new File(context.getFilesDir(), CONFIG_FILE).delete();
+        }
+    }
+
     public static boolean isActive() { return active; }
     public static boolean isStarting() { return starting; }
 
