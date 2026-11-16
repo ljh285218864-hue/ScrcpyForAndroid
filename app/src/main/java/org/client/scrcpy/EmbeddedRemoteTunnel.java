@@ -32,7 +32,11 @@ import java.nio.charset.StandardCharsets;
 public final class EmbeddedRemoteTunnel {
     private static final String CONFIG_FILE = "screensync_private_vpn.conf";
     private static final Object LOCK = new Object();
-    private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    // Construct Android's main-thread handler only at runtime. Class loading
+    // must remain safe for JVM-only config validation tests.
+    private static Handler mainHandler() {
+        return new Handler(Looper.getMainLooper());
+    }
     private static final LocalTunnel TUNNEL = new LocalTunnel();
     private static GoBackend backend;
     private static volatile boolean active;
@@ -145,7 +149,7 @@ public final class EmbeddedRemoteTunnel {
             final String response = message;
             starting = false;
             active = result;
-            MAIN.post(() -> {
+            mainHandler().post(() -> {
                 if (callback != null) callback.onResult(result, response);
             });
         });
@@ -170,7 +174,7 @@ public final class EmbeddedRemoteTunnel {
             if (success) active = false;
             starting = false;
             final boolean ok = success;
-            MAIN.post(() -> {
+            mainHandler().post(() -> {
                 if (callback != null) callback.onResult(false,
                         ok ? "内置异地网络已断开" : "异地网络断开遇到问题，请在系统 VPN 中检查");
             });
