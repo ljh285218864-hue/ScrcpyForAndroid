@@ -76,7 +76,7 @@ class ControlPlaneTests(unittest.TestCase):
         legacy = SimpleNamespace(stdout=BKEY + "\t100.80.0.2/32\n")
         with mock.patch.object(backend, "cmd", return_value=legacy):
             with self.assertRaises(RuntimeError):
-                backend.assert_exclusive_wireguard_interface([
+                self.real_exclusive_interface_guard([
                     {"public_key": AKEY, "ip": backend.IP_OWNER}
                 ])
 
