@@ -117,6 +117,27 @@ class ControlPlaneTests(unittest.TestCase):
                                       "public_key": BKEY})
         self.assertEqual(self.patches[1].call_count, 1)
 
+    def test_expired_invite_can_be_declined_by_owner(self):
+        owner, guest = self.register_pair()
+        with backend.connect_db() as db:
+            db.execute("UPDATE invites SET expires=0")
+            a = backend.authenticate(db, "Bearer " + owner["token"])
+            b = backend.authenticate(db, "Bearer " + guest["token"])
+            self.assertEqual(backend.api_status(db, b)["state"], "expired")
+            with self.assertRaises(backend.ApiError):
+                backend.api_approve(db, a, {"pending_id": guest["device_id"]})
+            backend.api_decline(db, a, {"pending_id": guest["device_id"]})
+            with self.assertRaises(backend.ApiError):
+                backend.authenticate(db, "Bearer " + guest["token"])
+            self.assertEqual(backend.api_invite(db, a)["expires_in"], 300)
+
+    def test_guest_cannot_decline_another_phone(self):
+        owner, guest = self.register_pair()
+        with backend.connect_db() as db:
+            b = backend.authenticate(db, "Bearer " + guest["token"])
+            with self.assertRaises(backend.ApiError):
+                backend.api_decline(db, b, {"pending_id": guest["device_id"]})
+
     def test_token_scope(self):
         owner = self.owner()
         with backend.connect_db() as db:
