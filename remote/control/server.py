@@ -250,11 +250,19 @@ def api_approve(db: sqlite3.Connection, device: sqlite3.Row, body: dict) -> dict
     if invitation is None or guest is None:
         raise ApiError("PENDING_REQUEST_NOT_FOUND", 404)
     secret = secrets.token_hex(16)  # Same format as WakeAuth: 32 hex chars.
-    peer_set(guest["public_key"], IP_GUEST)
-    apply_acl(True)
-    db.execute("UPDATE devices SET state='paired', secret=? WHERE role='owner' OR role='guest'",
-               (secret,))
-    db.execute("DELETE FROM invites")
+    try:
+        peer_set(guest["public_key"], IP_GUEST)
+        apply_acl(True)
+        db.execute("UPDATE devices SET state='paired', secret=? "
+                   "WHERE role IN ('owner', 'guest')", (secret,))
+        db.execute("DELETE FROM invites")
+    except Exception:
+        # Deny cross-device forwarding even if a later SQLite write fails.
+        try:
+            apply_acl(False)
+        finally:
+            peer_remove(guest["public_key"])
+        raise
     return {"state": "paired"}
 
 
