@@ -182,8 +182,7 @@ public final class WakeLanService extends Service {
             socket.setSoTimeout(2400);
             // Only directly connected private LAN or loopback peers, never an
             // unauthenticated public-Internet endpoint.
-            if (!(socket.getInetAddress().isSiteLocalAddress()
-                    || socket.getInetAddress().isLoopbackAddress())) return;
+            if (!RemoteOverlayNetwork.isAllowedPeerIp(socket.getInetAddress())) return;
             BufferedReader in = new BufferedReader(new InputStreamReader(
                     socket.getInputStream(), StandardCharsets.US_ASCII));
             BufferedWriter out = new BufferedWriter(new OutputStreamWriter(
@@ -193,9 +192,14 @@ public final class WakeLanService extends Service {
                 handlePairing(socket, hello, out);
                 return;
             }
-            if (hello == null || hello.length() != 22
-                    || !hello.startsWith("HELLO ")
-                    || !WakeAuth.isHex(hello.substring(6), 16)) {
+            String[] parts = hello == null ? new String[0] : hello.split(" ");
+            boolean isInfo = parts.length == 3 && "INFO".equals(parts[0])
+                    && WakeAuth.isHex(parts[1], 16)
+                    && ("-".equals(parts[2])
+                            || RemoteOverlayNetwork.isOverlayAddress(parts[2]));
+            boolean isWake = parts.length == 2 && "HELLO".equals(parts[0])
+                    && WakeAuth.isHex(parts[1], 16);
+            if (!isInfo && !isWake) {
                 out.write("DENIED\n");
                 out.flush();
                 return;
@@ -204,7 +208,7 @@ public final class WakeLanService extends Service {
             out.write("CHALLENGE " + challenge + "\n");
             out.flush();
             String response = in.readLine();
-            String nonce = hello.substring(6);
+            String nonce = parts[1];
             String expected = WakeAuth.mac(code, nonce, challenge);
             PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
             // HMAC establishes peer identity even when DHCP changes the IP.
@@ -232,12 +236,47 @@ public final class WakeLanService extends Service {
             }
             getSharedPreferences(PREF, MODE_PRIVATE).edit()
                     .putLong(KEY_LAST, System.currentTimeMillis()).apply();
-            out.write("OK " + nonce + "\n");
-            out.flush();
-            Log.i(TAG, "Authorized LAN wake request accepted; screen sharing not triggered");
-            postIncomingNotification();
+            if (isInfo && peer != null && acceptedByPeer) {
+                // Authenticated, read-only metadata exchange. Never starts the
+                // remote screen and never disables system privacy indicators.
+                if (RemoteOverlayNetwork.isOverlayAddress(parts[2])) {
+                    PairedDeviceStore.updateOverlayAddress(this, parts[2]);
+                }
+                String serverProof = WakeAuth.mac(peer.secret, challenge, nonce);
+                out.write("OK " + nonce + " " + serverProof + "\n");
+                out.flush();
+                String overlay = RemoteOverlayNetwork.localVpnIp(this);
+                int currentPort = localWirelessDebuggingPort();
+                out.write("META " + (overlay == null ? "-" : overlay)
+                        + " " + currentPort + "\n");
+                out.flush();
+            } else {
+                out.write("OK " + nonce + "\n");
+                out.flush();
+                Log.i(TAG, "Authorized screen-viewing connection check");
+                postIncomingNotification();
+            }
         } catch (Exception error) {
             Log.w(TAG, "Wake request rejected or interrupted");
+        }
+    }
+
+    /**
+     * Read our own current wireless-debugging port from *local* mDNS.
+     * It is independent of the temporary QR pairing port and changes after
+     * system restarts. No fixed port, root, or external ADB exposure.
+     */
+    private int localWirelessDebuggingPort() {
+        String wifi = RemoteOverlayNetwork.localWifiIp(this);
+        if (wifi == null) return 0;
+        try {
+            org.client.scrcpy.utils.ExecUtil.AdbCommandResult mdns =
+                    org.client.scrcpy.utils.AdbHelper.adbMdnsServices(this);
+            return SystemAdbQrPairingSession.findAdbConnectPort(
+                    mdns.combinedOutput(), wifi);
+        } catch (RuntimeException error) {
+            Log.d(TAG, "Own ADB TLS service not discoverable");
+            return 0;
         }
     }
 
