@@ -408,6 +408,9 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         initLanAutoDiscovery();
         initPairingHome();
         initQuickHome();
+        // Silently exchange private VPN endpoints for existing user-approved
+        // pairings while both phones are still reachable on the old LAN.
+        syncRemoteOverlayForSavedPair();
         Button openDebugSettings = findViewById(R.id.button_open_wireless_debugging);
         final boolean isXiaomiFamily = XiaomiSettingsSupport.isXiaomiFamily(
                 Build.MANUFACTURER, Build.BRAND);
@@ -1735,6 +1738,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                     return;
                 }
                 PairedDeviceStore.save(this, "已扫码手机", target.host, result.secret, 0);
+                syncRemoteOverlayForSavedPair();
                 try {
                     WakeLanService.startByOwner(this);
                 } catch (RuntimeException error) {
@@ -1920,6 +1924,35 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                         Toast.LENGTH_LONG).show();
             }
         }
+    }
+
+    private long lastRemoteOverlaySyncAt;
+
+    /**
+     * Migrates the previous LAN-only pairing without replacing the user's
+     * saved identity or asking for IP/port entry. Requires both phones'
+     * existing receiver and VPN to be enabled by their owners.
+     */
+    private void syncRemoteOverlayForSavedPair() {
+        PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
+        if (peer == null || RemoteOverlayNetwork.localVpnIp(this) == null) return;
+        long now = SystemClock.elapsedRealtime();
+        if (now - lastRemoteOverlaySyncAt < 30_000L) return;
+        lastRemoteOverlaySyncAt = now;
+        ThreadUtils.execute(() -> {
+            String[] hosts = {peer.host, peer.overlayHost};
+            for (String candidate : hosts) {
+                if (candidate == null || candidate.isEmpty()) continue;
+                WakeLanClient.RemoteInfo info =
+                        WakeLanClient.queryRemoteInfo(this, candidate, peer.secret);
+                if (!info.ok()) continue;
+                if (info.overlayHost != null) {
+                    PairedDeviceStore.updateOverlayAddress(this, info.overlayHost);
+                    Log.i("Scrcpy", "Saved peer private VPN endpoint refreshed");
+                }
+                break;
+            }
+        });
     }
 
     private void initQuickReceiverListener(Switch receiver) {
