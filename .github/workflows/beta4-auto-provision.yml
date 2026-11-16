@@ -31,6 +31,9 @@ jobs:
           python3 -m unittest discover -s remote/control -p 'test_*.py' -v
           python3 -m compileall -q remote/control_v2
           python3 -m unittest discover -s remote/control_v2 -p 'test_*.py' -v
+          bash -n remote/control/install_ubuntu.sh
+          bash -n remote/control_v2/install_ubuntu.sh
+          bash -n remote/control_v2/issue_owner_qr.sh
 
   build-beta4:
     runs-on: ubuntu-24.04
