@@ -1,4 +1,5 @@
 name: Build guided QR Android APK (reuse verified native ADB)
+# Final remote VPN beta after legacy-peer metadata synchronization fixes.
 # Parent-friendly notification settings built using public Android APIs.
 # Rebuild corrected DNS-SD unit tests and the embedded QR camera.
 
@@ -63,17 +64,17 @@ jobs:
           test -n "$apk"
           test "$(stat -c '%s' "$apk")" -gt 1000000
           unzip -t "$apk" | tail -2
-          cp "$apk" ScreenSync-RemoteVPN-arm64.apk
-          zip -j ScreenSync-RemoteVPN-arm64.zip ScreenSync-RemoteVPN-arm64.apk
-          sha256sum ScreenSync-RemoteVPN-arm64.apk
+          cp "$apk" ScreenSync-RemoteVPN-Beta2-arm64.apk
+          zip -j ScreenSync-RemoteVPN-Beta2-arm64.zip ScreenSync-RemoteVPN-Beta2-arm64.apk
+          sha256sum ScreenSync-RemoteVPN-Beta2-arm64.apk
 
       - name: Upload APK build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ScreenSync-RemoteVPN-debug
+          name: ScreenSync-RemoteVPN-Beta2-debug
           path: |
-            ScreenSync-RemoteVPN-arm64.apk
-            ScreenSync-RemoteVPN-arm64.zip
+            ScreenSync-RemoteVPN-Beta2-arm64.apk
+            ScreenSync-RemoteVPN-Beta2-arm64.zip
           retention-days: 30
           if-no-files-found: error
 
@@ -83,7 +84,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release create screensync-remote-vpn-prototype-20261116 \
-            ScreenSync-RemoteVPN-arm64.apk ScreenSync-RemoteVPN-arm64.zip \
+          gh release create screensync-remote-vpn-beta2-20261116 \
+            ScreenSync-RemoteVPN-Beta2-arm64.apk ScreenSync-RemoteVPN-Beta2-arm64.zip \
             --title 'ScreenSync 异地观看私有网络测试版' \
             --notes "源码：$GITHUB_SHA。在原有 ADB/scrcpy 上加入私有 VPN 异地传输实验支持：同一 Tailscale 私有网络、已批准的 ScreenSync 配对及 Android 无线调试授权、自动交换私有地址和连接端口，单一立即观看入口。无需额外 MediaProjection 录屏授权，但不保证所有小米/vivo机型或换网后的 ADB 始终在线。保留原有安全提示和停止观看按钮。"
