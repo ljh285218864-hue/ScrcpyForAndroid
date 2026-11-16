@@ -289,12 +289,14 @@ def api_status(db: sqlite3.Connection, device: sqlite3.Row) -> dict:
                 "endpoint": WG_ENDPOINT}
     if device["role"] == "owner" and device["state"] == "ready":
         pending = db.execute("""
-            SELECT d.id,d.name FROM devices d JOIN invites i ON i.guest_id=d.id
-            WHERE i.owner_id=? AND i.expires>=? AND d.state='pending'
-        """, (device["id"], int(time.time()))).fetchone()
+            SELECT d.id,d.name,i.expires FROM devices d
+            JOIN invites i ON i.guest_id=d.id
+            WHERE i.owner_id=? AND d.state='pending'
+        """, (device["id"],)).fetchone()
         if pending:
             response["pending_id"] = pending["id"]
             response["pending_name"] = pending["name"]
+            response["pending_expired"] = pending["expires"] < int(time.time())
     if device["role"] == "guest" and device["state"] == "pending":
         invitation = db.execute(
             "SELECT expires FROM invites WHERE guest_id=?", (device["id"],)
