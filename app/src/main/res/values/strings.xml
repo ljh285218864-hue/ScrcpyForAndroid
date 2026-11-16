@@ -19,6 +19,13 @@
     <string name="quick_pair_search">搜索附近手机</string>
 
     <string name="guide_title">屏幕同步 · 简单三步</string>
+
+    <string name="remote_vpn_connected">异地加密网络已连接 · 可尝试远程观看</string>
+    <string name="remote_vpn_not_connected">异地加密网络未连接 · 首次需两台手机加入相同 Tailscale 私有网络</string>
+    <string name="remote_help_button">异地连接设置说明</string>
+    <string name="remote_help_title">首次设置异地观看</string>
+    <string name="remote_help_detail">1. 两台手机安装 Tailscale，在相同的私有网络登录并启用 VPN。\n2. 首次仍由双方当面完成 ScreenSync 配对和系统无线调试授权。\n3. 两台手机还在同一 Wi-Fi 时，分别打开一次 ScreenSync，使软件交换加密网络地址。\n4. 以后不必切换模式，点击「立即观看」自动尝试连接。\n\n不需要填写 IP 或端口，不使用 Android MediaProjection 录屏。无线调试可能因重启、网络改变而关闭；系统授权及安全通知不会被隐藏。</string>
+
     <string name="guide_step_one">第 1 步｜让两台手机配对</string>
     <string name="guide_step_one_hint">被观看手机点「显示配对二维码」，观看手机点「扫码配对」；被观看手机再点击允许。</string>
     <string name="guide_step_two">第 2 步｜完成系统无线调试授权</string>
