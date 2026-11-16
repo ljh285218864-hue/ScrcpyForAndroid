@@ -1866,9 +1866,9 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         Button vpnToggle = findViewById(R.id.remote_vpn_toggle_button);
         Switch receiver = findViewById(R.id.quick_receive_switch);
         if (primary != null) primary.setOnClickListener(v -> startOneTapWatch());
-        if (showCode != null) showCode.setOnClickListener(v -> showLocalPairCode());
+        if (showCode != null) showCode.setOnClickListener(v -> openAutoRemoteSetup());
         if (search != null) search.setOnClickListener(v -> startLanAutoDiscovery());
-        if (scanQr != null) scanQr.setOnClickListener(v -> scanAppPairQr());
+        if (scanQr != null) scanQr.setOnClickListener(v -> openAutoRemoteSetup());
         if (authorizeQr != null) authorizeQr.setOnClickListener(v -> showSystemAdbPairQr());
         if (openSystemSettings != null) openSystemSettings.setOnClickListener(v ->
                 openWirelessDebugSettings());
@@ -1884,7 +1884,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (cleanupNotifications != null) {
             cleanupNotifications.setOnClickListener(v -> showElderNotificationHelper());
         }
-        if (vpnSetup != null) vpnSetup.setOnClickListener(v -> importPrivateVpnConfig());
+        if (vpnSetup != null) vpnSetup.setOnClickListener(v -> openAutoRemoteSetup());
         if (vpnToggle != null) vpnToggle.setOnClickListener(v -> togglePrivateVpn());
         refreshPrivateVpnStatus();
         if (advanced != null) advanced.setOnClickListener(v -> {
@@ -1983,6 +1983,10 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         }
     }
 
+    private void openAutoRemoteSetup() {
+        startActivity(new Intent(this, RemoteSetupActivity.class));
+    }
+
     private void importPrivateVpnConfig() {
         try {
             Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -2037,12 +2041,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             return;
         }
         if (!EmbeddedRemoteTunnel.hasConfig(this)) {
-            new android.app.AlertDialog.Builder(this)
-                    .setTitle(R.string.remote_help_title)
-                    .setMessage(R.string.remote_help_detail)
-                    .setPositiveButton(R.string.remote_embedded_import,
-                            (d, which) -> importPrivateVpnConfig())
-                    .setNegativeButton(android.R.string.cancel, null).show();
+            openAutoRemoteSetup();
             return;
         }
         try {
@@ -2209,7 +2208,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             return;
         PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
         if (peer == null) {
-            showFirstUseQuickPair();
+            openAutoRemoteSetup();
+            return;
+        }
+        if (AutoRemoteProvisioner.isRegistered(this) &&
+                !EmbeddedRemoteTunnel.hasConfig(this)) {
+            // Account is linked, but VPN config may still await other owner approval.
+            openAutoRemoteSetup();
             return;
         }
         // Daily use stays one-tap. After the one-time admin VPN provisioning,
