@@ -125,6 +125,35 @@ def connect_db() -> sqlite3.Connection:
     return db
 
 
+def assert_exclusive_wireguard_interface(devices: list[sqlite3.Row]) -> None:
+    """Refuse to modify a shared/legacy WG interface before any ACL changes.
+
+    A globally inserted iptables FORWARD rule affects every device on the
+    interface, not just Beta4 peers. Existing Beta3 peers must never have
+    their AllowedIPs reassigned or lose routing because a new DB is empty.
+    """
+    output = cmd("wg", "show", INTERFACE, "allowed-ips").stdout
+    expected = {
+        (row["public_key"], row["ip"] + "/32")
+        for row in devices
+    }
+    active = set()
+    for line in output.splitlines():
+        fields = line.strip().split()
+        if not fields:
+            continue
+        if len(fields) < 2:
+            raise RuntimeError("cannot parse existing WireGuard peers")
+        public_key = safe_key(fields[0])
+        for allowed in fields[1].split(","):
+            active.add((public_key, allowed.strip()))
+    if not active.issubset(expected):
+        raise RuntimeError(
+            "WireGuard interface includes unmanaged or legacy peers: "
+            "refusing to change forwarding rules or device routes"
+        )
+
+
 def initialize() -> None:
     valid_config()
     DATABASE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -154,7 +183,10 @@ def initialize() -> None:
         devices = list(db.execute("SELECT public_key, ip, state FROM devices"))
         paired = sum(d["state"] == "paired" for d in devices) == 2
     server_public_key()
-    # At startup apply a restrictive firewall before adding persisted peers.
+    # Guard BEFORE touching iptables or peers. Empty Beta4 DB cannot own
+    # an interface containing earlier Beta3 peer addresses.
+    assert_exclusive_wireguard_interface(devices)
+    # Only a dedicated/fully managed interface can have its ACL changed.
     apply_acl(paired)
     for device in devices:
         if device["state"] != "pending":
