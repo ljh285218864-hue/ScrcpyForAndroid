@@ -228,10 +228,11 @@ public final class AutoRemoteProvisioner {
                 + "AllowedIPs = 100.80.0.0/24\n"
                 + "Endpoint = " + endpoint + "\n"
                 + "PersistentKeepalive = 25\n";
-        // Avoid importing repeatedly while an active VPN is running.
-        if (!EmbeddedRemoteTunnel.hasConfig(context))
-            EmbeddedRemoteTunnel.importConfig(context,
-                    config.getBytes(StandardCharsets.UTF_8));
+        // Migrate a Beta3 imported config only after it is stopped; skip
+        // rewriting the same private config on each status poll.
+        byte[] desired = config.getBytes(StandardCharsets.UTF_8);
+        if (!EmbeddedRemoteTunnel.configMatches(context, desired))
+            EmbeddedRemoteTunnel.importConfig(context, desired);
         PairedDeviceStore.Peer existing = PairedDeviceStore.load(context);
         if (existing == null || !sharedSecret.equals(existing.secret)
                 || !peerIp.equals(existing.overlayHost)) {
