@@ -8,10 +8,12 @@ if [[ $EUID -ne 0 ]]; then echo "请使用 sudo/root"; exit 1; fi
 if [[ ! -f remote/control/server.py ]]; then
   echo "请在 ScrcpyForAndroid 仓库根目录运行"; exit 1
 fi
-IFACE="$(printenv SCREENSYNC_WG_INTERFACE || echo wg-screensync)"
-ENDPOINT="$(printenv SCREENSYNC_WG_ENDPOINT || echo 166.88.95.233:51820)"
+IFACE="$(printenv SCREENSYNC_WG_INTERFACE || echo wg-ss-beta4)"
+ENDPOINT="$(printenv SCREENSYNC_WG_ENDPOINT || echo "")"
 [[ "$IFACE" =~ ^[a-zA-Z0-9_.-]{1,15}$ ]] || { echo "WireGuard 接口名称无效"; exit 1; }
 [[ "$ENDPOINT" =~ ^[A-Za-z0-9.-]+:[0-9]{1,5}$ ]] || { echo "WireGuard Endpoint 无效"; exit 1; }
+
+[[ "$IFACE" != "wg-screensync" && "${ENDPOINT##*:}" != "51820" ]] || { echo "Beta3 接口和端口已保留"; exit 1; }
 
 for binary in wg iptables iptables-save python3 systemctl ss install; do
   command -v "$binary" >/dev/null || { echo "缺少 $binary，停止部署"; exit 1; }
@@ -20,8 +22,8 @@ if ! wg show "$IFACE" >/dev/null 2>&1; then
   echo "未发现接口 $IFACE。请先 sudo wg show 核对名称。"; exit 1
 fi
 PORT="$(wg show "$IFACE" listen-port)"
-[[ "$PORT" == "51820" ]] || {
-  echo "现有 WireGuard 使用端口 $PORT，不是预期 51820。停止部署。"; exit 1;
+[[ "$PORT" == "${ENDPOINT##*:}" ]] || {
+  echo "现有 WireGuard 使用端口 $PORT，与配置的 Endpoint 不一致。停止部署。"; exit 1;
 }
 # Installation is only safe on a dedicated, empty WireGuard interface.
 # The legacy Beta3 interface contains pre-registered Xiaomi/vivo peers.
