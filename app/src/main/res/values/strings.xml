@@ -20,30 +20,30 @@
 
     <string name="guide_title">屏幕同步 · 简单三步</string>
 
-    <string name="remote_embedded_import">导入设备配置</string>
+    <string name="remote_embedded_import">异地扫码设置</string>
     <string name="remote_embedded_start">启用异地网络</string>
     <string name="remote_embedded_stop">关闭异地网络</string>
     <string name="remote_embedded_busy">正在连接…</string>
-    <string name="remote_embedded_needs_config">尚未导入 VPS 配置 · 点击「导入设备配置」</string>
+    <string name="remote_embedded_needs_config">尚未开通异地网络 · 点击「异地扫码设置」</string>
     <string name="remote_embedded_ready">设备已配置 · 点击「启用异地网络」</string>
     <string name="remote_embedded_active">内置异地网络已启动 · 正在检查设备连通性</string>
-    <string name="remote_embedded_import_ok">配置已导入，仅本机可读取</string>
-    <string name="remote_embedded_import_fail">配置导入失败，请使用服务器为本手机生成的 .conf 文件</string>
+    <string name="remote_embedded_import_ok">异地配置已安全保存在本机</string>
+    <string name="remote_embedded_import_fail">网络配置失败，请进入异地扫码设置核对服务器状态</string>
     <string name="remote_embedded_auth_denied">没有获得系统 VPN 授权，异地网络未启动</string>
     <string name="remote_vpn_connected">异地加密网络已连接 · 可尝试远程观看</string>
     <string name="remote_vpn_not_connected">异地网络未连接 · 先在两台手机启用 ScreenSync 内置网络</string>
     <string name="remote_help_button">异地连接设置说明</string>
     <string name="remote_help_title">首次设置异地观看</string>
-    <string name="remote_help_detail">1. 两台手机只需安装 ScreenSync，不必安装 Tailscale。\n2. 管理员需先为每台手机从可信 VPS 生成单独的 WireGuard 配置文件，并在本机点击「导入设备配置」。\n3. 点击「启用异地网络」，首次同意 Android 系统 VPN 授权。双方必须使用不同的私有地址并连接同一可信 VPS。\n4. 首次仍需双方同意 ScreenSync 软件配对和 Android 无线调试授权；完成配对时双方可先在同一 Wi-Fi 上更新地址。\n5. 后续点击同一个「立即观看」按钮，软件自动使用加密网络。\n\n尚未部署 VPS 时，内置 VPN 不会自动连接。VPN 不会关闭系统安全提示。原有 ADB/scrcpy 不使用 MediaProjection，但异地无线调试能否通过 VPN 仍需真机验证。</string>
+    <string name="remote_help_detail">Beta4 使用已有日本 VPS 的私有网络：主手机首次扫描管理员提供的开通二维码，随后生成异地配对二维码；另一台手机扫码申请，主手机确认后系统自动保存各自的 VPN 配置，不需要导入文件或填写 IP。首次启动 VPN 仍需本人批准 Android 系统提示。无线调试及 ADB 授权必须另外完成。即使 VPN 握手成功，部分 Android 手机也可能不允许 VPN 上的无线调试连接，须经真机验证。</string>
 
     <string name="guide_step_one">第 1 步｜让两台手机配对</string>
-    <string name="guide_step_one_hint">被观看手机点「显示配对二维码」，观看手机点「扫码配对」；被观看手机再点击允许。</string>
+    <string name="guide_step_one_hint">进入异地扫码设置，主手机生成二维码，另一台扫码申请，主手机再次确认。</string>
     <string name="guide_step_two">第 2 步｜完成系统无线调试授权</string>
     <string name="guide_step_two_hint">观看手机生成授权二维码 → 被观看手机进入无线调试 → 点击「使用二维码配对设备」扫描。无需输入 IP 和端口。</string>
     <string name="guide_step_three">第 3 步｜立即观看</string>
     <string name="guide_step_three_hint">已保存系统授权。点击「立即观看」自动尝试连接；需再次授权时，仍可点击第二步的二维码按钮。</string>
-    <string name="guide_show_app_qr">我是被观看手机 · 显示配对二维码</string>
-    <string name="guide_scan_app_qr">我是观看手机 · 扫码配对</string>
+    <string name="guide_show_app_qr">显示异地配对二维码</string>
+    <string name="guide_scan_app_qr">扫描异地配对二维码</string>
     <string name="guide_find_peer_fallback">扫码不方便？搜索附近手机配对</string>
     <string name="guide_system_qr_button">生成系统无线调试授权二维码</string>
     <string name="guide_open_debug_settings">打开本机无线调试设置</string>
