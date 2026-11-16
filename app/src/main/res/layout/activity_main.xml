@@ -88,6 +88,15 @@
                     android:textSize="14sp" />
 
                 <TextView
+                    android:id="@+id/quick_remote_network_status"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/remote_vpn_not_connected"
+                    android:textColor="#C4D6E5"
+                    android:textSize="13sp" />
+
+                <TextView
                     android:id="@+id/quick_guide_step"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
