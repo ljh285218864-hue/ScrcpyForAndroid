@@ -1,4 +1,5 @@
 name: Build guided QR Android APK (reuse verified native ADB)
+# Recheck Java-only config validation tests with lazy main Looper, then package.
 # Correct AAR's non-exported VpnService manifest and verify new remote config unit tests.
 # Build single-app embedded private VPN without external Tailscale installation.
 # Final remote VPN beta after legacy-peer metadata synchronization fixes.
@@ -66,17 +67,17 @@ jobs:
           test -n "$apk"
           test "$(stat -c '%s' "$apk")" -gt 1000000
           unzip -t "$apk" | tail -2
-          cp "$apk" ScreenSync-EmbeddedVPN-Beta2-arm64.apk
-          zip -j ScreenSync-EmbeddedVPN-Beta2-arm64.zip ScreenSync-EmbeddedVPN-Beta2-arm64.apk
-          sha256sum ScreenSync-EmbeddedVPN-Beta2-arm64.apk
+          cp "$apk" ScreenSync-EmbeddedVPN-Beta3-arm64.apk
+          zip -j ScreenSync-EmbeddedVPN-Beta3-arm64.zip ScreenSync-EmbeddedVPN-Beta3-arm64.apk
+          sha256sum ScreenSync-EmbeddedVPN-Beta3-arm64.apk
 
       - name: Upload APK build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ScreenSync-EmbeddedVPN-Beta2-debug
+          name: ScreenSync-EmbeddedVPN-Beta3-debug
           path: |
-            ScreenSync-EmbeddedVPN-Beta2-arm64.apk
-            ScreenSync-EmbeddedVPN-Beta2-arm64.zip
+            ScreenSync-EmbeddedVPN-Beta3-arm64.apk
+            ScreenSync-EmbeddedVPN-Beta3-arm64.zip
           retention-days: 30
           if-no-files-found: error
 
@@ -86,7 +87,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh release create screensync-embedded-wg-beta2-20261116 \
-            ScreenSync-EmbeddedVPN-Beta2-arm64.apk ScreenSync-EmbeddedVPN-Beta2-arm64.zip \
-            --title 'ScreenSync 内置异地 VPN 配置测试版 Beta2' \
-            --notes "源码：$GITHUB_SHA。在现有 ADB/scrcpy 上嵌入 WireGuard 官方 Android tunnel，支持从本机文件导入按设备签发的 VPN 配置、首次取得 Android 系统 VPN 许可、在软件里连接和断开私有网络。不需安装 Tailscale/WireGuard 外部 APP。必须先有可信 VPS 和按设备配置；未做异地双机验证，Android 无线调试是否在 VPN 上可达尚未确认。录屏接口不变，所有系统提示保留。"
+          gh release create screensync-embedded-wg-beta3-20261116 \
+            ScreenSync-EmbeddedVPN-Beta3-arm64.apk ScreenSync-EmbeddedVPN-Beta3-arm64.zip \
+            --title 'ScreenSync 内置异地 VPN 配置测试版 Beta3' \
+            --notes "源码：$GITHUB_SHA。在现有 ADB/scrcpy 上嵌入 WireGuard 官方 Android tunnel，支持从本机文件导入按设备签发的 VPN 配置、首次取得 Android 系统 VPN 许可、在软件里连接和断开私有网络；「立即观看」可自动启动已配置且经系统许可的内置 VPN。不需安装 Tailscale/WireGuard 外部 APP。必须先有可信 VPS 和按设备配置；未做异地双机验证，Android 无线调试是否在 VPN 上可达尚未确认。录屏接口不变，所有系统提示保留。"
