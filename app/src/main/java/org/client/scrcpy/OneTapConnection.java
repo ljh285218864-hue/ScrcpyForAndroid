@@ -56,6 +56,45 @@ public final class OneTapConnection {
         final int request = ++generation;
         callback.onStage(R.string.quick_stage_saved_connection);
         ThreadUtils.execute(() -> {
+            // Single "Watch" action: prefer an authenticated VPN route when
+            // available, without changing the existing ADB/scrcpy capture path.
+            String remoteAddress = null;
+            int remotePort = 0;
+            if (RemoteOverlayNetwork.localVpnIp(context) != null) {
+                String[] hosts = {peer.overlayHost, peer.host};
+                for (String target : hosts) {
+                    if (!isCurrent(request) || target == null || target.isEmpty()) break;
+                    WakeLanClient.RemoteInfo info =
+                            WakeLanClient.queryRemoteInfo(context, target, peer.secret);
+                    if (!info.ok()) continue;
+                    if (info.overlayHost != null) {
+                        PairedDeviceStore.updateOverlayAddress(context, info.overlayHost);
+                    }
+                    String endpoint = info.overlayHost != null ? info.overlayHost : target;
+                    int port = info.adbPort > 0 ? info.adbPort : peer.adbPort;
+                    if (port > 0 && checkOnline(endpoint, port)) {
+                        remoteAddress = endpoint;
+                        remotePort = port;
+                        break;
+                    }
+                }
+                if (remoteAddress == null
+                        && RemoteOverlayNetwork.isOverlayAddress(peer.overlayHost)
+                        && peer.adbPort > 0
+                        && checkOnline(peer.overlayHost, peer.adbPort)) {
+                    remoteAddress = peer.overlayHost;
+                    remotePort = peer.adbPort;
+                }
+            }
+            final String vpnHost = remoteAddress;
+            final int vpnPort = remotePort;
+            if (vpnHost != null) {
+                main.post(() -> {
+                    if (isCurrent(request)) complete(request, callback, vpnHost, vpnPort);
+                });
+                return;
+            }
+
             boolean online = peer.adbPort > 0
                     && checkOnline(peer.host, peer.adbPort);
             main.post(() -> {
