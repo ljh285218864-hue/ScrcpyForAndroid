@@ -30,6 +30,9 @@ class ControlPlaneTests(unittest.TestCase):
         backend.BOOTSTRAP_CODE = C
         self.addCleanup(setattr, backend, "DATABASE", self.previous_db)
         self.addCleanup(setattr, backend, "BOOTSTRAP_CODE", self.previous_bootstrap)
+        # Direct guard tests call the real implementation, while initialize()
+        # uses a stub to avoid invoking wg on CI machines.
+        self.real_exclusive_interface_guard = backend.assert_exclusive_wireguard_interface
         self.mocks = [
             mock.patch.object(backend, "server_public_key", return_value=AKEY),
             mock.patch.object(backend, "peer_set"),
@@ -61,10 +64,10 @@ class ControlPlaneTests(unittest.TestCase):
         legacy = SimpleNamespace(stdout=AKEY + "\t100.80.0.2/32\n")
         with mock.patch.object(backend, "cmd", return_value=legacy):
             with self.assertRaisesRegex(RuntimeError, "unmanaged or legacy"):
-                backend.assert_exclusive_wireguard_interface([])
+                self.real_exclusive_interface_guard([])
         # A matching peer created by this DB is allowed.
         with mock.patch.object(backend, "cmd", return_value=legacy):
-            backend.assert_exclusive_wireguard_interface([
+            self.real_exclusive_interface_guard([
                 {"public_key": AKEY, "ip": backend.IP_OWNER}
             ])
 
