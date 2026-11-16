@@ -1818,6 +1818,11 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             quickStatus.setText(peer == null
                     ? R.string.quick_status_unpaired : R.string.quick_status_paired);
         }
+        TextView vpnState = findViewById(R.id.quick_remote_network_status);
+        if (vpnState != null) {
+            vpnState.setText(RemoteOverlayNetwork.localVpnIp(this) != null
+                    ? R.string.remote_vpn_connected : R.string.remote_vpn_not_connected);
+        }
     }
 
     /**
@@ -1986,23 +1991,33 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         button.setText(willShow ? R.string.guide_help_close_advanced : R.string.guide_help_button);
     }
 
+    private void showRemoteHelpDialog() {
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.remote_help_title)
+                .setMessage(R.string.remote_help_detail)
+                .setPositiveButton(android.R.string.ok, null).show();
+    }
+
     private void showGuidedHelp() {
         PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
         if (peer == null) {
             String[] items = {
+                    getString(R.string.remote_help_button),
                     getString(R.string.quick_pair_search),
                     getString(R.string.guide_help_three)
             };
             new android.app.AlertDialog.Builder(this)
                     .setTitle(R.string.guide_help_title)
                     .setItems(items, (d, which) -> {
-                        if (which == 0) startLanAutoDiscovery();
+                        if (which == 0) showRemoteHelpDialog();
+                        else if (which == 1) startLanAutoDiscovery();
                         else toggleQuickAdvanced();
                     })
                     .setNegativeButton(android.R.string.cancel, null).show();
             return;
         }
         String[] items = {
+                getString(R.string.remote_help_button),
                 getString(R.string.guide_help_one),
                 getString(R.string.guide_help_two),
                 getString(R.string.guide_help_three)
@@ -2010,8 +2025,9 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         new android.app.AlertDialog.Builder(this)
                 .setTitle(R.string.guide_help_title)
                 .setItems(items, (d, which) -> {
-                    if (which == 0) showSystemAdbPairQr();
-                    else if (which == 1) discoverAdbPairingService(peer);
+                    if (which == 0) showRemoteHelpDialog();
+                    else if (which == 1) showSystemAdbPairQr();
+                    else if (which == 2) discoverAdbPairingService(peer);
                     else toggleQuickAdvanced();
                 })
                 .setNegativeButton(android.R.string.cancel, null).show();
