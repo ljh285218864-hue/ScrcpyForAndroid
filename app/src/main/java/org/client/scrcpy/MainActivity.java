@@ -1942,7 +1942,8 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
         if (peer == null || RemoteOverlayNetwork.localVpnIp(this) == null) return;
         long now = SystemClock.elapsedRealtime();
-        if (now - lastRemoteOverlaySyncAt < 30_000L) return;
+        if (lastRemoteOverlaySyncAt != 0L && now - lastRemoteOverlaySyncAt < 30_000L)
+            return;
         lastRemoteOverlaySyncAt = now;
         ThreadUtils.execute(() -> {
             String[] hosts = {peer.host, peer.overlayHost};
