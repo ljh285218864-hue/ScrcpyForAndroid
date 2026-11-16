@@ -37,9 +37,6 @@ fi
   die "存在历史数据库，请检查是否需要恢复，不能重置配对权限"
 [[ ! -f /etc/screensync-v2/registration.env ]] ||
   die "存在历史管理员密钥，拒绝覆盖"
-[[ ! -e /etc/wireguard/wg-screensync.conf || -f /etc/wireguard/wg-screensync.conf ]] ||
-  die "检查旧接口失败"
-
 # Require the real old interface and its configuration to remain untouched.
 if ! wg show wg-screensync >/dev/null 2>&1; then
   die "找不到原有 Beta3 接口，先核对服务器，不执行新网络初始化"
