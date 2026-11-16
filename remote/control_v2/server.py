@@ -226,6 +226,8 @@ def render_acl(pairs: list[tuple[str, str]]) -> str:
         "flush table inet " + TABLE,
         "add chain inet " + TABLE +
         " forward { type filter hook forward priority -150; policy accept; }",
+        "add chain inet " + TABLE +
+        " input { type filter hook input priority -150; policy accept; }",
     ]
     for a, b in pairs:
         for src, dst in ((a, b), (b, a)):
@@ -236,8 +238,17 @@ def render_acl(pairs: list[tuple[str, str]]) -> str:
                 ' forward iifname "' + INTERFACE + '" oifname "' + INTERFACE +
                 '" ip saddr ' + src + ' ip daddr ' + dst + ' accept'
             )
-    lines.append('add rule inet ' + TABLE + ' forward iifname "' + INTERFACE +
-                 '" oifname "' + INTERFACE + '" drop')
+    # Deny ALL other forwarding from/to this dedicated interface, not
+    # just cross-tenant traffic. Otherwise an unpaired client could use the
+    # VPS as an exit node or reach private networks behind it.
+    lines.append('add rule inet ' + TABLE +
+                 ' forward iifname "' + INTERFACE + '" drop')
+    lines.append('add rule inet ' + TABLE +
+                 ' forward oifname "' + INTERFACE + '" drop')
+    # Device traffic to the VPS itself must not reach x-ui/SSH/local services.
+    # WireGuard's UDP handshake enters on the public interface, not on wg.
+    lines.append('add rule inet ' + TABLE +
+                 ' input iifname "' + INTERFACE + '" drop')
     return "\n".join(lines) + "\n"
 
 
