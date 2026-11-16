@@ -266,6 +266,23 @@ def api_approve(db: sqlite3.Connection, device: sqlite3.Row, body: dict) -> dict
     return {"state": "paired"}
 
 
+def api_decline(db: sqlite3.Connection, device: sqlite3.Row, body: dict) -> dict:
+    """A's explicit rejection revokes pending B before any VPN route is granted."""
+    if device["role"] != "owner" or device["state"] != "ready":
+        raise ApiError("DECLINE_NOT_ALLOWED", 403)
+    pending_id = body.get("pending_id", "")
+    pending = db.execute(
+        "SELECT 1 FROM invites WHERE owner_id=? AND guest_id=?",
+        (device["id"], pending_id)
+    ).fetchone()
+    if pending is None:
+        raise ApiError("PENDING_REQUEST_NOT_FOUND", 404)
+    db.execute("DELETE FROM invites WHERE guest_id=?", (pending_id,))
+    db.execute("DELETE FROM devices WHERE id=? AND role='guest' AND state='pending'",
+               (pending_id,))
+    return {"state": "ready"}
+
+
 def api_status(db: sqlite3.Connection, device: sqlite3.Row) -> dict:
     response = {"state": device["state"], "role": device["role"],
                 "device_ip": device["ip"], "server_public_key": server_public_key(),
@@ -278,6 +295,12 @@ def api_status(db: sqlite3.Connection, device: sqlite3.Row) -> dict:
         if pending:
             response["pending_id"] = pending["id"]
             response["pending_name"] = pending["name"]
+    if device["role"] == "guest" and device["state"] == "pending":
+        invitation = db.execute(
+            "SELECT expires FROM invites WHERE guest_id=?", (device["id"],)
+        ).fetchone()
+        if invitation is None or invitation["expires"] < int(time.time()):
+            response["state"] = "expired"
     if device["state"] == "paired":
         other_role = "guest" if device["role"] == "owner" else "owner"
         peer = db.execute("SELECT name,ip FROM devices WHERE role=? AND state='paired'",
@@ -365,7 +388,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise ApiError("INVALID_JSON")
                 if self.path not in (
                     "/v1/activate", "/v1/join", "/v1/invite",
-                    "/v1/status", "/v1/approve", "/v1/revoke"
+                    "/v1/status", "/v1/approve", "/v1/decline", "/v1/revoke"
                 ):
                     raise ApiError("NOT_FOUND", 404)
                 with connect_db() as db:
@@ -382,6 +405,8 @@ class Handler(BaseHTTPRequestHandler):
                             result = api_status(db, device)
                         elif self.path == "/v1/approve":
                             result = api_approve(db, device, body)
+                        elif self.path == "/v1/decline":
+                            result = api_decline(db, device, body)
                         else:
                             result = api_revoke(db, device)
                     db.commit()
