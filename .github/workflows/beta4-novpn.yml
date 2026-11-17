@@ -57,6 +57,29 @@ jobs:
           unzip -p "$RUNNER_TEMP/old-apk/ScreenSync-QR-arm64.apk" \
             'lib/arm64-v8a/libadb.so' > app/src/main/jniLibs/arm64-v8a/libadb.so
           test "$(stat -c '%s' app/src/main/jniLibs/arm64-v8a/libadb.so)" -gt 3000000
+      - name: Verify no foreground LAN receiver in no-VPN variant
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          manifest = ET.parse("app/src/main/AndroidManifest.xml").getroot()
+          android = "{http://schemas.android.com/apk/res/android}"
+          service = next((s for s in manifest.findall(".//service")
+                          if s.attrib.get(android + "name") == ".WakeLanService"), None)
+          assert service is not None, "Legacy LAN receiver must be explicitly disabled"
+          assert service.attrib.get(android + "enabled") == "false", "No FGS receiver allowed"
+          permissions = {p.attrib.get(android + "name") for p in manifest.findall("uses-permission")}
+          assert "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" not in permissions
+          for name in ("NoVpnBackgroundSync.java", "NoVpnPresenceWorker.java"):
+              source = Path("app/src/main/java/org/client/scrcpy") / name
+              for line in source.read_text().splitlines():
+                  t = line.strip()
+                  if t.startswith("//") or t.startswith("*") or t.startswith("/*"):
+                      continue
+                  assert not t.startswith(("startForeground(", "setForeground(",
+                                                  "setForegroundAsync(")), f"{name}: foreground worker forbidden"
+          print("No-VPN background sync has no app-initiated foreground receiver")
+          PY
       - name: Verify no Android VPN component then unit tests and APK
         env:
           SCREENSYNC_API_URL: ${{ vars.SCREENSYNC_API_URL }}
