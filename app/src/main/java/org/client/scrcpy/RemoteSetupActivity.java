@@ -268,7 +268,7 @@ public final class RemoteSetupActivity extends Activity {
                         localStreamer = null;
                         if (active && mediaSocket != null) {
                             mediaState.setText("本机视频结束：" + reason);
-                            mediaSocket.endSession();
+                            mediaSocket.endSourceSession();
                         }
                     }
                 });
@@ -366,8 +366,12 @@ public final class RemoteSetupActivity extends Activity {
                         mediaState.setText("媒体中转：" + value);
                         if ("video_source_permitted".equals(value)) {
                             startLocalStream(); // after local consent + server confirmation
-                        } else if ("session_ended".equals(value)
-                                || "session_stopped_by_user".equals(value)
+                        } else if ("source_session_ended".equals(value)
+                                || "source_session_stopped".equals(value)) {
+                            stopLocalStream();
+                        } else if ("viewer_session_ended".equals(value)) {
+                            if (renderer != null) renderer.stopSession();
+                        } else if ("session_stopped_by_user".equals(value)
                                 || "disconnected".equals(value)
                                 || "network_unavailable".equals(value)) {
                             stopLocalStream();
