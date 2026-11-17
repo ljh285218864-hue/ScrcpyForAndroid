@@ -43,14 +43,19 @@ public class VideoDecoder {
         }
     }
 
-    public void stop() {
-        if (mWorker != null) {
-            mWorker.setRunning(false);
-            mWorker = null;
-            mIsConfigured.set(false);
-            if (mCodec != null) {
-                mCodec.stop();
-            }
+    public synchronized void stop() {
+        Worker oldWorker = mWorker;
+        mWorker = null;
+        mIsConfigured.set(false);
+        if (oldWorker != null) {
+            oldWorker.setRunning(false);
+            oldWorker.interrupt();
+        }
+        MediaCodec codec = mCodec;
+        mCodec = null;
+        if (codec != null) {
+            try { codec.stop(); } catch (IllegalStateException ignored) { }
+            try { codec.release(); } catch (IllegalStateException ignored) { }
         }
     }
 
