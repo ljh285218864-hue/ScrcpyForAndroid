@@ -50,6 +50,7 @@ public final class RemoteSetupActivity extends Activity {
     private RelayVideoRenderer renderer;
     private SurfaceView remoteVideoSurface;
     private int receivedVideoFrames;
+    private boolean requestAfterConnect;
     private boolean active;
     private boolean busy;
     private String currentState = "";
@@ -160,14 +161,18 @@ public final class RemoteSetupActivity extends Activity {
                 }));
         mediaConnectButton = action(content, "连接 WSS 视频中转",
                 v -> connectMediaTest());
-        mediaRequestButton = action(content, "请求观看配对手机屏幕", v -> {
-            if (mediaSocket == null || !mediaSocket.requestWatch()) {
-                mediaState.setText("视频请求未发出，请先完成 WSS 连接和身份验证");
+        mediaRequestButton = action(content, "一键请求观看配对手机", v -> {
+            requestAfterConnect = true;
+            if (mediaSocket == null) connectMediaTest();
+            else if (mediaSocket.requestWatch()) {
+                requestAfterConnect = false;
+                mediaState.setText("已发送观看请求；等待对方在自己手机上确认");
             } else {
-                mediaState.setText("已发送观看请求；需要对方在手机上同意本次共享");
+                mediaState.setText("等待 WSS 身份认证后自动发送本次观看请求");
             }
         });
         mediaEndButton = action(content, "停止观看 / 停止共享", v -> {
+            requestAfterConnect = false;
             stopLocalStream();
             if (renderer != null) renderer.stopSession();
             if (mediaSocket != null) mediaSocket.endSession();
@@ -228,6 +233,7 @@ public final class RemoteSetupActivity extends Activity {
 
     @Override protected void onPause() {
         active = false;
+        requestAfterConnect = false;
         ui.removeCallbacks(refresh);
         // Leaving this visible screen stops local capture and remote video.
         stopLocalStream();
@@ -364,6 +370,12 @@ public final class RemoteSetupActivity extends Activity {
                     @Override public void onStatus(String value) {
                         if (!active || isFinishing()) return;
                         mediaState.setText("媒体中转：" + value);
+                        if ("authenticated".equals(value) && requestAfterConnect) {
+                            if (mediaSocket != null && mediaSocket.requestWatch()) {
+                                requestAfterConnect = false;
+                                mediaState.setText("已请求观看，等待对方同意本次屏幕共享");
+                            }
+                        }
                         if ("video_source_permitted".equals(value)) {
                             startLocalStream(); // after local consent + server confirmation
                         } else if ("source_session_ended".equals(value)
@@ -568,6 +580,11 @@ public final class RemoteSetupActivity extends Activity {
                 }
             }
             status.setText(description);
+            // When the user opens this page, maintain a connection only
+            // while the Activity is visible. No foreground service is used.
+            if (active && mediaSocket == null && NoVpnMediaSocket.endpointConfigured()) {
+                connectMediaTest();
+            }
             // Only acknowledge after the verified messages are rendered.
             // A process death before this call permits safe replay.
             if (state.has("_cursor")) {
