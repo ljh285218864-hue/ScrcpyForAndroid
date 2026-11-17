@@ -103,6 +103,11 @@ final class DeviceSecretStore {
         return new String(cipher.doFinal(data), StandardCharsets.UTF_8);
     }
 
+    static void remove(Context context, String name) {
+        // A removed pairing must not leave its authentication secret behind.
+        prefs(context).edit().remove(PREFIX + name).remove(name).commit();
+    }
+
     static void clear(Context context) throws Exception {
         // Revoke server authorization first, then erase the local credentials.
         if (!prefs(context).edit().clear().commit())
