@@ -262,9 +262,64 @@ def update_acl(pairs: list[tuple[str, str]]) -> None:
     run("nft", "-f", "-", input_text=render_acl(pairs))
 
 
+# A filesystem journal for operations spanning SQLite + kernel WireGuard/nft.
+# SQLite cannot atomically commit the kernel rules; if the process crashes
+# between changes, refuse to replay possibly stale authorization on restart.
+MUTATION_CONTEXT = threading.local()
+
+
+def mutation_marker() -> Path:
+    return DATABASE.parent / "kernel-mutation.pending"
+
+
+def mark_kernel_mutation() -> None:
+    if not getattr(MUTATION_CONTEXT, "enabled", False):
+        # Offline unit/kernel tests call api_* directly; production HTTP
+        # mutations are always journaled by Handler before kernel changes.
+        return
+    if getattr(MUTATION_CONTEXT, "marked", False):
+        return
+    marker = mutation_marker()
+    fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(fd, b"pending\n")
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    MUTATION_CONTEXT.marked = True
+
+
+def finish_kernel_mutation() -> None:
+    if not getattr(MUTATION_CONTEXT, "marked", False):
+        return
+    mutation_marker().unlink()
+    MUTATION_CONTEXT.marked = False
+
+
+def isolate_on_failed_mutation() -> None:
+    """Fail closed on a partial HTTP mutation; never touch Beta3 interface."""
+    try:
+        update_acl([])
+        return
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        # If nft itself failed, revoke all dedicated Beta4 WireGuard peers
+        # rather than leaving an earlier permissive ACL in the kernel.
+        try:
+            for public_key in read_peer_routes():
+                wg_remove(public_key)
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            print("CRITICAL: Beta4 quarantine cannot verify traffic isolation",
+                  file=sys.stderr, flush=True)
+
+
 def init_runtime() -> None:
     validate_settings()
     schema()
+    if mutation_marker().exists():
+        raise RuntimeError(
+            "Incomplete Beta4 kernel mutation; requires operator reconciliation "
+            "before any approved ACL can be restored"
+        )
     with db_connect() as db:
         check_dedicated(db)
         # Table creation is idempotent; follow with one atomic deny-by-default update.
@@ -309,6 +364,7 @@ def api_activate(db: sqlite3.Connection, body: dict) -> dict:
                (device_id, group_id, "owner", name, public_key, token_hash(token), ip))
     db.execute("UPDATE owner_codes SET used=? WHERE hash=?",
                (int(time.time()), token_hash(code)))
+    mark_kernel_mutation()
     wg_add(public_key, ip)  # ACL still denies every unpaired device.
     return {"device_id": device_id, "token": token, "state": "ready"}
 
@@ -370,6 +426,7 @@ def api_approve(db: sqlite3.Connection, owner: sqlite3.Row, body: dict) -> dict:
         raise ApiError("PENDING_REQUEST_NOT_FOUND", 404)
     # Owner has explicitly approved; other groups remain isolated.
     secret = secrets.token_hex(16)
+    mark_kernel_mutation()
     wg_add(guest["public_key"], guest["ip"])
     db.execute("UPDATE devices SET state='paired',shared_secret=? WHERE group_id=?",
                (secret, owner["group_id"]))
@@ -424,6 +481,7 @@ def api_status(db: sqlite3.Connection, caller: sqlite3.Row) -> dict:
 def api_revoke(db: sqlite3.Connection, caller: sqlite3.Row) -> dict:
     """Fail-closed first: drop the group ACL before deleting either key."""
     group_id = caller["group_id"]
+    mark_kernel_mutation()
     update_acl(allowed_pairs(db, exclude_group=group_id))
     if caller["role"] == "owner":
         for row in db.execute("SELECT public_key FROM devices WHERE group_id=?", (group_id,)):
@@ -534,6 +592,10 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(body, dict):
                 raise ApiError("INVALID_BODY")
             with LOCK, db_connect() as db:
+                if mutation_marker().exists():
+                    raise ApiError("SERVICE_QUARANTINED", 503)
+                MUTATION_CONTEXT.enabled = True
+                MUTATION_CONTEXT.marked = False
                 db.execute("BEGIN IMMEDIATE")
                 if self.path == "/v1/activate":
                     result = api_activate(db, body)
@@ -552,12 +614,22 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         result = api_revoke(db, caller)
                 db.commit()
+                finish_kernel_mutation()
             self.reply(200, result)
         except ApiError as err:
+            if getattr(MUTATION_CONTEXT, "marked", False):
+                with LOCK:
+                    isolate_on_failed_mutation()
             self.reply(err.status, {"error": err.code})
         except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError,
                 json.JSONDecodeError, RuntimeError):
+            if getattr(MUTATION_CONTEXT, "marked", False):
+                with LOCK:
+                    isolate_on_failed_mutation()
             self.reply(503, {"error": "SERVICE_UNAVAILABLE"})
+        finally:
+            MUTATION_CONTEXT.enabled = False
+            MUTATION_CONTEXT.marked = False
 
 
 def main() -> None:
