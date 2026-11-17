@@ -145,6 +145,12 @@ class MediaRelay:
                     "type": "watch_end", "session_id": session_id, "reason": reason,
                 })
 
+    async def expire_sessions(self) -> None:
+        current = time.monotonic()
+        for session_id, session in list(self.sessions.items()):
+            if session.expires <= current:
+                await self.discard(session_id, "session_expired")
+
     def paired_online(self, client: Device) -> str | None:
         with api.db_connect() as db:
             row = db.execute("SELECT id FROM devices WHERE group_id=? "
@@ -168,6 +174,7 @@ class MediaRelay:
             await self.tell(client.device_id, {"type": "error", "code": "INVALID_COMMAND"})
             return
         command = body["type"]
+        await self.expire_sessions()
         if command == "hello":
             peer_id = self.paired_online(client)
             await self.tell(client.device_id, {"type": "peer_presence",
@@ -177,6 +184,10 @@ class MediaRelay:
             other = self.paired_online(client)
             if not other:
                 await self.tell(client.device_id, {"type": "error", "code": "PEER_OFFLINE"})
+                return
+            if body.get("to_device_id") not in (None, other):
+                await self.tell(client.device_id, {"type": "error",
+                                                   "code": "RECIPIENT_NOT_AUTHORIZED"})
                 return
             count = sum(s.group_id == client.group_id for s in self.sessions.values())
             if count >= MAX_GROUP_SESSIONS:
