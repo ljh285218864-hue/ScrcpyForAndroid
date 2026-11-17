@@ -204,14 +204,18 @@ class MediaRelay:
             self.sessions[session_id] = Session(session_id, client.device_id, other,
                                                  client.group_id,
                                                  time.monotonic() + REQUEST_TTL_SECONDS)
+            # Tell the requesting viewer about the session ID BEFORE
+            # notifying the source. Otherwise an exceptionally fast acceptance
+            # could reach the viewer before its watch_pending message.
+            if not await self.tell(client.device_id, {
+                    "type": "watch_pending", "session_id": session_id}):
+                await self.discard(session_id, "viewer_unreachable")
+                return
             if not await self.tell(other, {
                     "type": "watch_request", "session_id": session_id,
                     "viewer_device_id": client.device_id,
                     "expires_in": REQUEST_TTL_SECONDS}):
                 await self.discard(session_id, "source_unreachable")
-                return
-            await self.tell(client.device_id, {"type": "watch_pending",
-                                              "session_id": session_id})
             return
         session_id = body.get("session_id")
         if not isinstance(session_id, str) or not SESSION_ID.fullmatch(session_id):
