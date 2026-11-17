@@ -450,10 +450,23 @@ def api_decline(db: sqlite3.Connection, owner: sqlite3.Row, body: dict) -> dict:
     return {"state": "ready"}
 
 
+def verify_code(group_id: str, public_key: str) -> str:
+    """Six-digit check code shared by the pending device and owner.
+
+    This is a human comparison aid, not an authentication secret; the owner
+    must still explicitly approve the guest and all traffic remains denied.
+    """
+    digest = hashlib.sha256((group_id + ":" + public_key).encode("ascii")).digest()
+    return str(int.from_bytes(digest[:4], "big") % 1000000).zfill(6)
+
+
 def api_status(db: sqlite3.Connection, caller: sqlite3.Row) -> dict:
     state = caller["state"]
     result = {
-        "state": state, "role": caller["role"], "device_ip": caller["ip"],
+        "state": state, "role": caller["role"],
+        "device_id": caller["id"], "group_id": caller["group_id"],
+        "device_public_key": caller["public_key"],
+        "device_ip": caller["ip"],
         "overlay_cidr": str(POOL), "endpoint": ENDPOINT,
         "server_public_key": key(run("wg", "show", INTERFACE, "public-key").stdout.strip())
     }
@@ -463,9 +476,18 @@ def api_status(db: sqlite3.Connection, caller: sqlite3.Row) -> dict:
           WHERE i.group_id=? AND d.state='pending'
         """, (caller["group_id"],)).fetchone()
         if row:
-            result.update({"pending_id": row["id"], "pending_name": row["name"],
-                           "pending_expired": row["expires"] < time.time()})
+            guest_key = db.execute(
+                "SELECT public_key FROM devices WHERE id=?", (row["id"],)
+            ).fetchone()
+            result.update({
+                "pending_id": row["id"], "pending_name": row["name"],
+                "pending_expired": row["expires"] < time.time(),
+                "pending_verify_code": verify_code(
+                    caller["group_id"], guest_key["public_key"])
+            })
     if caller["role"] == "guest" and state == "pending":
+        result["pending_verify_code"] = verify_code(
+            caller["group_id"], caller["public_key"])
         inv = db.execute("SELECT expires FROM invites WHERE guest_id=?", (caller["id"],)).fetchone()
         if inv is None or inv["expires"] < time.time():
             result["state"] = "expired"
@@ -473,8 +495,15 @@ def api_status(db: sqlite3.Connection, caller: sqlite3.Row) -> dict:
         other = db.execute("SELECT * FROM devices WHERE group_id=? AND role!=? AND state='paired'",
                            (caller["group_id"], caller["role"])).fetchone()
         if other:
-            result.update({"peer_name": other["name"], "peer_ip": other["ip"],
-                           "shared_secret": caller["shared_secret"]})
+            result.update({
+                "peer_device_id": other["id"],
+                "peer_public_key": other["public_key"],
+                "peer_name": other["name"], "peer_ip": other["ip"],
+                "shared_secret": caller["shared_secret"],
+                "pair_verify_code": verify_code(
+                    caller["group_id"],
+                    ":".join(sorted([caller["public_key"], other["public_key"]])))
+            })
     return result
 
 
