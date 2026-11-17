@@ -14,10 +14,9 @@ public final class PairedDeviceStore {
         public final String host;
         public final String secret;
         public final int adbPort;
-        public final String overlayHost;
-        Peer(String name, String host, String secret, int adbPort, String overlayHost) {
+        Peer(String name, String host, String secret, int adbPort) {
             this.name = name; this.host = host; this.secret = secret;
-            this.adbPort = adbPort; this.overlayHost = overlayHost;
+            this.adbPort = adbPort;
         }
     }
     public static void save(Context context, String name, String host, String secret, int adbPort) {
@@ -32,8 +31,7 @@ public final class PairedDeviceStore {
         boolean saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString("name", TextUtils.isEmpty(name) ? "Android" : name)
                 .putString("host", host).remove("secret")
-                .putString("overlay_host",
-                        RemoteOverlayNetwork.isOverlayAddress(host) ? host : "")
+                .remove("overlay_host")
                 .putInt("adb_port", Math.max(0, adbPort)).commit();
         if (!saved) throw new IllegalStateException("Cannot save paired-device metadata");
     }
@@ -57,8 +55,7 @@ public final class PairedDeviceStore {
         }
         String host = p.getString("host", "");
         if (!WakeAuth.isHex(code, 32) || TextUtils.isEmpty(host)) return null;
-        return new Peer(p.getString("name", "Android"), host, code, p.getInt("adb_port", 0),
-                p.getString("overlay_host", ""));
+        return new Peer(p.getString("name", "Android"), host, code, p.getInt("adb_port", 0));
     }
     public static void updateAddress(Context context, String newHost) {
         if (TextUtils.isEmpty(newHost)) return;
@@ -70,17 +67,7 @@ public final class PairedDeviceStore {
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString("host", newHost);
         if (!newHost.equals(previous.host)) edit.putInt("adb_port", 0);
-        if (RemoteOverlayNetwork.isOverlayAddress(newHost)) {
-            edit.putString("overlay_host", newHost);
-        }
         edit.apply();
-    }
-
-    /** Persist only authenticated VPN endpoints, never data from an unchecked QR. */
-    public static void updateOverlayAddress(Context context, String address) {
-        if (!RemoteOverlayNetwork.isOverlayAddress(address) || load(context) == null) return;
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putString("overlay_host", address).apply();
     }
 
     public static void updatePort(Context context, int newPort) {
