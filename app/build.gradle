@@ -109,6 +109,9 @@ androidComponents {
 
 dependencies {
     implementation 'com.wireguard.android:tunnel:1.0.20260102'
+    // Best-effort, system-scheduled presence check: no foreground service or
+    // persistent notification. Persists over normal process death/reboot.
+    implementation 'androidx.work:work-runtime:2.12.0'
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.3'
     // In-app QR creation and offline camera scanning for first-time pairing.
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
