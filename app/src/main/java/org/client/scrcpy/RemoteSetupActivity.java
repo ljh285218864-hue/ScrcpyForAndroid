@@ -40,6 +40,8 @@ public final class RemoteSetupActivity extends Activity {
     private Button decline;
     private Button revoke;
     private String pendingId;
+    private String pendingVerifyCode = "";
+    private String currentState = "";
     private boolean pendingExpired;
     private boolean busy;
     private boolean resumed;
@@ -103,9 +105,10 @@ public final class RemoteSetupActivity extends Activity {
                     if (id == null) return;
                     new AlertDialog.Builder(this)
                             .setTitle("确认授权配对")
-                            .setMessage("你确认这台手机是家人持有的设备吗？\n"
-                                    + "确认后双方会获得私有网络通道，"
-                                    + "但屏幕观看仍要求被观看方的系统授权。")
+                            .setMessage("请先和另一台手机持有人核对下方的6位配对码："
+                                    + pendingVerifyCode
+                                    + "\n两台手机显示必须完全一致，不一致就拒绝。"
+                                    + "\n确认后仅建立专属 VPN 通道；观看仍需系统授权。")
                             .setPositiveButton("确认配对", (d, w) ->
                                     perform("正在批准配对…",
                                             () -> AutoRemoteProvisioner.approve(this, id),
@@ -183,6 +186,7 @@ public final class RemoteSetupActivity extends Activity {
         super.onResume();
         resumed = true;
         ui.removeCallbacks(refresh);
+        if (!AutoRemoteProvisioner.isRegistered(this)) updateStatus();
         refresh.run();
         refreshButtons();
     }
@@ -196,7 +200,8 @@ public final class RemoteSetupActivity extends Activity {
     private void refreshButtons() {
         boolean registered = AutoRemoteProvisioner.isRegistered(this);
         boolean owner = "owner".equals(AutoRemoteProvisioner.registrationRole(this));
-        if (showInvite != null) showInvite.setEnabled(registered && owner && !busy);
+        if (showInvite != null) showInvite.setEnabled(registered && owner
+                && ("ready".equals(currentState) || currentState.isEmpty()) && !busy);
         if (approve != null) approve.setEnabled(registered && owner &&
                 pendingId != null && !pendingExpired && !busy);
         if (decline != null) decline.setEnabled(registered && owner &&
@@ -219,7 +224,7 @@ public final class RemoteSetupActivity extends Activity {
                          Consumer<JSONObject> success, boolean quiet) {
         if (busy || isFinishing()) return;
         busy = true;
-        showState(progress);
+        if (!quiet) showState(progress);
         new Thread(() -> {
             JSONObject response = null;
             String error = null;
@@ -248,6 +253,7 @@ public final class RemoteSetupActivity extends Activity {
 
     private void updateStatus() {
         if (!AutoRemoteProvisioner.isRegistered(this)) {
+            currentState = "";
             showState("尚未开通：主手机扫描管理员开通二维码；"
                     + "另一台手机扫描主手机生成的配对二维码。");
             return;
@@ -258,25 +264,31 @@ public final class RemoteSetupActivity extends Activity {
 
     private void handleStatus(JSONObject result) {
         String state = result.optString("state");
+        currentState = state;
         if ("ready".equals(state)) {
             JSONObject pending = result;
             pendingId = pending.optString("pending_id", null);
             pendingExpired = pending.optBoolean("pending_expired", false);
+            pendingVerifyCode = pending.optString("pending_verify_code", "");
             if (pendingId != null) {
                 if (pendingExpired) {
                     showState("配对申请已过期："
                             + pending.optString("pending_name", "另一台手机")
+                            + "\n配对核对码：" + pendingVerifyCode
                             + "\n请先点击「拒绝待配对手机」，再重新生成二维码。");
                 } else {
                     showState("等待主手机确认："
                             + pending.optString("pending_name", "另一台手机")
-                            + "\n请核实对方身份，再点击「同意待配对手机」。");
+                            + "\n配对核对码：" + pendingVerifyCode
+                            + "\n请和对方屏幕的6位码核对一致后再确认。");
                 }
             } else {
                 showState("主手机已开通。点击生成配对二维码，让另一部手机扫码。");
             }
         } else if ("pending".equals(state)) {
-            showState("已提交配对请求，等待另一部手机的持有人明确同意。");
+            showState("已提交配对请求，等待另一部手机的持有人明确同意。"
+                    + "\n配对核对码：" + result.optString("pending_verify_code", "不可用")
+                    + "\n请与主手机上显示的6位码核对一致。");
         } else if ("expired".equals(state)) {
             showState("配对码已过期，尚未获得远程访问权限。"
                     + "点击「解绑并撤销异地访问」清除旧申请，再扫码新的二维码。");
@@ -284,8 +296,12 @@ public final class RemoteSetupActivity extends Activity {
             try {
                 AutoRemoteProvisioner.applyPairedConfig(this, result);
                 pendingId = null;
-                showState("双方已同意，专属网络配置已自动保存。\n"
-                        + "返回主页点击「立即观看」时将申请 Android VPN 授权。\n"
+                showState("已确认配对：" + result.optString("peer_name", "另一台手机")
+                        + "\n设备身份尾号：" + result.optString("peer_device_id", "未知")
+                                .replaceAll("^.*(?=.{6}$)", "")
+                        + "\n双方核对码：" + AutoRemoteProvisioner.pairingVerifyCode(this)
+                        + "\n请与对方屏幕显示的核对码比对一致。"
+                        + "\n返回主页点击「立即观看」时将申请 Android VPN 授权。\n"
                         + "请确保被观看手机已开启并授权无线调试及 ScreenSync 接收服务。\n"
                         + "注意：此状态不代表 VPN 已握手，也不代表能观看。");
                 // User explicitly consented by activating or joining the
