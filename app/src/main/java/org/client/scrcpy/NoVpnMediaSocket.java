@@ -51,6 +51,15 @@ public final class NoVpnMediaSocket {
     private volatile String pendingViewerSession = "";
     private volatile String sourceSession = "";
     private volatile String viewerSession = "";
+    private int reconnectAttempts;
+    private final Runnable retryConnection = () -> {
+        if (shutdown || socket != null) return;
+        try {
+            connect();
+        } catch (Exception invalidConfig) {
+            status("reconnect_blocked_check_https_settings");
+        }
+    };
 
     public NoVpnMediaSocket(Context context, Listener listener) {
         this.context = context.getApplicationContext();
@@ -131,6 +140,7 @@ public final class NoVpnMediaSocket {
                     if (socket == ws) socket = null;
                 }
                 status("disconnected");
+                scheduleReconnect();
             }
             @Override public void onFailure(WebSocket ws, Throwable error,
                                             Response response) {
@@ -140,12 +150,24 @@ public final class NoVpnMediaSocket {
                     if (socket == ws) socket = null;
                 }
                 status("network_unavailable");
+                scheduleReconnect();
             }
         };
         socket = CLIENT.newWebSocket(
                 new Request.Builder().url(BuildConfig.SCREENSYNC_MEDIA_URL).build(),
                 callbacks);
         status("connecting");
+    }
+
+    private void scheduleReconnect() {
+        if (shutdown) return;
+        main.removeCallbacks(retryConnection);
+        // No hidden service or unbounded tight retry loop. Runs only while
+        // this screen/process is alive; reconnect NEVER resumes screen media
+        // or bypasses the source's per-session approval.
+        int number = Math.min(++reconnectAttempts, 5);
+        long delayMs = Math.min(30000L, 1000L << (number - 1));
+        main.postDelayed(retryConnection, delayMs);
     }
 
     private void handleMessage(String message) throws JSONException {
@@ -158,6 +180,8 @@ public final class NoVpnMediaSocket {
                     throw new SecurityException("服务器返回的设备身份不一致");
                 }
                 authenticated = true;
+                reconnectAttempts = 0;
+                main.removeCallbacks(retryConnection);
                 status("authenticated");
                 break;
             case "peer_presence":
@@ -329,6 +353,7 @@ public final class NoVpnMediaSocket {
     public synchronized void close() {
         endSession();
         shutdown = true;
+        main.removeCallbacks(retryConnection);
         WebSocket ws = socket;
         socket = null;
         authenticated = false;
