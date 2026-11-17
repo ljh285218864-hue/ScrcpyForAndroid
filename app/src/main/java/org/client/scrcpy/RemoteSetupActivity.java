@@ -10,6 +10,9 @@ import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
+import android.text.InputType;
+import android.widget.EditText;
 import android.view.SurfaceView;
 import android.widget.Button;
 import android.widget.ImageView;
@@ -133,6 +136,17 @@ public final class RemoteSetupActivity extends Activity {
                             new JSONObject().put("request_id", UUID.randomUUID().toString()));
                 }, result -> report("连接测试消息已发送。对方打开本页面会看到消息。"),
                         false));
+        action(content, "首次授权：打开本机无线调试设置", v -> {
+            try {
+                startActivity(new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS));
+            } catch (Exception unsupported) {
+                startActivity(new Intent(Settings.ACTION_SETTINGS));
+            }
+        });
+        action(content, "本机 ADB 配对码授权（只需系统要求时执行）",
+                v -> showLocalAdbPairDialog());
+        action(content, "检查本机无线调试是否已授权", v -> checkLocalAdbStatus());
+
         mediaState = new TextView(this);
         mediaState.setText("媒体连接：未连接；只在本页面可见时建立视频会话。");
         mediaState.setPadding(0, dp(12), 0, dp(8));
@@ -261,6 +275,78 @@ public final class RemoteSetupActivity extends Activity {
         ref[0] = streamer;
         localStreamer = streamer;
         if (!streamer.startAfterLocalApproval()) localStreamer = null;
+    }
+
+    private void showLocalAdbPairDialog() {
+        String ownIp = PairQrCode.localWifiIp(this);
+        if (ownIp == null || !PairQrCode.isPrivateIpv4(ownIp)) {
+            report("请先连接 Wi-Fi，在本机设置打开无线调试");
+            return;
+        }
+        LinearLayout input = new LinearLayout(this);
+        input.setOrientation(LinearLayout.VERTICAL);
+        input.setPadding(dp(18), dp(8), dp(18), 0);
+        EditText port = new EditText(this);
+        port.setHint("系统显示的配对端口（不是连接端口）");
+        port.setInputType(InputType.TYPE_CLASS_NUMBER);
+        input.addView(port);
+        EditText code = new EditText(this);
+        code.setHint("系统显示的六位配对码");
+        code.setInputType(InputType.TYPE_CLASS_NUMBER
+                | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        input.addView(code);
+        new AlertDialog.Builder(this)
+                .setTitle("首次配对本机无线调试")
+                .setMessage("先进入手机设置 → 开发者选项 → 无线调试"
+                        + " → 使用配对码配对设备。"
+                        + "\n请只输入本机系统显示的端口和六位码，"
+                        + "不会上传到 ScreenSync 服务器。"
+                        + "\n本机 Wi-Fi 地址：" + ownIp)
+                .setView(input)
+                .setPositiveButton("开始本机授权", (dialog, which) -> {
+                    String p = port.getText().toString().trim();
+                    String pin = code.getText().toString().trim();
+                    code.setText(""); // Never save or log the 6-digit code.
+                    try {
+                        final int pairPort = Integer.parseInt(p);
+                        if (!TrustedPairEndpoint.validAdbPort(pairPort)
+                                || !pin.matches("[0-9]{6}")) {
+                            report("端口或配对码格式不正确");
+                            return;
+                        }
+                        runNetwork(() -> {
+                            org.client.scrcpy.utils.ExecUtil.AdbCommandResult result =
+                                    org.client.scrcpy.utils.AdbHelper.adbPair(
+                                            this, ownIp, pairPort, pin);
+                            if (result.exitCode != 0 || result.timedOut) {
+                                throw new IllegalStateException(
+                                        "本机无线调试配对失败或超时，请重新打开配对码");
+                            }
+                            return new JSONObject().put("result", "paired_locally");
+                        }, result -> report("本机 ADB 配对已完成，请点击检查无线调试"),
+                                false);
+                    } catch (NumberFormatException invalid) {
+                        report("无线调试配对端口不是有效数字");
+                    }
+                })
+                .setNegativeButton("取消", null).show();
+    }
+
+    private void checkLocalAdbStatus() {
+        runNetwork(() -> {
+            String ip = PairQrCode.localWifiIp(this);
+            if (ip == null || !PairQrCode.isPrivateIpv4(ip))
+                throw new IllegalStateException("本机未连接 Wi-Fi");
+            org.client.scrcpy.utils.ExecUtil.AdbCommandResult mdns =
+                    org.client.scrcpy.utils.AdbHelper.adbMdnsServices(this);
+            int port = SystemAdbQrPairingSession.findAdbConnectPort(
+                    mdns.combinedOutput(), ip);
+            if (!TrustedPairEndpoint.validAdbPort(port))
+                throw new IllegalStateException("未发现本机无线调试连接端口");
+            if (!org.client.scrcpy.utils.AdbHelper.isDeviceOnline(this, ip, port))
+                throw new IllegalStateException("本机尚未授权 ADB，或无线调试已关闭");
+            return new JSONObject().put("state", "authorized");
+        }, result -> report("已确认本机 ADB 连接授权有效"), false);
     }
 
     private void connectMediaTest() {
