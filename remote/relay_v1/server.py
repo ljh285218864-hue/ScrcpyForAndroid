@@ -399,10 +399,19 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=["serve", "issue-owner"])
     parser.add_argument("--ttl", type=int, default=600)
+    parser.add_argument("--count", type=int, default=1,
+                        help="how many independent customer activation QR links to issue")
     args = parser.parse_args()
+    if not 1 <= args.count <= min(MAX_GROUPS, 100):
+        parser.error("--count must be between 1 and the configured group cap (max 100)")
+    if args.command != "issue-owner" and args.count != 1:
+        parser.error("--count is only valid for issue-owner")
     schema()
     if args.command == "issue-owner":
-        print(issue_owner_code(args.ttl))
+        # Each code activates ONE new owner who may subsequently invite
+        # exactly ONE guest. This is multi-customer 1:1, not one-to-many.
+        for _ in range(args.count):
+            print(issue_owner_code(args.ttl))
     else:
         if BIND_HOST not in ("127.0.0.1", "::1"):
             raise SystemExit("Refusing public bind. Use an HTTPS reverse proxy.")
