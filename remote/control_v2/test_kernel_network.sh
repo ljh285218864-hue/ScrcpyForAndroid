@@ -91,7 +91,17 @@ can_ping() {
   done
   return 1
 }
-must_pass() { can_ping "$1" "$2" || fail "Expected authorized packet $1 -> $2"; pass "Allowed $1 -> $2"; }
+must_pass() {
+  if ! can_ping "$1" "$2"; then
+    echo "DIAGNOSTIC: failed authorized path; nft and peer IP routes follow"
+    ip netns exec "$S" nft list table inet screensync_beta4 || true
+    ip netns exec "$S" wg show wg-ss-beta4 allowed-ips || true
+    ip -n "$1" route get "$2" || true
+    ip netns exec "$1" ping -n -c 1 -W 2 "$2" || true
+    fail "Expected authorized packet $1 -> $2"
+  fi
+  pass "Allowed $1 -> $2"
+}
 must_drop() {
   if ip netns exec "$1" ping -n -c 1 -W 1 "$2" >/dev/null 2>&1; then
     fail "Unauthorized packet forwarded $1 -> $2"
