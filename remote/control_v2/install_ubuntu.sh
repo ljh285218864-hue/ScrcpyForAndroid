@@ -18,6 +18,15 @@ ENDPOINT="$(printenv SCREENSYNC_WG_ENDPOINT || echo '')"
 for program in python3 wg wg-quick nft ip ss systemctl sysctl install; do
   command -v "$program" >/dev/null || die "缺少必需命令 $program，未安装任何服务"
 done
+# Refuse deployment on a memory-starved, disk-starved production VPS.
+# In particular the previously observed 512MiB / 0-swap Evoxt VM is
+# NOT approved merely because the experimental CI tests passed.
+MEM_AVAILABLE_KB="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
+DISK_AVAILABLE_KB="$(df -Pk / | awk 'NR==2 {print $4}')"
+[[ "${MEM_AVAILABLE_KB:-0}" -ge 393216 ]] ||
+  die "可用内存不足 384MiB；禁止在现有 VPS 上安装，请先升级或迁移"
+[[ "${DISK_AVAILABLE_KB:-0}" -ge 1048576 ]] ||
+  die "根盘可用空间不足 1GiB；禁止安装"
 [[ "$(sysctl -n net.ipv4.ip_forward)" == "1" ]] ||
   die "尚未启用 IP 转发；不自动修改全局转发设置"
 [[ ! -e "/etc/wireguard/$IFACE.conf" ]] ||
@@ -53,6 +62,7 @@ chmod -R go-rwx "$BACKUP"
 mkdir -m 700 -p /etc/screensync-v2 /var/lib/screensync-v2
 install -d -m 755 /usr/local/libexec/screensync-v2
 install -m 755 remote/control_v2/server.py /usr/local/libexec/screensync-v2/server.py
+install -m 755 remote/control_v2/ensure_deny.sh /usr/local/libexec/screensync-v2/ensure_deny.sh
 
 WGKEY="$(wg genkey)"
 cat >"/etc/wireguard/$IFACE.conf" <<EOF
@@ -60,6 +70,8 @@ cat >"/etc/wireguard/$IFACE.conf" <<EOF
 Address = $POOL
 ListenPort = $PORT
 PrivateKey = $WGKEY
+# Install fail-closed firewall BEFORE WireGuard keys and UDP listener activate.
+PreUp = /usr/local/libexec/screensync-v2/ensure_deny.sh
 EOF
 chmod 600 "/etc/wireguard/$IFACE.conf"
 unset WGKEY
