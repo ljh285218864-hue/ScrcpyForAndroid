@@ -38,7 +38,7 @@ public final class RemoteSetupActivity extends Activity {
     private static final int CAMERA = 9372;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private TextView status;
-    private Button invite, approve, decline, test, revoke;
+    private Button invite, approve, decline, test, revoke, backgroundToggle;
     private boolean active;
     private boolean busy;
     private String currentState = "";
@@ -124,6 +124,22 @@ public final class RemoteSetupActivity extends Activity {
                             new JSONObject().put("request_id", UUID.randomUUID().toString()));
                 }, result -> report("连接测试消息已发送。对方打开本页面会看到消息。"),
                         false));
+        backgroundToggle = action(content, "启用后台定期检查（不显示常驻通知）", v -> {
+            if (!NoVpnApi.isRegistered(this) || !"paired".equals(currentState)) {
+                report("两台手机完成双方确认后，才能启用后台恢复检查");
+                return;
+            }
+            boolean enabled = !NoVpnBackgroundSync.isEnabled(this);
+            try {
+                NoVpnBackgroundSync.setEnabled(this, enabled);
+                report(enabled
+                        ? "已启用：系统尽力在联网和重启后检查配对状态。"
+                        + "不保证实时；最短周期15分钟且可能延迟。"
+                        : "后台自动检查已关闭，双方配对关系仍保留。");
+            } catch (RuntimeException error) {
+                report("后台检查设置失败，请检查系统限制");
+            }
+        });
         action(content, "刷新状态", v -> refreshStatus());
         revoke = action(content, "双方解绑并注销所有旧凭证", v ->
                 new AlertDialog.Builder(this).setTitle("双方撤销")
@@ -131,6 +147,7 @@ public final class RemoteSetupActivity extends Activity {
                                 + "之后必须重新扫描并经双方批准。")
                         .setPositiveButton("确定撤销", (d, w) ->
                                 runNetwork(() -> NoVpnApi.revoke(this), result -> {
+                                    NoVpnBackgroundSync.setEnabled(this, false);
                                     pendingId = "";
                                     currentState = "";
                                     report("配对已撤销。两端旧凭证全部失效。");
@@ -185,6 +202,13 @@ public final class RemoteSetupActivity extends Activity {
             test.setEnabled(registered && "paired".equals(currentState) && !busy);
         if (revoke != null)
             revoke.setEnabled(registered && !busy);
+        if (backgroundToggle != null) {
+            backgroundToggle.setEnabled(registered
+                    && "paired".equals(currentState) && !busy);
+            backgroundToggle.setText(NoVpnBackgroundSync.isEnabled(this)
+                    ? "关闭后台定期检查（保留配对）"
+                    : "启用后台定期检查（不显示常驻通知）");
+        }
     }
 
     private void report(String value) {
