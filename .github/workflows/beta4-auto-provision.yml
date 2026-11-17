@@ -34,6 +34,7 @@ jobs:
           bash -n remote/control/install_ubuntu.sh
           bash -n remote/control_v2/install_ubuntu.sh
           bash -n remote/control_v2/ensure_deny.sh
+          bash -n remote/control_v2/preflight_ubuntu.sh
           bash -n remote/control_v2/issue_owner_qr.sh
 
   kernel-isolation:
