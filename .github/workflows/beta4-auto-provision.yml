@@ -91,9 +91,12 @@ jobs:
           test -n "$apk"
           unzip -t "$apk" | tail -2
           cp "$apk" ScreenSync-Beta4-experimental-arm64.apk
+          sha256sum ScreenSync-Beta4-experimental-arm64.apk > ScreenSync-Beta4-experimental-arm64.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: ScreenSync-Beta4-experimental-arm64-debug
-          path: ScreenSync-Beta4-experimental-arm64.apk
+          path: |
+            ScreenSync-Beta4-experimental-arm64.apk
+            ScreenSync-Beta4-experimental-arm64.sha256
           retention-days: 14
           if-no-files-found: error
