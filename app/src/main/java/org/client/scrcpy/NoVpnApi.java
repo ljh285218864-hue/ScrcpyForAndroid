@@ -201,7 +201,7 @@ public final class NoVpnApi {
                 .put("payload", payload), true);
     }
 
-    public static JSONArray poll(Context context) throws Exception {
+    public static JSONObject poll(Context context) throws Exception {
         long oldCursor = prefs(context).getLong("cursor", 0L);
         JSONObject response = post(context, "/v1/signal/poll",
                 new JSONObject().put("after", oldCursor), true);
@@ -216,9 +216,18 @@ public final class NoVpnApi {
                     || signal.getLong("seq") <= oldCursor)
                 throw new SecurityException("信令发送者与配对身份不一致");
         }
+        // Do not ACK yet: the Activity must first render/handle the
+        // messages. If the app dies before that, the next poll replays them.
+        return response;
+    }
+
+    public static void acknowledge(Context context, long cursor) {
+        long previous = prefs(context).getLong("cursor", 0L);
+        if (cursor < previous || cursor < 0)
+            throw new SecurityException("信令确认序号无效");
+        if (cursor == previous) return;
         if (!prefs(context).edit().putLong("cursor", cursor).commit())
-            throw new IllegalStateException("无法保存断线恢复进度");
-        return messages;
+            throw new IllegalStateException("无法保存信令确认进度");
     }
 
     public static JSONObject revoke(Context context) throws Exception {
