@@ -90,8 +90,15 @@ class HttpApiContractTests(unittest.TestCase):
             self.assertEqual(status, 200)
             guests.append(guest)
             pending = self.post("/v1/status", {}, guest["token"])[1]
+            owner_pending = self.post("/v1/status", {}, owner["token"])[1]
             self.assertEqual(pending["state"], "pending")
+            self.assertEqual(pending["pending_verify_code"],
+                             owner_pending["pending_verify_code"])
+            self.assertEqual(len(pending["pending_verify_code"]), 6)
+            self.assertEqual(pending["device_id"], guest["device_id"])
+            self.assertEqual(owner_pending["pending_id"], guest["device_id"])
             self.assertNotIn("shared_secret", pending)
+            self.assertNotIn("peer_device_id", pending)
 
         self.assertEqual(self.post("/v1/approve",
             {"pending_id": guests[1]["device_id"]}, owners[0]["token"])[0], 404)
@@ -107,6 +114,14 @@ class HttpApiContractTests(unittest.TestCase):
             self.assertEqual(o["overlay_cidr"], "100.81.0.0/16")
             self.assertEqual(o["peer_ip"], g["device_ip"])
             self.assertEqual(g["peer_ip"], o["device_ip"])
+            self.assertEqual(o["peer_device_id"], g["device_id"])
+            self.assertEqual(g["peer_device_id"], o["device_id"])
+            self.assertEqual(o["group_id"], g["group_id"])
+            self.assertNotEqual(o["device_public_key"], g["device_public_key"])
+            self.assertEqual(o["peer_public_key"], g["device_public_key"])
+            self.assertEqual(g["peer_public_key"], o["device_public_key"])
+            self.assertEqual(o["pair_verify_code"], g["pair_verify_code"])
+            self.assertEqual(len(o["pair_verify_code"]), 6)
             self.assertEqual(o["endpoint"], server.ENDPOINT)
 
         self.assertEqual(self.post("/v1/revoke", {}, guests[0]["token"])[0], 200)
