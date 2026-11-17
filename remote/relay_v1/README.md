@@ -29,7 +29,7 @@ SS_NOVPN_DB=/tmp/screensync-test/relay.db python3 remote/relay_v1/server.py serv
 
 1. **正式 HTTPS 与流控：** 独立子域名、有效 TLS、在反向代理上做基于真实来源 IP 的注册/扫码限流、控制服务只绑定 127.0.0.1，确保不干扰 x-ui/Reality/Beta3。
 2. **后台与重启恢复（第一阶段已加入）**：Android 使用 `NoVpnBackgroundSync` + `NoVpnPresenceWorker`。配对页面提供用户主动开启/关闭的后台定期检查；已启用后由 WorkManager 持久保留带联网约束的15分钟周期 HTTPS 心跳，进程运行时监听网络变化并排队一次快速重试，正常手机重启后由 WorkManager 尝试恢复；解绑关闭。**不启动前台服务，不产生常驻通知，不在后台采集屏幕，不自动接受观看。** Android Doze、厂商省电和强制停止可能导致任务大幅延迟或暂停，不能保证实时在线。旧 `WakeLanService` 在无 VPN 实验版 manifest 中已禁用，以免旧局域网收件服务启动前台通知；旧 LAN 功能在此分支暂不可用，独立旧版分支不变。
-3. **视频传输：** 继续使用已存在的 ADB + scrcpy 视频编码与解码；被观看手机将经过授权的只读 VIDEO 包通过 WSS 服务器中转给配对观看方。禁止透传完整 ADB、音频、控制或命令帧。当前只有 `hello` 网络信令，尚未传输实际画面。详情参阅 `SCRCPY_MEDIA_RELAY_DESIGN.md`。
+3. **视频传输（服务端原型已加入）：** 继续使用已有 ADB + scrcpy 编码与解码。新增 `media_relay.py` 实际 WebSocket 连接端，检查设备令牌、配对组、每次会话的接收方确认、只读 VIDEO 包格式、大小与速率，并在解绑后停止转发；`test_media_relay.py` 使用模拟视频帧测试。**Android 本机 scrcpy 视频采集桥、观看端接入以及 HTTPS/WSS 公网部署均未完成**。禁止透传完整 ADB、音频、控制或命令帧。详情见 `SCRCPY_MEDIA_RELAY_DESIGN.md`。
 4. **可靠性：** 网络恢复、蜂窝/Wi-Fi 切换、飞行模式、系统杀后台、重启、换设备、重复 QR/非法 QR、超时、解绑定/跨组、压力测试；当前仅完成部分自动测试。
 5. **隐私与协议：** 传输只能访问授权组，屏幕采集系统提示不可移除；客户要有可见接收状态及随时撤销按钮。上线前必须进行安全审查及稳定 APK 签名。
 
@@ -45,3 +45,22 @@ SS_NOVPN_DB=/tmp/screensync-test/relay.db python3 remote/relay_v1/server.py serv
 - “设备已配对” ≠ “对方在线”；“信令在线” ≠ “视频可观看”。
 - “未弹 VPN 授权框” ≠ “无线调试授权永久有效”；ADB 必须由本机用户明确授予，系统重启或关闭调试后可能需要恢复授权。
 - “断网后恢复信令” ≠ “后台常驻/重启后能随时观看”。
+
+
+## 独立视频中转原型（仅本机/CI）
+
+`media_relay.py` 使用 `websockets==15.0.1`，与 HTTPS 配对服务共享同一 SQLite 身份数据库，默认仅监听 `127.0.0.1:8767`。两端都需主动建立 WSS 连接，先发送注册令牌 `{"type":"auth","token":"..."}`；观看方发送 `watch_request`，被观看方本次会话明确发送 `watch_accept` 后才能开始发送视频。任意一方发送 `watch_end` 即关闭会话。信令支持 `video_setup`（四个分辨率值及 h264/h265），媒体采用二进制数据（16字节会话ID + 4字节媒体长度 + VIDEO包），服务器拒绝非视频包并限制积压、时长和速率。
+
+只供开发环境验证：
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r remote/relay_v1/requirements-media.txt
+SS_NOVPN_DB=/tmp/screensync-test/relay.db python3 remote/relay_v1/server.py serve
+# 在另一终端使用相同 SS_NOVPN_DB 运行：
+SS_NOVPN_DB=/tmp/screensync-test/relay.db python3 remote/relay_v1/media_relay.py
+python3 -m unittest discover -s remote/relay_v1 -p 'test_*.py' -v
+```
+
+**绝不能把 8766/8767 原始 HTTP/WS 端口暴露公网。** 正式使用须通过受保护的 HTTPS/WSS 反向代理、有效证书、限速和访问控制。现有日本 VPS 的内存与流量限制尚未评估，不部署、不改旧服务。双向配对和模拟视频中转通过，不等于两台手机已经能真正异地同屏。
