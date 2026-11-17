@@ -222,10 +222,19 @@ public final class NoVpnApi {
     }
 
     public static JSONObject revoke(Context context) throws Exception {
-        JSONObject response = post(context, "/v1/revoke", new JSONObject(), true);
-        // Never delete local identity during a temporary offline failure.
+        JSONObject response;
+        try {
+            response = post(context, "/v1/revoke", new JSONObject(), true);
+        } catch (IllegalStateException error) {
+            // The OTHER phone may have already revoked the pair. Only a
+            // verified AUTH_REQUIRED reply from our HTTPS server permits
+            // local cleanup. Never lose keys on an ordinary network outage.
+            if (!"服务端拒绝：AUTH_REQUIRED".equals(error.getMessage())) throw error;
+            response = new JSONObject().put("state", "already_revoked");
+        }
         DeviceSecretStore.remove(context, SECRET_NAME);
-        prefs(context).edit().clear().commit();
+        if (!prefs(context).edit().clear().commit())
+            throw new IllegalStateException("服务器已撤销，但本机配对清理失败");
         return response;
     }
 }
