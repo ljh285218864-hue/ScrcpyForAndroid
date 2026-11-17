@@ -286,7 +286,24 @@ public final class RemoteSetupActivity extends Activity {
                     .append(peerId.length() > 6 ? peerId.substring(peerId.length() - 6) : peerId)
                     .append("\n双方核对码：").append(state.optString("pair_verify_code"))
                     .append("\n对方状态：")
-                    .append(state.optBoolean("peer_online") ? "在线" : "暂时离线")
+                    .append(state.optBoolean("peer_online")
+                            ? "最近45秒有心跳" : "最近45秒没有心跳（后台可能延迟）")
+                    .append("\n对方最近心跳时间：")
+                    .append(state.optLong("peer_last_seen", 0) > 0
+                            ? new java.text.SimpleDateFormat("MM-dd HH:mm:ss",
+                                java.util.Locale.getDefault()).format(
+                                    new java.util.Date(
+                                        state.optLong("peer_last_seen") * 1000L))
+                            : "尚未收到")
+                    .append("\n本机后台检查：")
+                    .append(NoVpnBackgroundSync.isEnabled(this)
+                            ? "已启用，系统择机执行，不保证实时" : "未启用")
+                    .append("\n本机最后成功检查：")
+                    .append(NoVpnBackgroundSync.lastSuccess(this) > 0
+                            ? new java.text.SimpleDateFormat("MM-dd HH:mm:ss",
+                                java.util.Locale.getDefault()).format(
+                                    new java.util.Date(NoVpnBackgroundSync.lastSuccess(this)))
+                            : "尚无")
                     .append("\n已启用：HTTPS 信令（无 VPN）")
                     .append("\n尚未启用：屏幕视频");
             if (events != null && events.length() > 0) {
