@@ -35,6 +35,19 @@ jobs:
           bash -n remote/control_v2/install_ubuntu.sh
           bash -n remote/control_v2/issue_owner_qr.sh
 
+  kernel-isolation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install real WireGuard and nft test tools in disposable VM
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            wireguard-tools nftables iproute2 iputils-ping
+      - name: Test real WireGuard handshakes, tenant isolation and nft revocation
+        run: sudo bash remote/control_v2/test_kernel_network.sh
+
   build-beta4:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
