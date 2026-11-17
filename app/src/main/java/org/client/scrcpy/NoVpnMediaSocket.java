@@ -48,6 +48,7 @@ public final class NoVpnMediaSocket {
     private volatile boolean authenticated;
     private volatile boolean shutdown;
     private volatile String waitingRequest = "";
+    private volatile String pendingViewerSession = "";
     private volatile String sourceSession = "";
     private volatile String viewerSession = "";
 
@@ -111,10 +112,10 @@ public final class NoVpnMediaSocket {
                         status("video_identity_mismatch");
                         return;
                     }
-                    byte[] packet = frame.videoPacket;
-                    main.post(() -> {
-                        if (!shutdown) listener.onVideoPacket(frame.sessionId, packet);
-                    });
+                    // Deliver on OkHttp's reader thread, not Android's UI
+                    // thread. Viewer queues decoding on its bounded worker.
+                    if (!shutdown) listener.onVideoPacket(
+                            frame.sessionId, frame.videoPacket);
                 } catch (IllegalArgumentException error) {
                     ws.close(1008, "unsafe_video");
                     status("unsafe_video_rejected");
@@ -125,6 +126,7 @@ public final class NoVpnMediaSocket {
             }
             @Override public void onClosed(WebSocket ws, int code, String reason) {
                 authenticated = false;
+                clearSessions();
                 synchronized (NoVpnMediaSocket.this) {
                     if (socket == ws) socket = null;
                 }
@@ -133,6 +135,7 @@ public final class NoVpnMediaSocket {
             @Override public void onFailure(WebSocket ws, Throwable error,
                                             Response response) {
                 authenticated = false;
+                clearSessions();
                 synchronized (NoVpnMediaSocket.this) {
                     if (socket == ws) socket = null;
                 }
@@ -173,12 +176,18 @@ public final class NoVpnMediaSocket {
                 break;
             }
             case "watch_pending":
+                if (!ScrcpyRelayWire.validSessionId(body.optString("session_id")))
+                    throw new SecurityException("无效观看等待会话");
+                pendingViewerSession = body.optString("session_id");
                 status("awaiting_peer_approval");
                 break;
             case "watch_active": {
                 String sid = body.optString("session_id");
                 if (!ScrcpyRelayWire.validSessionId(sid))
                     throw new SecurityException("无效观看会话");
+                if (!sid.equals(pendingViewerSession))
+                    throw new SecurityException("不是本机发起的观看会话");
+                pendingViewerSession = "";
                 viewerSession = sid;
                 status("viewer_session_active");
                 break;
@@ -217,6 +226,7 @@ public final class NoVpnMediaSocket {
             case "watch_end":
                 String id = body.optString("session_id");
                 if (id.equals(viewerSession)) viewerSession = "";
+                if (id.equals(pendingViewerSession)) pendingViewerSession = "";
                 if (id.equals(sourceSession)) sourceSession = "";
                 if (id.equals(waitingRequest)) waitingRequest = "";
                 status("session_ended");
@@ -273,6 +283,7 @@ public final class NoVpnMediaSocket {
     public boolean sendVideoSetup(int[] dims, String codec) {
         if (dims == null || dims.length != 4 || sourceSession.isEmpty()
                 || !("h264".equals(codec) || "h265".equals(codec))) return false;
+        for (int value : dims) if (value < 16 || value > 8192) return false;
         try {
             return send(new JSONObject().put("type", "video_setup")
                     .put("session_id", sourceSession)
@@ -283,7 +294,8 @@ public final class NoVpnMediaSocket {
     /** Accepts video payload only, never the raw bidirectional ADB stream. */
     public boolean sendVideoPacket(byte[] scrcpyVideoPacket) {
         WebSocket ws = socket;
-        if (!authenticated || shutdown || ws == null || sourceSession.isEmpty())
+        if (!authenticated || shutdown || ws == null || sourceSession.isEmpty()
+                || ws.queueSize() > 8L * 1024 * 1024)
             return false;
         try {
             return ws.send(ByteString.of(
@@ -293,11 +305,16 @@ public final class NoVpnMediaSocket {
         }
     }
 
-    public void endSession() {
-        String[] ids = {viewerSession, sourceSession, waitingRequest};
+    private void clearSessions() {
         viewerSession = "";
+        pendingViewerSession = "";
         sourceSession = "";
         waitingRequest = "";
+    }
+
+    public void endSession() {
+        String[] ids = {viewerSession, pendingViewerSession, sourceSession, waitingRequest};
+        clearSessions();
         for (String sid : ids) {
             if (!ScrcpyRelayWire.validSessionId(sid)) continue;
             try {
