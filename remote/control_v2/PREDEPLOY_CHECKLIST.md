@@ -11,6 +11,14 @@
 - Unit tests, real localhost HTTP registration/approve/revoke tests, bash syntax checks, Android debug build.
 - Real disposable kernel-network tests: four independent clients, actual WireGuard handshakes, group-only forwarding, no cross-group/VPS management access, revocation, startup deny, real systemd SIGKILL and authorized restore.
 
+## Interrupted kernel mutation: mandatory manual recovery
+
+The control plane now writes a private `kernel-mutation.pending` file beside its SQLite DB *before* it changes WireGuard peers or nft ACLs. On normal committed requests this file is cleared.
+
+If the process crashes, the SQLite commit fails, or the firewall update fails, the file persists. The API returns `503 SERVICE_QUARANTINED`; a restart must **not** silently replay old group authorizations. The dedicated WireGuard PreUp and systemd fail-closed rules must remain active.
+
+An administrator must compare the stored pair states to `wg show wg-ss-beta4` and `nft list table inet screensync_beta4`, take a snapshot and decide to revoke affected devices or reconcile the database/kernel state. **Do not simply delete the marker to make the health check green.** Do not replace or flush Beta3/x-ui firewall rules.
+
 ## HARD BLOCK: not yet completed outside CI
 
 1. **VPS resources**: Work observed OOM, 512MiB RAM, 0 Swap, approximately 192MiB available and 1.5GiB free disk. The installer now refuses to proceed when MemAvailable <384MiB or disk free <1GiB. These values are preliminary guardrails, not capacity certification. Prefer 1–2GiB RAM or an independent test server; no production change before a fresh check.
