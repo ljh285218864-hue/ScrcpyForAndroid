@@ -33,10 +33,9 @@ public final class WakeLanClient {
         }
         try {
             InetAddress ip = InetAddress.getByName(host);
-            if (!RemoteOverlayNetwork.isAllowedPeerIp(ip)) {
+            if (!PairQrCode.isPrivateIpv4(ip.getHostAddress())) {
                 return new RemoteInfo(null, 0, "不允许连接未授权的公网地址");
             }
-            String localVpn = RemoteOverlayNetwork.localVpnIp(context);
             String nonce = WakeAuth.randomHex(8);
             try (Socket socket = new Socket()) {
                 socket.connect(new InetSocketAddress(ip, WakeLanService.PORT), 3500);
@@ -45,7 +44,7 @@ public final class WakeLanClient {
                         socket.getInputStream(), StandardCharsets.US_ASCII));
                 BufferedWriter out = new BufferedWriter(new OutputStreamWriter(
                         socket.getOutputStream(), StandardCharsets.US_ASCII));
-                out.write("INFO " + nonce + " " + (localVpn == null ? "-" : localVpn) + "\n");
+                out.write("INFO " + nonce + " -\n");
                 out.flush();
                 String challenge = in.readLine();
                 if (challenge == null || !challenge.startsWith("CHALLENGE ")
@@ -68,14 +67,13 @@ public final class WakeLanClient {
                 if (info.length != 3 || !"META".equals(info[0])) {
                     return new RemoteInfo(null, 0, "对方没有提供异地连接信息");
                 }
-                String remoteVpn = RemoteOverlayNetwork.isOverlayAddress(info[1])
-                        ? info[1] : null;
+                if (!"-".equals(info[1])) return new RemoteInfo(null, 0, "旧 VPN 元数据已禁用");
                 int adbPort = Integer.parseInt(info[2]);
                 if (adbPort < 0 || adbPort > 65535) adbPort = 0;
-                return new RemoteInfo(remoteVpn, adbPort, null);
+                return new RemoteInfo(null, adbPort, null);
             }
         } catch (Exception error) {
-            return new RemoteInfo(null, 0, "未连接到已配对手机，请检查双方 VPN 和无线调试状态");
+            return new RemoteInfo(null, 0, "局域网接收端未响应，请检查系统无线调试状态");
         }
     }
 
@@ -88,8 +86,8 @@ public final class WakeLanClient {
             int port = Integer.parseInt(parts[1]);
             if (port != WakeLanService.PORT) return "测试接收端口必须为10055";
             InetAddress ip = InetAddress.getByName(host);
-            if (!RemoteOverlayNetwork.isAllowedPeerIp(ip))
-                return "仅允许经过授权的局域网或私有 VPN 地址";
+            if (!PairQrCode.isPrivateIpv4(ip.getHostAddress()))
+                return "仅允许私有局域网地址";
             String nonce = WakeAuth.randomHex(8);
             try (Socket socket = new Socket()) {
                 socket.connect(new InetSocketAddress(ip, port), 3500);
