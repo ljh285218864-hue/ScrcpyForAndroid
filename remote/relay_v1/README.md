@@ -8,6 +8,7 @@
 - 一次性管理员开通码、五分钟邀请、两端六位核对码、本人批准/拒绝、组内专属设备 ID/令牌、拒绝跨组信令、双方解绑令牌失效。
 - `POST /v1/heartbeat` 更新在线时间；`POST /v1/signal/send` 和 `/v1/signal/poll` 传递短期信令。双向请求仅发送到已批准的对方 ID，不允许任意 IP 或 Android 远程控制命令。队列最多32条、90秒清理。
 - `NoVpnApi.java` 以系统证书信任链调用 HTTPS，令牌经 AndroidKeyStore 加密保留，记录 `device_id`、`group_id`、已确认 `peer_device_id` 和消息序号，短暂断线/应用界面重开后可以补取有效期内消息。
+- `NoVpnMediaSocket.java` 使用独立 `SCREENSYNC_MEDIA_URL` 的 `wss://` URL（默认 `wss://relay.invalid/media`，不自动连旧 VPN），只发送经过授权的设备令牌及 WATCH 控制信令。配对界面新增主动连接/观看测试请求/同意与拒绝/结束会话按钮；返回或离开界面会关闭 WSS，**不会后台自动采集屏幕**。视频帧仅解析并计数，尚未接入现有 scrcpy 解码播放器。
 - `RemoteSetupActivity.java`：扫码开通、生成二维码、批准/拒绝、显示在线状态及六位核对码、A→B 或 B→A 发送连接测试消息、撤销并使两端旧令牌失效。
 - `MainActivity` 不再调用旧 WireGuard/ADB 远程连接；弃用的 WireGuard 依赖、代码、服务器安装脚本已从此实验分支删除。旧 LAN 的独立开发分支保持不变。
 
@@ -62,5 +63,7 @@ SS_NOVPN_DB=/tmp/screensync-test/relay.db python3 remote/relay_v1/server.py serv
 SS_NOVPN_DB=/tmp/screensync-test/relay.db python3 remote/relay_v1/media_relay.py
 python3 -m unittest discover -s remote/relay_v1 -p 'test_*.py' -v
 ```
+
+Android 编译时可传入 `SCREENSYNC_MEDIA_URL=wss://正式域名/media` 和 `SCREENSYNC_NOVPN_URL=https://正式域名`；必须先部署独立 HTTPS/WSS 反向代理和后端，不能直接把测试地址写成公网 IP。配对的注册凭证不会放在 APK 中。
 
 **绝不能把 8766/8767 原始 HTTP/WS 端口暴露公网。** 正式使用须通过受保护的 HTTPS/WSS 反向代理、有效证书、限速和访问控制。现有日本 VPS 的内存与流量限制尚未评估，不部署、不改旧服务。双向配对和模拟视频中转通过，不等于两台手机已经能真正异地同屏。
