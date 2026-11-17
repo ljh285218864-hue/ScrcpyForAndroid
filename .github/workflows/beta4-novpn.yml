@@ -47,8 +47,11 @@ jobs:
           assert "remote_vpn_setup_button" not in layout
           print("Retired VPN and WebRTC routes absent from no-VPN branch")
           PY
-      - name: Test HTTP no-VPN pairing and offline recovery protocol
+      - name: Test HTTPS signaling and real localhost video relay
         run: |
+          python3 -m venv "$RUNNER_TEMP/screensync-media-venv"
+          . "$RUNNER_TEMP/screensync-media-venv/bin/activate"
+          python3 -m pip install -r remote/relay_v1/requirements-media.txt
           python3 -m compileall -q remote/relay_v1
           python3 -m unittest discover -s remote/relay_v1 -p 'test_*.py' -v
 
