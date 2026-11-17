@@ -1,4 +1,4 @@
-name: ScreenSync Beta4 NO-VPN signaling experimental
+name: ScreenSync Beta4 NO-VPN scrcpy predeploy integration
 
 on:
   workflow_dispatch:
@@ -105,6 +105,19 @@ jobs:
                       continue
                   assert not t.startswith(("startForeground(", "setForeground(",
                                                   "setForegroundAsync(")), f"{name}: foreground worker forbidden"
+          # All new media components are Activity-scoped, and the ADB
+          # scrcpy socket is bound only to the source phone's loopback.
+          for name in ("LocalScrcpyStreamer.java", "RelayVideoRenderer.java",
+                       "NoVpnMediaSocket.java"):
+              code = (Path("app/src/main/java/org/client/scrcpy") / name).read_text()
+              assert "startForeground(" not in code
+              assert "MediaProjectionManager" not in code
+              assert "VpnService" not in code
+          scrcpy_server = Path("server/src/main/java/org/server/scrcpy/Server.java").read_text()
+          assert "startEventController(device, connection" not in scrcpy_server
+          receiver = Path("server/src/main/java/org/server/scrcpy/DroidConnection.java").read_text()
+          assert 'new java.net.InetSocketAddress("127.0.0.1", 7007)' in receiver
+          print("Activity-scoped, local-ADB, read-only scrcpy constraints verified")
           print("No-VPN background sync has no app-initiated foreground receiver")
           PY
       - name: Verify no Android VPN component then unit tests and APK
