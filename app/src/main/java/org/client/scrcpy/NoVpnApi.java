@@ -48,7 +48,17 @@ public final class NoVpnApi {
     }
 
     public static String parseQr(String payload, String type) {
-        return AutoRemoteProvisioner.parseQr(payload, type);
+        if (payload == null || payload.length() > 200 || type == null) return null;
+        if (!("activate".equals(type) || "remote".equals(type))) return null;
+        try {
+            android.net.Uri uri = android.net.Uri.parse(payload);
+            if (!"screensync".equals(uri.getScheme())
+                    || !type.equals(uri.getAuthority())) return null;
+            String code = uri.getQueryParameter("code");
+            return code != null && CODE.matcher(code).matches() ? code : null;
+        } catch (RuntimeException malformed) {
+            return null;
+        }
     }
 
     private static JSONObject post(Context context, String path, JSONObject request,
