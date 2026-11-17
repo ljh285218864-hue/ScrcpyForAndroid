@@ -138,6 +138,24 @@ class RelayHTTPTests(unittest.TestCase):
         self.assertEqual(self.post("/v1/heartbeat", {}, d["token"])[0], 200)
         self.assertEqual(self.post("/v1/status", {}, c["token"])[1]["state"], "paired")
 
+    def test_server_restart_preserves_pairing_and_queued_message(self):
+        a, b = self.pair()
+        self.assertEqual(self.post("/v1/signal/send", {
+            "type": "hello", "to_device_id": a["device_id"],
+            "payload": {"nonce": "after-restart"}}, b["token"])[0], 200)
+        original = self.http
+        original.shutdown()
+        original.server_close()
+        replacement = relay.BoundedHTTPServer(("127.0.0.1", 0), relay.Handler)
+        self.addCleanup(replacement.shutdown)
+        self.addCleanup(replacement.server_close)
+        self.http = replacement
+        self.host = "http://127.0.0.1:" + str(replacement.server_address[1])
+        threading.Thread(target=replacement.serve_forever, daemon=True).start()
+        self.assertEqual(self.post("/v1/status", {}, a["token"])[1]["state"], "paired")
+        _, delivered = self.post("/v1/signal/poll", {"after": 0}, a["token"])
+        self.assertEqual(delivered["messages"][0]["payload"]["nonce"], "after-restart")
+
     def test_bad_payloads_and_unknown_endpoints_rejected(self):
         a, b = self.pair()
         for event in ("shell", "adb_command", "remote_input", None):
