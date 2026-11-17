@@ -118,6 +118,74 @@ class RelayHTTPTests(unittest.TestCase):
         self.assertEqual(self.post("/v1/signal/poll", {"after": 0},
             d["token"])[1]["messages"], [])
 
+    def test_many_customer_groups_are_independent_one_to_one_pairs(self):
+        # Twelve independent customer pairs, NOT one account watching many.
+        groups = [self.pair(f"customer-{i}-A", f"customer-{i}-B")
+                  for i in range(12)]
+        self.assertEqual(len({a["group_id"] for a, b in groups}), 12)
+        with relay.db_connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM groups").fetchone()[0], 12)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM devices").fetchone()[0], 24)
+            for owner, guest in groups:
+                self.assertEqual(db.execute(
+                    "SELECT COUNT(*) FROM devices WHERE group_id=?",
+                    (owner["group_id"],)).fetchone()[0], 2)
+                self.assertNotEqual(owner["device_id"], guest["device_id"])
+                self.assertEqual(owner["group_id"], guest["group_id"])
+        for i, (owner, guest) in enumerate(groups):
+            foreign = groups[(i + 1) % len(groups)][1]
+            _, own_status = self.post("/v1/status", {}, owner["token"])
+            self.assertEqual(own_status["peer_device_id"], guest["device_id"])
+            self.assertNotEqual(own_status["peer_device_id"], foreign["device_id"])
+            self.assertEqual(self.post("/v1/signal/send", {
+                "to_device_id": foreign["device_id"], "type": "hello",
+                "payload": {"nonce": i}}, owner["token"])[0], 403)
+            self.assertEqual(self.post("/v1/signal/send", {
+                "to_device_id": guest["device_id"], "type": "hello",
+                "payload": {"nonce": i}}, owner["token"])[0], 200)
+            _, queued = self.post("/v1/signal/poll", {"after": 0}, guest["token"])
+            self.assertEqual(len(queued["messages"]), 1)
+            self.assertEqual(queued["messages"][0]["from_device_id"],
+                             owner["device_id"])
+            self.assertEqual(self.post("/v1/signal/poll", {"after": 0},
+                             foreign["token"])[1]["messages"], [])
+        # Unbinding one customer cannot erase eleven unrelated pairs.
+        self.assertEqual(self.post("/v1/revoke", {}, groups[0][0]["token"])[0], 200)
+        self.assertEqual(self.post("/v1/status", {}, groups[0][1]["token"])[0], 401)
+        for owner, guest in groups[1:]:
+            self.assertEqual(self.post("/v1/status", {}, owner["token"])[1]["state"], "paired")
+            self.assertEqual(self.post("/v1/status", {}, guest["token"])[1]["state"], "paired")
+
+    def test_single_guest_slot_and_pending_invite_replacement(self):
+        owner = self.create_owner("pair-owner")
+        _, invitation = self.post("/v1/invite", {}, owner["token"])
+        _, first = self.post("/v1/join", {
+            "invite_code": invitation["invite_code"], "name": "candidate-one"})
+        # A second participant cannot join an already claimed invitation.
+        self.assertEqual(self.post("/v1/join", {
+            "invite_code": invitation["invite_code"], "name": "candidate-two"})[0], 403)
+        # Reissuing a 5-minute invitation expires the previous candidate.
+        _, second_invitation = self.post("/v1/invite", {}, owner["token"])
+        self.assertEqual(self.post("/v1/status", {}, first["token"])[0], 401)
+        _, second = self.post("/v1/join", {
+            "invite_code": second_invitation["invite_code"],
+            "name": "candidate-two"})
+        self.assertEqual(self.post("/v1/approve", {
+            "pending_id": second["device_id"]}, owner["token"])[0], 200)
+        self.assertEqual(self.post("/v1/invite", {}, owner["token"])[0], 403)
+        with relay.db_connect() as db:
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM devices WHERE group_id=?",
+                (owner["group_id"],)).fetchone()[0], 2)
+            try:
+                db.execute("INSERT INTO devices VALUES (?,?,?,?,?,'paired',0)",
+                           ("f" * 32, owner["group_id"], "guest",
+                            "illegal-third-device", "e" * 64))
+            except Exception as error:
+                self.assertEqual(error.__class__.__name__, "IntegrityError")
+            else:
+                self.fail("database allowed third member in customer group")
+
     def test_unapproved_party_cannot_signal_and_revoke_erases_group(self):
         owner = self.create_owner("owner")
         _, invite = self.post("/v1/invite", {}, owner["token"])
