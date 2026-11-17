@@ -30,7 +30,6 @@ public final class LocalScrcpyStreamer {
     }
 
     private static final int FORWARD_PORT = Scrcpy.LOCAL_FORWART_PORT;
-    private static final int MAX_PACKET = 4 * 1024 * 1024;
     private final Context app;
     private final NoVpnMediaSocket relay;
     private final Listener listener;
@@ -115,23 +114,15 @@ public final class LocalScrcpyStreamer {
             videoSocket = socket;
             socket.setSoTimeout(8000);
             try (DataInputStream in = new DataInputStream(socket.getInputStream())) {
-                byte[] header = new byte[16];
-                in.readFully(header);
-                int[] dims = RelayVideoFormat.dimensions(header);
+                ScrcpyLocalFrameReader frames = new ScrcpyLocalFrameReader(in);
+                int[] dims = frames.readDimensions();
                 if (!relay.sendVideoSetup(dims, Options.CODEC_H264))
                     throw new IllegalStateException("观看会话已经结束或 WSS 不可用");
                 status("本机视频正在向已授权的观看端发送");
                 long count = 0;
                 while (running.get()) {
-                    int length = in.readInt();
-                    if (length < 10 || length > MAX_PACKET)
-                        throw new IllegalStateException("本机 scrcpy 返回了无效视频包");
-                    byte[] packet = new byte[length];
-                    in.readFully(packet);
-                    if (!ScrcpyRelayPacketPolicy.allowedVideoPayload(packet)) {
-                        // Audio / command packets are intentionally discarded.
-                        continue;
-                    }
+                    byte[] packet = frames.readPacket();
+                    if (packet == null) continue; // never forward non-video
                     if (!relay.sendVideoPacket(packet))
                         throw new IllegalStateException("已停止发送：WSS 拥塞或观看会话终止");
                     if (packet[1] == 4) break; // scrcpy END
