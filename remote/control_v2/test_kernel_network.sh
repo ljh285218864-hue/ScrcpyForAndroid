@@ -109,6 +109,23 @@ must_drop() {
   pass "Blocked $1 -> $2"
 }
 
+prime_client() {
+  # The server cannot forward a WireGuard packet to a new mobile peer until
+  # that peer has *initiated* its own encrypted handshake. Force that first
+  # handshake even though nft drops ICMP to the VPS's inner IP.
+  local client="$1" try
+  for try in 1 2 3 4; do
+    ip netns exec "$client" ping -n -c 1 -W 1 100.81.0.1 >/dev/null 2>&1 || true
+    if ip netns exec "$client" wg show wg4 latest-handshakes |
+      awk 'NR==1 && $2>0 {ok=1} END{exit !ok}'; then
+      pass "Encrypted WireGuard handshake established for $client"
+      return 0
+    fi
+    sleep 1
+  done
+  fail "Newly provisioned peer did not establish a WireGuard handshake: $client"
+}
+
 driver prepare
 must_drop "$A" 100.81.0.3
 must_drop "$C" 100.81.0.5
@@ -116,16 +133,16 @@ must_drop "$A" 100.81.0.1
 pass "Unpaired devices denied"
 
 driver approve1
+prime_client "$A"
+prime_client "$B"
 must_pass "$A" 100.81.0.3
 must_pass "$B" 100.81.0.2
 must_drop "$C" 100.81.0.5
 must_drop "$A" 100.81.0.4
 
 driver approve2
-# A newly admitted WireGuard client must initiate a handshake: the server
-# cannot send to a mobile phone until it learns that peer's UDP endpoint.
-# A blocked ping to the VPS's tunnel IP still establishes the WG handshake.
-ip netns exec "$D" ping -n -c 1 -W 2 100.81.0.1 >/dev/null 2>&1 || true
+prime_client "$C"
+prime_client "$D"
 must_pass "$C" 100.81.0.5
 must_pass "$D" 100.81.0.4
 must_drop "$A" 100.81.0.4
