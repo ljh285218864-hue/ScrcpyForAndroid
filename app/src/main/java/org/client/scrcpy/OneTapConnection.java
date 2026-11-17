@@ -96,7 +96,15 @@ public final class OneTapConnection {
                 return;
             }
 
-            String actualVpnIp = RemoteOverlayNetwork.localVpnIp(context);
+            // Android may expose the newly connected VPN LinkProperties
+            // slightly AFTER GoBackend reports UP. Give the assigned address
+            // a short bounded window to appear, never pick another VPN IP.
+            String actualVpnIp = null;
+            for (int attempt = 0; attempt < 6 && isCurrent(request); attempt++) {
+                actualVpnIp = RemoteOverlayNetwork.localVpnIp(context);
+                if (myAddress.equals(actualVpnIp)) break;
+                if (attempt < 5) Thread.sleep(400);
+            }
             if (!EmbeddedRemoteTunnel.isActive()
                     || !myAddress.equals(actualVpnIp)) {
                 fail(request, callback, Failure.VPN_NOT_READY);
@@ -113,24 +121,28 @@ public final class OneTapConnection {
             // The endpoint was chosen by the server, not by a LAN scan.
             // Challenge-response proves that the device at this exact IP
             // possesses the correct pair-specific secret.
-            WakeLanClient.RemoteInfo info = WakeLanClient.queryRemoteInfo(
-                    context, peerAddress, sharedSecret);
-            if (!info.ok() || !TrustedPairEndpoint.authenticatedPeerMatches(
-                    peerAddress, peerAddress, info.overlayHost)) {
-                fail(request, callback, Failure.IDENTITY_MISMATCH);
-                return;
+            // Network switching and Android wireless debugging can take a
+            // moment to publish the receiver. Retry ONLY the authenticated
+            // server-approved address; never guess a LAN IP or stale port.
+            boolean authenticated = false;
+            for (int attempt = 0; attempt < 3 && isCurrent(request); attempt++) {
+                WakeLanClient.RemoteInfo info = WakeLanClient.queryRemoteInfo(
+                        context, peerAddress, sharedSecret);
+                if (info.ok() && TrustedPairEndpoint.authenticatedPeerMatches(
+                        peerAddress, peerAddress, info.overlayHost)) {
+                    authenticated = true;
+                    if (TrustedPairEndpoint.validAdbPort(info.adbPort)) {
+                        if (checkOnline(peerAddress, info.adbPort)) {
+                            complete(request, callback, peerAddress, info.adbPort);
+                            return;
+                        }
+                    }
+                }
+                if (attempt < 2) Thread.sleep(800);
             }
-            // ADB port is discovered on the authenticated phone NOW. Never
-            // fall back to a cached port or a different mDNS-advertised IP.
-            if (!TrustedPairEndpoint.validAdbPort(info.adbPort)) {
-                fail(request, callback, Failure.WIRELESS_DEBUGGING_NOT_READY);
-                return;
-            }
-            if (!checkOnline(peerAddress, info.adbPort)) {
-                fail(request, callback, Failure.WIRELESS_DEBUGGING_NOT_READY);
-                return;
-            }
-            complete(request, callback, peerAddress, info.adbPort);
+            fail(request, callback, !authenticated
+                    ? Failure.DEVICE_NOT_FOUND
+                    : Failure.WIRELESS_DEBUGGING_NOT_READY);
         } catch (Exception error) {
             // Safe failure; do not "repair" the connection by selecting some
             // other local/private IP or a previously authorized ADB device.
