@@ -48,6 +48,7 @@ public final class NoVpnMediaSocket {
     private volatile boolean authenticated;
     private volatile boolean shutdown;
     private volatile String waitingRequest = "";
+    private volatile String locallyApprovedRequest = "";
     private volatile String pendingViewerSession = "";
     private volatile String sourceSession = "";
     private volatile String viewerSession = "";
@@ -228,10 +229,12 @@ public final class NoVpnMediaSocket {
             case "stream_allowed": {
                 String sid = body.optString("session_id");
                 if (!ScrcpyRelayWire.validSessionId(sid)
-                        || !sid.equals(waitingRequest))
-                    throw new SecurityException("未授权的视频发送会话");
+                        || !sid.equals(waitingRequest)
+                        || !sid.equals(locallyApprovedRequest))
+                    throw new SecurityException("用户未同意本次视频发送");
                 sourceSession = sid;
                 waitingRequest = "";
+                locallyApprovedRequest = "";
                 status("video_source_permitted");
                 break;
             }
@@ -266,6 +269,7 @@ public final class NoVpnMediaSocket {
                 if (id.equals(pendingViewerSession)) pendingViewerSession = "";
                 if (id.equals(sourceSession)) sourceSession = "";
                 if (id.equals(waitingRequest)) waitingRequest = "";
+                if (id.equals(locallyApprovedRequest)) locallyApprovedRequest = "";
                 status(sourceEnded ? "source_session_ended"
                         : viewerEnded ? "viewer_session_ended" : "session_ended");
                 break;
@@ -301,16 +305,25 @@ public final class NoVpnMediaSocket {
     public boolean acceptRequest(String sid) {
         if (!ScrcpyRelayWire.validSessionId(sid) || !sid.equals(waitingRequest))
             return false;
+        // This method is called ONLY from the visible user's approve button.
+        // A forged or premature server stream_allowed must not start ADB.
+        locallyApprovedRequest = sid;
         try {
-            return send(new JSONObject().put("type", "watch_accept")
+            boolean sent = send(new JSONObject().put("type", "watch_accept")
                     .put("session_id", sid));
-        } catch (JSONException error) { return false; }
+            if (!sent) locallyApprovedRequest = "";
+            return sent;
+        } catch (JSONException error) {
+            locallyApprovedRequest = "";
+            return false;
+        }
     }
 
     public boolean declineRequest(String sid) {
         if (!ScrcpyRelayWire.validSessionId(sid) || !sid.equals(waitingRequest))
             return false;
         waitingRequest = "";
+        locallyApprovedRequest = "";
         try {
             return send(new JSONObject().put("type", "watch_decline")
                     .put("session_id", sid));
@@ -348,6 +361,7 @@ public final class NoVpnMediaSocket {
         pendingViewerSession = "";
         sourceSession = "";
         waitingRequest = "";
+        locallyApprovedRequest = "";
     }
 
     public void endSourceSession() {
