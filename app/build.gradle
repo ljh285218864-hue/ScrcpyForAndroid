@@ -13,8 +13,6 @@ android {
         buildConfig = true
     }
 
-    // Embedded WireGuard userspace tunnel: no separate VPN app is required.
-    // Keep cryptographic tunnel and Android system VPN consent inside ScreenSync.
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
@@ -108,7 +106,6 @@ androidComponents {
 
 
 dependencies {
-    implementation 'com.wireguard.android:tunnel:1.0.20260102'
     // Best-effort, system-scheduled presence check: no foreground service or
     // persistent notification. Persists over normal process death/reboot.
     implementation 'androidx.work:work-runtime:2.12.0'
