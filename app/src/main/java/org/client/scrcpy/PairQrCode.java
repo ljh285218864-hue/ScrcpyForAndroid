@@ -113,19 +113,16 @@ public final class PairQrCode {
             return false;
         }
         return p[0] == 10 || p[0] == 172 && p[1] >= 16 && p[1] <= 31
-                || p[0] == 192 && p[1] == 168
-                || RemoteOverlayNetwork.isOverlayAddress(host);
+                || p[0] == 192 && p[1] == 168;
     }
 
     /**
      * LAN QR may only contain an address of the currently active Wi-Fi link.
-     * Never use VPN overlay endpoints here: Beta4 QR uses a server-generated
+     * Never encode virtual tunnel endpoints here: Beta4 uses a server-generated
      * invite code with no IP or port encoded in the QR.
      */
     public static boolean isLocalLanIpv4(String host) {
-        return isPrivateIpv4(host)
-                && !RemoteOverlayNetwork.isOverlayAddress(host)
-                && !"0.0.0.0".equals(host);
+        return isPrivateIpv4(host) && !"0.0.0.0".equals(host);
     }
 
     public static String localWifiIp(Context context) {
