@@ -1623,6 +1623,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     }
 
     private void showLocalPairCode() {
+        // Once a device is enrolled into Beta4, pairing is exclusively
+        // authorized by HTTPS group/device identity. A LAN discovery
+        // result or a six-digit legacy QR must never overwrite that binding.
+        if (AutoRemoteProvisioner.isRegistered(this)) {
+            openAutoRemoteSetup();
+            return;
+        }
         String code = WakeLanService.openPairingWindow(this);
         try {
             WakeLanService.startByOwner(this);
@@ -1680,6 +1687,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     private static final int APP_QR_SCAN_REQUEST = 8292;
 
     private void scanAppPairQr() {
+        // Once a device is enrolled into Beta4, pairing is exclusively
+        // authorized by HTTPS group/device identity. A LAN discovery
+        // result or a six-digit legacy QR must never overwrite that binding.
+        if (AutoRemoteProvisioner.isRegistered(this)) {
+            openAutoRemoteSetup();
+            return;
+        }
         if (PairedDeviceStore.load(this) != null) {
             Toast.makeText(this, R.string.qr_device_already_paired, Toast.LENGTH_LONG).show();
             return;
@@ -1763,6 +1777,10 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                 if (PairedDeviceStore.load(this) != null) {
                     Toast.makeText(this, R.string.qr_device_already_paired,
                             Toast.LENGTH_LONG).show();
+                    return;
+                }
+                if (AutoRemoteProvisioner.isRegistered(this)) {
+                    openAutoRemoteSetup();
                     return;
                 }
                 PairedDeviceStore.save(this, "已扫码手机", target.host, result.secret, 0);
@@ -2397,6 +2415,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     }
 
     private void pairWithChosenDevice(LanDeviceDiscovery.Device device) {
+        // Once a device is enrolled into Beta4, pairing is exclusively
+        // authorized by HTTPS group/device identity. A LAN discovery
+        // result or a six-digit legacy QR must never overwrite that binding.
+        if (AutoRemoteProvisioner.isRegistered(this)) {
+            openAutoRemoteSetup();
+            return;
+        }
         PairedDeviceStore.Peer existing = PairedDeviceStore.load(this);
         if (existing != null && device.address.equals(existing.host)) {
             if (device.adbPort > 0) PairedDeviceStore.updatePort(this, device.adbPort);
@@ -2465,6 +2490,10 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                             if (isFinishing() || isDestroyed()) return;
                             if (!result.ok()) {
                                 Toast.makeText(this, result.error, Toast.LENGTH_LONG).show();
+                                return;
+                            }
+                            if (AutoRemoteProvisioner.isRegistered(this)) {
+                                openAutoRemoteSetup();
                                 return;
                             }
                             PairedDeviceStore.save(this, device.name,
@@ -3043,6 +3072,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     }
 
     private void startLanAutoDiscovery() {
+        // Once a device is enrolled into Beta4, pairing is exclusively
+        // authorized by HTTPS group/device identity. A LAN discovery
+        // result or a six-digit legacy QR must never overwrite that binding.
+        if (AutoRemoteProvisioner.isRegistered(this)) {
+            openAutoRemoteSetup();
+            return;
+        }
         stopLanAutoDiscovery();
         lanDevices = new ArrayList<>();
         TextView status = findViewById(R.id.text_auto_find_status);
@@ -3087,6 +3123,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     }
 
     private void selectLanDiscoveredDevice(LanDeviceDiscovery.Device device) {
+        // Once a device is enrolled into Beta4, pairing is exclusively
+        // authorized by HTTPS group/device identity. A LAN discovery
+        // result or a six-digit legacy QR must never overwrite that binding.
+        if (AutoRemoteProvisioner.isRegistered(this)) {
+            openAutoRemoteSetup();
+            return;
+        }
         // A broadcast name/IP is never sufficient to authorize viewing:
         // a matching secret and previously approved ADB key are still required.
         String wakeHost = device.address + ":" + device.wakePort;
