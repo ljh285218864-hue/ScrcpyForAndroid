@@ -87,6 +87,11 @@ def schema() -> None:
             sender_id TEXT NOT NULL, recipient_id TEXT NOT NULL,
             kind TEXT NOT NULL, payload TEXT NOT NULL, created INTEGER NOT NULL
         );
+        -- One customer group = one owner and one guest, never one-to-many.
+        -- An existing corrupt database with duplicates fails closed at startup.
+        CREATE UNIQUE INDEX IF NOT EXISTS device_group_role_unique
+            ON devices(group_id,role);
+        CREATE INDEX IF NOT EXISTS device_group ON devices(group_id);
         CREATE INDEX IF NOT EXISTS sig_to ON signals(recipient_id,seq);
         CREATE INDEX IF NOT EXISTS sig_age ON signals(created);
         """)
@@ -126,9 +131,24 @@ def caller_row(db: sqlite3.Connection, authorization: str) -> sqlite3.Row:
 
 
 def peer(db: sqlite3.Connection, caller: sqlite3.Row) -> sqlite3.Row | None:
-    return db.execute(
-        "SELECT * FROM devices WHERE group_id=? AND id<>? AND state='paired'",
-        (caller["group_id"], caller["id"])).fetchone()
+    """Fail closed unless exactly ONE approved owner and ONE approved guest.
+
+    The server may host hundreds of separate groups. Never select an
+    arbitrary peer with LIMIT 1, or allow a group to become one-to-many.
+    """
+    group = db.execute("SELECT owner_id FROM groups WHERE id=?",
+                       (caller["group_id"],)).fetchone()
+    members = db.execute(
+        "SELECT * FROM devices WHERE group_id=? ORDER BY role",
+        (caller["group_id"],)).fetchall()
+    if (group is None or len(members) != 2
+            or {member["role"] for member in members} != {"owner", "guest"}
+            or any(member["state"] != "paired" for member in members)
+            or sum(member["id"] == caller["id"] for member in members) != 1
+            or next(member["id"] for member in members
+                    if member["role"] == "owner") != group["owner_id"]):
+        return None
+    return next(member for member in members if member["id"] != caller["id"])
 
 
 def pair_code(group_id: str, other: str) -> str:
@@ -210,6 +230,10 @@ def dispatch(db: sqlite3.Connection, path: str, body: dict, authorization: str) 
     if path == "/v1/invite":
         if caller["role"] != "owner" or caller["state"] != "ready":
             raise ApiError("NOT_ALLOWED", 403)
+        # A new invitation replaces a previous pending applicant. Do not
+        # leave a stale guest blocking the single guest slot indefinitely.
+        db.execute("DELETE FROM devices WHERE group_id=? AND role='guest' "
+                   "AND state='pending'", (caller["group_id"],))
         db.execute("DELETE FROM invites WHERE group_id=?", (caller["group_id"],))
         code = secrets.token_hex(24)
         db.execute("INSERT INTO invites VALUES (?,?,NULL,?)",
