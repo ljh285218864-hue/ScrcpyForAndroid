@@ -7,8 +7,7 @@ import android.security.keystore.KeyProperties;
 
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
-import java.security.SecureRandom;
-import java.util.Base64;
+import android.util.Base64;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -68,7 +67,7 @@ final class DeviceSecretStore {
         byte[] envelope = new byte[iv.length + encrypted.length];
         System.arraycopy(iv, 0, envelope, 0, iv.length);
         System.arraycopy(encrypted, 0, envelope, iv.length, encrypted.length);
-        String encoded = Base64.getEncoder().encodeToString(envelope);
+        String encoded = Base64.encodeToString(envelope, Base64.NO_WRAP);
         // A successful single commit atomically removes any earlier plaintext.
         if (!prefs(context).edit()
                 .putString(PREFIX + name, encoded)
@@ -91,7 +90,7 @@ final class DeviceSecretStore {
             }
             return "";
         }
-        byte[] payload = Base64.getDecoder().decode(envelope);
+        byte[] payload = Base64.decode(envelope, Base64.DEFAULT);
         if (payload.length < IV_SIZE + TAG_BITS / 8)
             throw new SecurityException("invalid encrypted credential");
         byte[] iv = new byte[IV_SIZE];
