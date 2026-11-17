@@ -143,6 +143,60 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.read(viewer))["type"], "watch_end")
         self.assertEqual((await self.read(source))["type"], "watch_end")
 
+    async def test_two_customer_pairs_stream_independently_and_reverse_watch(self):
+        a1, b1 = self.ids["a"]
+        a2, b2 = self.ids["b"]
+        a_viewer, b_source = await self.login(a1), await self.login(b1)
+        c_viewer, d_source = await self.login(a2), await self.login(b2)
+
+        sid1 = await self.open_session(a_viewer, b_source)
+        sid2 = await self.open_session(c_viewer, d_source)
+        self.assertNotEqual(sid1, sid2)
+        for source, viewer, sid in (
+            (b_source, a_viewer, sid1), (d_source, c_viewer, sid2)):
+            await source.send(json.dumps({
+                "type": "watch_accept", "session_id": sid}))
+            self.assertEqual((await self.read(viewer))["type"], "watch_active")
+            self.assertEqual((await self.read(source))["type"], "stream_allowed")
+            await source.send(json.dumps({
+                "type": "video_setup", "session_id": sid,
+                "dimensions": [1080, 2400, 720, 1600], "codec": "h264"}))
+            self.assertEqual((await self.read(viewer))["type"], "video_setup")
+
+        # Each customer receives only their pair's video.
+        frame_one = media.video_frame(sid1, video_packet())
+        frame_two = media.video_frame(sid2, video_packet())
+        await b_source.send(frame_one)
+        self.assertEqual(await self.read(a_viewer), frame_one)
+        await d_source.send(frame_two)
+        self.assertEqual(await self.read(c_viewer), frame_two)
+
+        # One-to-one can be bidirectional: B1 can also watch A1.
+        reverse = await self.open_session(b_source, a_viewer)
+        await a_viewer.send(json.dumps({
+            "type": "watch_accept", "session_id": reverse}))
+        self.assertEqual((await self.read(b_source))["type"], "watch_active")
+        self.assertEqual((await self.read(a_viewer))["type"], "stream_allowed")
+        await a_viewer.send(json.dumps({
+            "type": "video_setup", "session_id": reverse,
+            "dimensions": [1080, 2400, 720, 1600], "codec": "h264"}))
+        self.assertEqual((await self.read(b_source))["type"], "video_setup")
+        reverse_frame = media.video_frame(reverse, video_packet())
+        await a_viewer.send(reverse_frame)
+        self.assertEqual(await self.read(b_source), reverse_frame)
+
+        # A duplicate watch in the same direction is not an extra viewer.
+        await a_viewer.send(json.dumps({"type": "watch_request"}))
+        self.assertEqual((await self.read(a_viewer))["code"],
+                         "DIRECTION_ALREADY_ACTIVE")
+
+        # Disconnecting the first pair does not disturb the second pair.
+        await a_viewer.send(json.dumps({"type": "watch_end", "session_id": sid1}))
+        self.assertEqual((await self.read(a_viewer))["session_id"], sid1)
+        self.assertEqual((await self.read(b_source))["session_id"], sid1)
+        await d_source.send(frame_two)
+        self.assertEqual(await self.read(c_viewer), frame_two)
+
     async def test_group_isolation_and_revocation(self):
         one, two = self.ids["a"]
         three, four = self.ids["b"]
