@@ -242,6 +242,25 @@ public final class AutoRemoteProvisioner {
     public static void applyPairedConfig(Context context, JSONObject status) throws Exception {
         if (!"paired".equals(status.optString("state")))
             throw new Failure("双方尚未完成确认");
+        // Treat server-signed HTTPS status as the sole address directory.
+        // Device IDs bind the dynamic addresses to the actual approved group:
+        // neither an old LAN QR nor a previously saved ADB port is authoritative.
+        String deviceId = status.getString("device_id");
+        String groupId = status.getString("group_id");
+        String devicePublicKey = status.getString("device_public_key");
+        String peerId = status.getString("peer_device_id");
+        String peerPublicKey = status.getString("peer_public_key");
+        String verifyCode = status.getString("pair_verify_code");
+        if (!ID.matcher(deviceId).matches() || !ID.matcher(groupId).matches()
+                || !ID.matcher(peerId).matches() || deviceId.equals(peerId)
+                || !WG_KEY.matcher(devicePublicKey).matches()
+                || !WG_KEY.matcher(peerPublicKey).matches()
+                || devicePublicKey.equals(peerPublicKey)
+                || !verifyCode.matches("[0-9]{6}")
+                || !deviceId.equals(prefs(context).getString("device_id", ""))
+                || !devicePublicKey.equals(prefs(context).getString("public_key", ""))) {
+            throw new Failure("服务器身份信息与本机注册记录不一致，已拒绝连接");
+        }
         String deviceIp = status.getString("device_ip");
         String peerIp = status.getString("peer_ip");
         String serverKey = status.getString("server_public_key");
@@ -261,9 +280,9 @@ public final class AutoRemoteProvisioner {
             throw new Failure("服务器返回的独立加密网络地址段无效");
         }
         String privateKey = DeviceSecretStore.read(context, "private_key");
-        if (!RemoteOverlayNetwork.isOverlayAddress(deviceIp)
+        if (!TrustedPairEndpoint.validPair(deviceIp, peerIp)
+                || !RemoteOverlayNetwork.isOverlayAddress(deviceIp)
                 || !RemoteOverlayNetwork.isOverlayAddress(peerIp)
-                || deviceIp.equals(peerIp)
                 || !SECRET.matcher(sharedSecret).matches()
                 || !WG_KEY.matcher(serverKey).matches()
                 || !WG_KEY.matcher(privateKey).matches()
@@ -283,11 +302,39 @@ public final class AutoRemoteProvisioner {
         if (!EmbeddedRemoteTunnel.configMatches(context, desired))
             EmbeddedRemoteTunnel.importConfig(context, desired);
         PairedDeviceStore.Peer existing = PairedDeviceStore.load(context);
+        String oldGroup = prefs(context).getString("approved_group_id", "");
+        String oldPeer = prefs(context).getString("approved_peer_id", "");
+        // Server approval can rotate a peer. Ensure no existing live VPN is
+        // silently redirected to another identity; users must re-confirm.
+        if (!oldGroup.isEmpty() && !oldGroup.equals(groupId))
+            throw new Failure("设备配对组发生变化，请手动解绑并重新确认");
+        if (!oldPeer.isEmpty() && !oldPeer.equals(peerId))
+            throw new Failure("配对设备已经更换，请重新确认并建立连接");
         if (existing == null || !sharedSecret.equals(existing.secret)
-                || !peerIp.equals(existing.overlayHost)) {
+                || !peerIp.equals(existing.overlayHost)
+                || !peerIp.equals(existing.host)) {
             PairedDeviceStore.save(context, status.optString("peer_name", "异地手机"),
                     peerIp, sharedSecret, 0);
         }
+        if (!prefs(context).edit().putString("approved_group_id", groupId)
+                .putString("approved_peer_id", peerId)
+                .putString("approved_peer_ip", peerIp)
+                .putString("approved_local_ip", deviceIp)
+                .putString("pair_verify_code", verifyCode).commit()) {
+            throw new Failure("无法保存已验证的配对设备身份");
+        }
+    }
+
+    public static String approvedPeerIp(Context context) {
+        return prefs(context).getString("approved_peer_ip", "");
+    }
+
+    public static String approvedLocalIp(Context context) {
+        return prefs(context).getString("approved_local_ip", "");
+    }
+
+    public static String pairingVerifyCode(Context context) {
+        return prefs(context).getString("pair_verify_code", "");
     }
 
     public static JSONObject revoke(Context context) throws Exception {
