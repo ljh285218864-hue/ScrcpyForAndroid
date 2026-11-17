@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -40,7 +41,10 @@
             android:theme="@style/zxing_CaptureTheme"
             android:windowSoftInputMode="stateAlwaysHidden" />
 
-        <!-- No VpnService registered in the no-VPN transport variant. -->
+        <!-- Remove any VpnService contributed by the legacy WireGuard
+             AAR's manifest merger. This product must never own a VPN. -->
+        <service android:name="com.wireguard.android.backend.GoBackend$VpnService"
+            tools:node="remove" />
         <activity android:name=".RemoteSetupActivity" android:exported="false" />
 
         <activity
