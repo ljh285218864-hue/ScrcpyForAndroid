@@ -2091,6 +2091,10 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
      * existing receiver and VPN to be enabled by their owners.
      */
     private void syncRemoteOverlayForSavedPair() {
+        // Beta4 resolves its addresses only from authenticated HTTPS status.
+        // Never allow a legacy LAN metadata exchange to replace a pinned
+        // server-assigned VPN address or peer identity.
+        if (AutoRemoteProvisioner.isRegistered(this)) return;
         PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
         if (peer == null || RemoteOverlayNetwork.localVpnIp(this) == null) return;
         long now = SystemClock.elapsedRealtime();
@@ -2347,10 +2351,21 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         EditText wakeHost = findViewById(R.id.editText_wake_host);
         EditText wakeKey = findViewById(R.id.editText_wake_key);
         if (wakeHost != null) wakeHost.setText(peer.host + ":" + WakeLanService.PORT);
-        if (wakeKey != null) wakeKey.setText(peer.secret);
-        getSharedPreferences(WakeLanService.PREF, MODE_PRIVATE).edit()
-                .putString("viewer_host", peer.host + ":" + WakeLanService.PORT)
-                .putString("viewer_code", peer.secret).apply();
+        boolean remote = AutoRemoteProvisioner.isRegistered(this);
+        if (wakeKey != null) {
+            // Beta4 pairing keys must never be copied into an editable
+            // text field or duplicated in plaintext listener preferences.
+            wakeKey.setText(remote ? "" : peer.secret);
+            wakeKey.setEnabled(!remote);
+        }
+        if (remote) {
+            getSharedPreferences(WakeLanService.PREF, MODE_PRIVATE).edit()
+                    .remove("viewer_host").remove("viewer_code").apply();
+        } else {
+            getSharedPreferences(WakeLanService.PREF, MODE_PRIVATE).edit()
+                    .putString("viewer_host", peer.host + ":" + WakeLanService.PORT)
+                    .putString("viewer_code", peer.secret).apply();
+        }
         if (peer.adbPort > 0) {
             String serial = peer.host + ":" + peer.adbPort;
             EditText adbHost = findViewById(R.id.editText_server_host);
