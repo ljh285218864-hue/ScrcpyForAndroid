@@ -35,6 +35,10 @@ android {
         // Configured HTTPS control plane; never put activation/admin secrets in APK.
         buildConfigField 'String', 'SCREENSYNC_API_URL', '"' +
                 (System.getenv('SCREENSYNC_API_URL') ?: 'https://screensync.privyluxe.com:8443') + '"'
+        // Distinct no-VPN HTTPS signaling endpoint. A deliberately invalid
+        // default prevents accidentally contacting the old WireGuard API.
+        buildConfigField 'String', 'SCREENSYNC_NOVPN_URL', '"' +
+                (System.getenv('SCREENSYNC_NOVPN_URL') ?: 'https://relay.invalid') + '"'
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
