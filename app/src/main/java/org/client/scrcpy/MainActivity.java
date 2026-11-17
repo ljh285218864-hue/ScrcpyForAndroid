@@ -2092,7 +2092,14 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         EmbeddedRemoteTunnel.start(this, (running, message) -> {
             if (isFinishing() || isDestroyed()) return;
             refreshPrivateVpnStatus();
-            if (running) syncRemoteOverlayForSavedPair();
+            if (running) {
+                syncRemoteOverlayForSavedPair();
+                if (AutoRemoteProvisioner.isRegistered(this)) {
+                    // User has approved the VPN at least once. Only the
+                    // already-consented secure VPN is eligible for recovery.
+                    RemoteConnectionRecovery.setEnabled(this, true);
+                }
+            }
             if (thenWatch) {
                 startingVpnForWatch = false;
                 if (running) startOneTapWatch();
