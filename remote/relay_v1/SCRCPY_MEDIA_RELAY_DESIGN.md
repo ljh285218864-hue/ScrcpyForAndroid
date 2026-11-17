@@ -14,7 +14,7 @@
 - `MediaPacket.Type`：AUDIO = 0、**VIDEO = 1**、CONTROL = 2、COMMAND = 3。`VideoPacket` 使用 10 字节媒体包头（视频标志 + 时间戳）。不得把 CONTROL/COMMAND 透传给观看端。
 - 旧版 `OneTapConnection` 通过 ADB 到目标手机的 IP/端口再建立 `127.0.0.1:7008` 视频通道。异地版不能简单替换 IP 为日本服务器，因为这相当于跨互联网暴露整个 ADB 连接权限。
 - `ScrcpyRelayPacketPolicy.java` 已增加媒体边界：只批准完整的视频包及合理的分辨率头；拒绝音频/控制/命令/未知大包。相关 JUnit 已加入。**目前还没有绑定到实际采集/传输线程**。
-- `remote/relay_v1/server.py` 目前只提供经过设备令牌验证的配对、在线状态、双向信令。**还不传视频**。
+- `remote/relay_v1/server.py` 提供经过设备令牌验证的配对、在线状态与双向信令。新增 `remote/relay_v1/media_relay.py`，已实现服务端 WebSocket 视频包原型：每次观看须被观看方通过 `watch_accept` 明确放行；只转发当前同组授权会话里的 VIDEO 包，拒绝 COMMAND/CONTROL/AUDIO，限速并核查解绑状态。可通过模拟媒体帧做单元及套接字测试。**Android 两端尚未真正接入。**
 
 ## 预计完成的实际链路
 
@@ -27,7 +27,7 @@
 
 ## 剩余开发与硬性验收
 
-- **尚未接入** B 本地 ADB 采集桥、WSS 二进制媒体中转、Android 解码适配及远程启动/停止会话。
+- **已实现服务器上的模拟媒体中转通道；尚未接入** B 本地 ADB scrcpy 采集桥、两端 Android WSS 连接及解码适配。真实同屏、远程启动/停止会话尚未验收。
 - 不能依赖原有前台 `WakeLanService`；此无 VPN 分支已禁用它。
 - 当前不使用 FGS，只能做受系统调度的后台信令检查，无法承诺系统强杀/重启后“随时秒级接通”。WorkManager 最短 15 分钟，而且可能被延迟。
 - 日本 VPS 上的 TLS 反向代理、服务器性能、转码延迟和视频带宽都未验证；原有 3X-UI/Reality/Beta3 服务不应该被安装脚本覆盖。
