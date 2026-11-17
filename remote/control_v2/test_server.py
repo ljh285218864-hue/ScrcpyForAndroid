@@ -162,6 +162,21 @@ class MultiTenantTests(unittest.TestCase):
                 real_check(db)
         self.run.side_effect=None
 
+    def test_thread_limit_rejects_excess_requests_without_worker_spawn(self):
+        httpd = server.BoundedThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        try:
+            for _ in range(httpd.MAX_REQUEST_THREADS):
+                self.assertTrue(httpd._request_slots.acquire(blocking=False))
+            self.assertFalse(httpd._request_slots.acquire(blocking=False))
+            fake_request = mock.Mock()
+            with mock.patch.object(httpd, "shutdown_request") as rejected:
+                httpd.process_request(fake_request, ("127.0.0.1", 9999))
+                rejected.assert_called_once_with(fake_request)
+            httpd._request_slots.release()
+            self.assertTrue(httpd._request_slots.acquire(blocking=False))
+        finally:
+            httpd.server_close()
+
     def test_render_acl_rejects_foreign_ips(self):
         with self.assertRaises(RuntimeError):
             server.render_acl([("100.80.0.2","100.81.0.5")])
