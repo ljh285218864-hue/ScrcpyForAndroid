@@ -2056,6 +2056,9 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     private void togglePrivateVpn() {
         if (EmbeddedRemoteTunnel.isStarting()) return;
         if (EmbeddedRemoteTunnel.isActive()) {
+            // Deliberate user disconnect takes precedence over any network or
+            // Always-on recovery callback. Never silently reconnect afterward.
+            RemoteConnectionRecovery.setEnabled(this, false);
             EmbeddedRemoteTunnel.stop(this, (running, message) -> {
                 if (isFinishing() || isDestroyed()) return;
                 refreshPrivateVpnStatus();
