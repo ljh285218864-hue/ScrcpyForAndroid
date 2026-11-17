@@ -31,7 +31,6 @@ public class App extends Application implements Application.ActivityLifecycleCal
         init();  // 初始化id 数据
         AdbHelper.startAdbServer();
         SessionLog.resetAndStart(this);
-        RemoteConnectionRecovery.initialize(this);
     }
 
     @Override
