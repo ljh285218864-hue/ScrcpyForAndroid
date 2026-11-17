@@ -1908,8 +1908,9 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (cleanupNotifications != null) {
             cleanupNotifications.setOnClickListener(v -> showElderNotificationHelper());
         }
-        if (vpnSetup != null) vpnSetup.setOnClickListener(v -> openAutoRemoteSetup());
-        if (vpnToggle != null) vpnToggle.setOnClickListener(v -> togglePrivateVpn());
+        // System VPN is not a connection option in this build.
+        if (vpnSetup != null) vpnSetup.setVisibility(View.GONE);
+        if (vpnToggle != null) vpnToggle.setVisibility(View.GONE);
         refreshPrivateVpnStatus();
         if (advanced != null) advanced.setOnClickListener(v -> {
             LinearLayout details = findViewById(R.id.layout_advanced_controls);
@@ -1991,6 +1992,11 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     private void refreshPrivateVpnStatus() {
         TextView status = findViewById(R.id.quick_remote_network_status);
         Button toggle = findViewById(R.id.remote_vpn_toggle_button);
+        if (!NoVpnTransportPolicy.usesAndroidVpn()) {
+            if (status != null) status.setText("异地连接：不使用 VPN，服务器视频通道尚未完成");
+            if (toggle != null) toggle.setVisibility(View.GONE);
+            return;
+        }
         boolean connected = EmbeddedRemoteTunnel.isActive();
         boolean busy = EmbeddedRemoteTunnel.isStarting();
         if (status != null) {
@@ -2054,6 +2060,11 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     }
 
     private void togglePrivateVpn() {
+        if (!NoVpnTransportPolicy.usesAndroidVpn()) {
+            Toast.makeText(this, NoVpnTransportPolicy.pendingMessage(),
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
         if (EmbeddedRemoteTunnel.isStarting()) return;
         if (EmbeddedRemoteTunnel.isActive()) {
             // Deliberate user disconnect takes precedence over any network or
@@ -2088,6 +2099,12 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     }
 
     private void startPrivateVpnAfterConsent(boolean thenWatch) {
+        if (!NoVpnTransportPolicy.usesAndroidVpn()) {
+            startingVpnForWatch = false;
+            Toast.makeText(this, NoVpnTransportPolicy.pendingMessage(),
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
         EmbeddedRemoteTunnel.start(this, (running, message) -> {
             if (isFinishing() || isDestroyed()) return;
             refreshPrivateVpnStatus();
@@ -2238,6 +2255,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     private void startOneTapWatch() {
         if (oneTapConnecting || startingVpnForWatch || isFinishing() || isDestroyed())
             return;
+        if (AutoRemoteProvisioner.isRegistered(this)) {
+            new android.app.AlertDialog.Builder(this)
+                    .setTitle("异地连接未就绪")
+                    .setMessage(NoVpnTransportPolicy.pendingMessage())
+                    .setPositiveButton(android.R.string.ok, null).show();
+            return;
+        }
         PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
         if (peer == null) {
             openAutoRemoteSetup();
@@ -2252,7 +2276,9 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         // Daily use stays one-tap. After the one-time admin VPN provisioning,
         // launch the embedded tunnel automatically when the viewer taps Watch.
         // Android VPN consent is still required whenever the OS requests it.
-        if (EmbeddedRemoteTunnel.hasConfig(this) && !EmbeddedRemoteTunnel.isActive()) {
+        if (NoVpnTransportPolicy.usesAndroidVpn()
+                && EmbeddedRemoteTunnel.hasConfig(this)
+                && !EmbeddedRemoteTunnel.isActive()) {
             if (EmbeddedRemoteTunnel.isStarting()) return;
             startingVpnForWatch = true;
             try {
