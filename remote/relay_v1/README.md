@@ -8,7 +8,7 @@
 - 一次性管理员开通码、五分钟邀请、两端六位核对码、本人批准/拒绝、组内专属设备 ID/令牌、拒绝跨组信令、双方解绑令牌失效。
 - `POST /v1/heartbeat` 更新在线时间；`POST /v1/signal/send` 和 `/v1/signal/poll` 传递短期信令。双向请求仅发送到已批准的对方 ID，不允许任意 IP 或 Android 远程控制命令。队列最多32条、90秒清理。
 - `NoVpnApi.java` 以系统证书信任链调用 HTTPS，令牌经 AndroidKeyStore 加密保留，记录 `device_id`、`group_id`、已确认 `peer_device_id` 和消息序号，短暂断线/应用界面重开后可以补取有效期内消息。
-- `NoVpnMediaSocket.java` 使用独立 `SCREENSYNC_MEDIA_URL` 的 `wss://` URL（默认 `wss://relay.invalid/media`，不自动连旧 VPN），只发送经过授权的设备令牌及 WATCH 控制信令。配对界面新增主动连接/观看测试请求/同意与拒绝/结束会话按钮；返回或离开界面会关闭 WSS，**不会后台自动采集屏幕**。视频帧仅解析并计数，尚未接入现有 scrcpy 解码播放器。
+- `NoVpnMediaSocket.java` 使用独立 `SCREENSYNC_MEDIA_URL` 的 `wss://` URL（默认 `wss://relay.invalid/media`，不自动连旧 VPN），只发送经过授权的设备令牌及 WATCH 控制信令。配对界面新增主动连接/观看测试请求/同意与拒绝/结束会话按钮；返回或离开界面会关闭 WSS，**不会后台自动采集屏幕**。视频包已经接入 `RelayVideoRenderer`，使用现有 `VideoDecoder` 向 `SurfaceView` 解码；尚未在真实安卓手机上跨公网验收。
 - `RemoteSetupActivity.java`：扫码开通、生成二维码、批准/拒绝、显示在线状态及六位核对码、A→B 或 B→A 发送连接测试消息、撤销并使两端旧令牌失效。
 - `MainActivity` 不再调用旧 WireGuard/ADB 远程连接；弃用的 WireGuard 依赖、代码、服务器安装脚本已从此实验分支删除。旧 LAN 的独立开发分支保持不变。
 
@@ -30,11 +30,11 @@ SS_NOVPN_DB=/tmp/screensync-test/relay.db python3 remote/relay_v1/server.py serv
 
 1. **正式 HTTPS 与流控：** 独立子域名、有效 TLS、在反向代理上做基于真实来源 IP 的注册/扫码限流、控制服务只绑定 127.0.0.1，确保不干扰 x-ui/Reality/Beta3。
 2. **后台与重启恢复（第一阶段已加入）**：Android 使用 `NoVpnBackgroundSync` + `NoVpnPresenceWorker`。配对页面提供用户主动开启/关闭的后台定期检查；已启用后由 WorkManager 持久保留带联网约束的15分钟周期 HTTPS 心跳，进程运行时监听网络变化并排队一次快速重试，正常手机重启后由 WorkManager 尝试恢复；解绑关闭。**不启动前台服务，不产生常驻通知，不在后台采集屏幕，不自动接受观看。** Android Doze、厂商省电和强制停止可能导致任务大幅延迟或暂停，不能保证实时在线。旧 `WakeLanService` 在无 VPN 实验版 manifest 中已禁用，以免旧局域网收件服务启动前台通知；旧 LAN 功能在此分支暂不可用，独立旧版分支不变。
-3. **视频传输（服务端原型已加入）：** 继续使用已有 ADB + scrcpy 编码与解码。新增 `media_relay.py` 实际 WebSocket 连接端，检查设备令牌、配对组、每次会话的接收方确认、只读 VIDEO 包格式、大小与速率，并在解绑后停止转发；`test_media_relay.py` 使用模拟视频帧测试。**Android 本机 scrcpy 视频采集桥、观看端接入以及 HTTPS/WSS 公网部署均未完成**。禁止透传完整 ADB、音频、控制或命令帧。详情见 `SCRCPY_MEDIA_RELAY_DESIGN.md`。
+3. **视频传输（服务端原型已加入）：** 继续使用已有 ADB + scrcpy 编码与解码。新增 `media_relay.py` 实际 WebSocket 连接端，检查设备令牌、配对组、每次会话的接收方确认、只读 VIDEO 包格式、大小与速率，并在解绑后停止转发；`test_media_relay.py` 使用模拟视频帧测试。**Android 本机 scrcpy 采集桥与观看端解码代码已接入并通过 APK 编译；正式 HTTPS/WSS 部署以及真实手机视频验收仍未完成**。禁止透传完整 ADB、音频、控制或命令帧。详情见 `SCRCPY_MEDIA_RELAY_DESIGN.md`。
 4. **可靠性：** 网络恢复、蜂窝/Wi-Fi 切换、飞行模式、系统杀后台、重启、换设备、重复 QR/非法 QR、超时、解绑定/跨组、压力测试；当前仅完成部分自动测试。
-5. **隐私与协议：** 传输只能访问授权组，屏幕采集系统提示不可移除；客户要有可见接收状态及随时撤销按钮。上线前必须进行安全审查及稳定 APK 签名。
+5. **隐私与协议：** 传输只能访问授权组，屏幕采集与调试系统安全提示不能绕过；客户要有可见接收状态及随时撤销按钮。上线前必须进行安全审查及稳定 APK 签名。
 
-## 真实使用流程（信令测试）
+## 使用流程（部署前仅代码/模拟信令可测）
 
 1. 管理员离线在独立服务器生成一次性主手机开通二维码（未部署服务器前不可用）。
 2. A 扫码开通→生成5分钟邀请→B 扫码提交→两端核对6位码→A批准。
