@@ -9,8 +9,14 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"
 P="ss4$$"
 S="$P""s"; A="$P""a"; B="$P""b"; C="$P""c"; D="$P""d"
+UNIT="ss4-test-$P.service"
 
 cleanup() {
+  if [[ -f "/run/systemd/system/$UNIT" ]]; then
+    systemctl stop "$UNIT" >/dev/null 2>&1 || true
+    rm -f "/run/systemd/system/$UNIT"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
   for ns in "$S" "$A" "$B" "$C" "$D"; do ip netns del "$ns" >/dev/null 2>&1 || true; done
   rm -rf "$TMP"
 }
@@ -156,18 +162,61 @@ must_drop "$A" 100.81.0.3
 must_pass "$C" 100.81.0.5
 pass "Unpair removes group1 access without harming group2"
 
-# Simulate the installer's ExecStopPost kernel rule. Actual systemd crash
-# supervision still needs independent live service testing.
-ip netns exec "$S" nft insert rule inet screensync_beta4 forward \
-  iifname "wg-ss-beta4" oifname "wg-ss-beta4" drop
-must_drop "$C" 100.81.0.5
-pass "Fail-closed kernel rule blocks active group on simulated shutdown"
-
+# Reconstruct runtime from the persisted DB after a simulated program restart.
 driver restart
 must_drop "$A" 100.81.0.3
 must_pass "$C" 100.81.0.5
 must_drop "$A" 100.81.0.4
 pass "State reload only restores still-approved groups"
+
+# Exercise an ACTUAL systemd ExecStopPost on disposable GitHub Actions VM.
+# Systemd runs the real Python control service inside the isolated server
+# namespace, kills it, denies via nft, then restarts to reconcile authorized
+# state. This still does not validate the Evoxt-specific production unit.
+ip_bin="$(command -v ip)"
+nft_bin="$(command -v nft)"
+python_bin="$(command -v python3)"
+cat > "/run/systemd/system/$UNIT" <<EOF
+[Unit]
+Description=Temporary ScreenSync Beta4 disposable namespace crash test
+[Service]
+Type=simple
+Environment=SCREENSYNC_DB=$TMP/test.db
+Environment=SCREENSYNC_WG_INTERFACE=wg-ss-beta4
+Environment=SCREENSYNC_WG_ENDPOINT=172.27.1.1:51821
+Environment=SCREENSYNC_ADMIN_SECRET=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+Environment=SCREENSYNC_MAX_PAIRS=2
+ExecStart=$ip_bin netns exec $S $python_bin $ROOT/remote/control_v2/server.py
+ExecStopPost=-$ip_bin netns exec $S $nft_bin insert rule inet screensync_beta4 forward iifname wg-ss-beta4 oifname wg-ss-beta4 drop
+Restart=no
+EOF
+systemctl daemon-reload
+systemctl start "$UNIT"
+systemctl is-active --quiet "$UNIT" || fail "Temporary systemd service did not start"
+ip netns exec "$S" "$python_bin" -c 'from urllib.request import urlopen; assert b"ok" in urlopen("http://127.0.0.1:8765/health", timeout=5).read()'
+pass "Real systemd service and loopback-only HTTP health endpoint active"
+
+systemctl kill --kill-whom=main --signal=SIGKILL "$UNIT"
+hook_found=0
+for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  if ip netns exec "$S" nft list chain inet screensync_beta4 forward |
+    grep -q 'iifname "wg-ss-beta4" oifname "wg-ss-beta4" drop'; then
+    hook_found=1
+    break
+  fi
+  sleep 0.2
+done
+[[ "$hook_found" == 1 ]] || fail "Actual systemd abnormal exit did not install fail-closed nft rule"
+must_drop "$C" 100.81.0.5
+pass "Actual SIGKILL of control service triggered fail-closed nft isolation"
+
+systemctl restart "$UNIT"
+systemctl is-active --quiet "$UNIT" || fail "Control service failed to restart"
+must_drop "$A" 100.81.0.3
+must_pass "$C" 100.81.0.5
+must_drop "$A" 100.81.0.4
+pass "Actual systemd restart restored only persisted authorized pair"
+
 
 legacy_after="$(ip netns exec "$S" wg show wg-screensync dump | sha256sum | cut -d' ' -f1)"
 [[ "$legacy_before" == "$legacy_after" ]] || fail "Old Beta3 WireGuard modified"
