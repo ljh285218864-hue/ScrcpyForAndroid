@@ -250,11 +250,15 @@ public final class NoVpnMediaSocket {
             }
             case "watch_end":
                 String id = body.optString("session_id");
+                boolean sourceEnded = id.equals(sourceSession);
+                boolean viewerEnded = id.equals(viewerSession)
+                        || id.equals(pendingViewerSession);
                 if (id.equals(viewerSession)) viewerSession = "";
                 if (id.equals(pendingViewerSession)) pendingViewerSession = "";
                 if (id.equals(sourceSession)) sourceSession = "";
                 if (id.equals(waitingRequest)) waitingRequest = "";
-                status("session_ended");
+                status(sourceEnded ? "source_session_ended"
+                        : viewerEnded ? "viewer_session_ended" : "session_ended");
                 break;
             case "error":
                 status("server_error:" + body.optString("code", "UNKNOWN"));
@@ -335,6 +339,16 @@ public final class NoVpnMediaSocket {
         pendingViewerSession = "";
         sourceSession = "";
         waitingRequest = "";
+    }
+
+    public void endSourceSession() {
+        String source = sourceSession;
+        sourceSession = "";
+        if (!ScrcpyRelayWire.validSessionId(source)) return;
+        try {
+            send(new JSONObject().put("type", "watch_end").put("session_id", source));
+        } catch (JSONException ignored) { }
+        status("source_session_stopped");
     }
 
     public void endSession() {
