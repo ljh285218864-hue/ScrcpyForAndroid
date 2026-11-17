@@ -78,6 +78,15 @@ public final class NoVpnMediaSocket {
         }
     }
 
+    public static boolean endpointConfigured() {
+        try {
+            requireValidWss(BuildConfig.SCREENSYNC_MEDIA_URL);
+            return true;
+        } catch (Exception notConfigured) {
+            return false;
+        }
+    }
+
     public synchronized void connect() throws Exception {
         if (shutdown) throw new IllegalStateException("连接已关闭");
         if (socket != null) return;
