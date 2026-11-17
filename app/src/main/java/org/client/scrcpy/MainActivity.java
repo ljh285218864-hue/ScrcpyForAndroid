@@ -23,7 +23,6 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.net.Uri;
-import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -411,9 +410,6 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         initLanAutoDiscovery();
         initPairingHome();
         initQuickHome();
-        // Silently exchange private VPN endpoints for existing user-approved
-        // pairings while both phones are still reachable on the old LAN.
-        syncRemoteOverlayForSavedPair();
         Button openDebugSettings = findViewById(R.id.button_open_wireless_debugging);
         final boolean isXiaomiFamily = XiaomiSettingsSupport.isXiaomiFamily(
                 Build.MANUFACTURER, Build.BRAND);
@@ -1592,7 +1588,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (watch != null) watch.setOnClickListener(v -> watchPairedDevice());
         if (systemAdb != null) systemAdb.setOnClickListener(v -> authorizeSystemAdb());
         if (remove != null) remove.setOnClickListener(v -> {
-            if (AutoRemoteProvisioner.isRegistered(this)) {
+            if (NoVpnApi.isRegistered(this)) {
                 // Remote unpair must revoke the server ACL and peer first.
                 // Local-only clear would leave a previously authorized tunnel.
                 openAutoRemoteSetup();
@@ -1626,7 +1622,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         // Once a device is enrolled into Beta4, pairing is exclusively
         // authorized by HTTPS group/device identity. A LAN discovery
         // result or a six-digit legacy QR must never overwrite that binding.
-        if (AutoRemoteProvisioner.isRegistered(this)) {
+        if (NoVpnApi.isRegistered(this)) {
             openAutoRemoteSetup();
             return;
         }
@@ -1690,7 +1686,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         // Once a device is enrolled into Beta4, pairing is exclusively
         // authorized by HTTPS group/device identity. A LAN discovery
         // result or a six-digit legacy QR must never overwrite that binding.
-        if (AutoRemoteProvisioner.isRegistered(this)) {
+        if (NoVpnApi.isRegistered(this)) {
             openAutoRemoteSetup();
             return;
         }
@@ -1724,25 +1720,6 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == REMOTE_VPN_IMPORT_REQUEST) {
-            if (resultCode == Activity.RESULT_OK) handlePrivateVpnImport(data);
-            return;
-        }
-        if (requestCode == REMOTE_VPN_PERMISSION_REQUEST) {
-            if (resultCode == Activity.RESULT_OK) startPrivateVpnAfterConsent();
-            else Toast.makeText(this, R.string.remote_embedded_auth_denied,
-                    Toast.LENGTH_LONG).show();
-            return;
-        }
-        if (requestCode == REMOTE_VPN_WATCH_PERMISSION_REQUEST) {
-            if (resultCode == Activity.RESULT_OK) startPrivateVpnAfterConsent(true);
-            else {
-                startingVpnForWatch = false;
-                Toast.makeText(this, R.string.remote_embedded_auth_denied,
-                        Toast.LENGTH_LONG).show();
-            }
-            return;
-        }
         if (requestCode == APP_QR_SCAN_REQUEST) {
             if (resultCode == Activity.RESULT_OK && data != null) {
                 String value = data.getStringExtra(AppQrCaptureActivity.EXTRA_RESULT);
@@ -1779,13 +1756,12 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                             Toast.LENGTH_LONG).show();
                     return;
                 }
-                if (AutoRemoteProvisioner.isRegistered(this)) {
+                if (NoVpnApi.isRegistered(this)) {
                     openAutoRemoteSetup();
                     return;
                 }
                 PairedDeviceStore.save(this, "已扫码手机", target.host, result.secret, 0);
-                syncRemoteOverlayForSavedPair();
-                try {
+                        try {
                     WakeLanService.startByOwner(this);
                 } catch (RuntimeException error) {
                     Log.w("Scrcpy", "Receiver could not start after QR pairing", error);
@@ -1864,12 +1840,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             quickStatus.setText(peer == null
                     ? R.string.quick_status_unpaired : R.string.quick_status_paired);
         }
-        TextView vpnState = findViewById(R.id.quick_remote_network_status);
-        if (vpnState != null) {
-            vpnState.setText(RemoteOverlayNetwork.localVpnIp(this) != null
-                    ? R.string.remote_vpn_connected : R.string.remote_vpn_not_connected);
-        }
-        refreshPrivateVpnStatus();
+        refreshNoVpnStatus();
     }
 
     /**
@@ -1889,7 +1860,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         Button vpnSetup = findViewById(R.id.remote_vpn_setup_button);
         Button vpnToggle = findViewById(R.id.remote_vpn_toggle_button);
         Switch receiver = findViewById(R.id.quick_receive_switch);
-        if (!NoVpnTransportPolicy.usesAndroidVpn()) {
+        {
             // No-VPN beta does not run the old LAN foreground receiver.
             // Hide entry points that would start a legacy notified service
             // or request ADB debugging for a transport not used by Beta4.
@@ -1922,7 +1893,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         // System VPN is not a connection option in this build.
         if (vpnSetup != null) vpnSetup.setVisibility(View.GONE);
         if (vpnToggle != null) vpnToggle.setVisibility(View.GONE);
-        refreshPrivateVpnStatus();
+        refreshNoVpnStatus();
         if (advanced != null) advanced.setOnClickListener(v -> {
             LinearLayout details = findViewById(R.id.layout_advanced_controls);
             if (details != null && details.getVisibility() == View.VISIBLE) {
@@ -1995,177 +1966,24 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         }
     }
 
-    private static final int REMOTE_VPN_IMPORT_REQUEST = 8293;
-    private static final int REMOTE_VPN_PERMISSION_REQUEST = 8294;
-    private static final int REMOTE_VPN_WATCH_PERMISSION_REQUEST = 8295;
-    private boolean startingVpnForWatch;
-
-    private void refreshPrivateVpnStatus() {
+    private void refreshNoVpnStatus() {
         TextView status = findViewById(R.id.quick_remote_network_status);
+        if (status != null) status.setText(
+                "异地连接：不使用系统 VPN（scrcpy 视频中转尚未接通）");
         Button toggle = findViewById(R.id.remote_vpn_toggle_button);
-        if (!NoVpnTransportPolicy.usesAndroidVpn()) {
-            if (status != null) status.setText("异地连接：不使用 VPN，服务器视频通道尚未完成");
-            if (toggle != null) toggle.setVisibility(View.GONE);
-            return;
-        }
-        boolean connected = EmbeddedRemoteTunnel.isActive();
-        boolean busy = EmbeddedRemoteTunnel.isStarting();
-        if (status != null) {
-            int text = connected ? R.string.remote_embedded_active
-                    : EmbeddedRemoteTunnel.hasConfig(this) ? R.string.remote_embedded_ready
-                    : R.string.remote_embedded_needs_config;
-            status.setText(text);
-        }
-        if (toggle != null) {
-            toggle.setEnabled(!busy);
-            toggle.setText(busy ? R.string.remote_embedded_busy
-                    : connected ? R.string.remote_embedded_stop
-                    : R.string.remote_embedded_start);
-        }
+        if (toggle != null) toggle.setVisibility(View.GONE);
     }
 
     private void openAutoRemoteSetup() {
         startActivity(new Intent(this, RemoteSetupActivity.class));
     }
 
-    private void importPrivateVpnConfig() {
-        try {
-            Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-            picker.addCategory(Intent.CATEGORY_OPENABLE);
-            picker.setType("*/*");
-            startActivityForResult(picker, REMOTE_VPN_IMPORT_REQUEST);
-        } catch (RuntimeException error) {
-            Toast.makeText(this, R.string.remote_embedded_import_fail,
-                    Toast.LENGTH_LONG).show();
-        }
-    }
 
-    private void handlePrivateVpnImport(Intent data) {
-        if (data == null || data.getData() == null) return;
-        final Uri source = data.getData();
-        ThreadUtils.execute(() -> {
-            boolean success = false;
-            try (InputStream in = getContentResolver().openInputStream(source);
-                 ByteArrayOutputStream bytes = new ByteArrayOutputStream()) {
-                if (in == null) throw new java.io.IOException("No config stream");
-                byte[] buf = new byte[4096];
-                int n;
-                while ((n = in.read(buf)) != -1) {
-                    if (bytes.size() + n > 20_000) throw new java.io.IOException("Too large");
-                    bytes.write(buf, 0, n);
-                }
-                EmbeddedRemoteTunnel.importConfig(this, bytes.toByteArray());
-                success = true;
-            } catch (Exception error) {
-                Log.w("Scrcpy", "Private VPN config import rejected: " +
-                        error.getClass().getSimpleName());
-            }
-            final boolean ok = success;
-            runOnUiThread(() -> {
-                if (isFinishing() || isDestroyed()) return;
-                refreshPrivateVpnStatus();
-                Toast.makeText(this, ok ? R.string.remote_embedded_import_ok
-                        : R.string.remote_embedded_import_fail, Toast.LENGTH_LONG).show();
-            });
-        });
-    }
 
-    private void togglePrivateVpn() {
-        if (!NoVpnTransportPolicy.usesAndroidVpn()) {
-            Toast.makeText(this, NoVpnTransportPolicy.pendingMessage(),
-                    Toast.LENGTH_LONG).show();
-            return;
-        }
-        if (EmbeddedRemoteTunnel.isStarting()) return;
-        if (EmbeddedRemoteTunnel.isActive()) {
-            // Deliberate user disconnect takes precedence over any network or
-            // Always-on recovery callback. Never silently reconnect afterward.
-            EmbeddedRemoteTunnel.stop(this, (running, message) -> {
-                if (isFinishing() || isDestroyed()) return;
-                refreshPrivateVpnStatus();
-                Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-            });
-            refreshPrivateVpnStatus();
-            return;
-        }
-        if (!EmbeddedRemoteTunnel.hasConfig(this)) {
-            openAutoRemoteSetup();
-            return;
-        }
-        try {
-            Intent consent = VpnService.prepare(this);
-            if (consent != null) {
-                startActivityForResult(consent, REMOTE_VPN_PERMISSION_REQUEST);
-            } else {
-                startPrivateVpnAfterConsent();
-            }
-        } catch (RuntimeException error) {
-            Toast.makeText(this, R.string.remote_embedded_auth_denied,
-                    Toast.LENGTH_LONG).show();
-        }
-    }
 
-    private void startPrivateVpnAfterConsent() {
-        startPrivateVpnAfterConsent(false);
-    }
 
-    private void startPrivateVpnAfterConsent(boolean thenWatch) {
-        if (!NoVpnTransportPolicy.usesAndroidVpn()) {
-            startingVpnForWatch = false;
-            Toast.makeText(this, NoVpnTransportPolicy.pendingMessage(),
-                    Toast.LENGTH_LONG).show();
-            return;
-        }
-        EmbeddedRemoteTunnel.start(this, (running, message) -> {
-            if (isFinishing() || isDestroyed()) return;
-            refreshPrivateVpnStatus();
-            if (running) {
-                syncRemoteOverlayForSavedPair();
-            }
-            if (thenWatch) {
-                startingVpnForWatch = false;
-                if (running) startOneTapWatch();
-                else Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-            } else {
-                Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-            }
-        });
-        refreshPrivateVpnStatus();
-    }
 
-    private long lastRemoteOverlaySyncAt;
 
-    /**
-     * Migrates the previous LAN-only pairing without replacing the user's
-     * saved identity or asking for IP/port entry. Requires both phones'
-     * existing receiver and VPN to be enabled by their owners.
-     */
-    private void syncRemoteOverlayForSavedPair() {
-        // Beta4 resolves its addresses only from authenticated HTTPS status.
-        // Never allow a legacy LAN metadata exchange to replace a pinned
-        // server-assigned VPN address or peer identity.
-        if (AutoRemoteProvisioner.isRegistered(this)) return;
-        PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
-        if (peer == null || RemoteOverlayNetwork.localVpnIp(this) == null) return;
-        long now = SystemClock.elapsedRealtime();
-        if (lastRemoteOverlaySyncAt != 0L && now - lastRemoteOverlaySyncAt < 30_000L)
-            return;
-        lastRemoteOverlaySyncAt = now;
-        ThreadUtils.execute(() -> {
-            String[] hosts = {peer.host, peer.overlayHost};
-            for (String candidate : hosts) {
-                if (candidate == null || candidate.isEmpty()) continue;
-                WakeLanClient.RemoteInfo info =
-                        WakeLanClient.queryRemoteInfo(this, candidate, peer.secret);
-                if (!info.ok()) continue;
-                if (info.overlayHost != null) {
-                    PairedDeviceStore.updateOverlayAddress(this, info.overlayHost);
-                    Log.i("Scrcpy", "Saved peer private VPN endpoint refreshed");
-                }
-                break;
-            }
-        });
-    }
 
     private void initQuickReceiverListener(Switch receiver) {
         receiver.setOnCheckedChangeListener((view, enabled) -> {
@@ -2264,7 +2082,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     }
 
     private void startOneTapWatch() {
-        if (oneTapConnecting || startingVpnForWatch || isFinishing() || isDestroyed())
+        if (oneTapConnecting || isFinishing() || isDestroyed())
             return;
         if (NoVpnApi.isRegistered(this)) {
             // The HTTPS signaling prototype is NOT screen video. Do not
@@ -2279,44 +2097,9 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                     .setNegativeButton(android.R.string.cancel, null).show();
             return;
         }
-        if (AutoRemoteProvisioner.isRegistered(this)) {
-            new android.app.AlertDialog.Builder(this)
-                    .setTitle("异地连接未就绪")
-                    .setMessage(NoVpnTransportPolicy.pendingMessage())
-                    .setPositiveButton(android.R.string.ok, null).show();
-            return;
-        }
         PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
         if (peer == null) {
             openAutoRemoteSetup();
-            return;
-        }
-        if (AutoRemoteProvisioner.isRegistered(this) &&
-                !EmbeddedRemoteTunnel.hasConfig(this)) {
-            // Account is linked, but VPN config may still await other owner approval.
-            openAutoRemoteSetup();
-            return;
-        }
-        // Daily use stays one-tap. After the one-time admin VPN provisioning,
-        // launch the embedded tunnel automatically when the viewer taps Watch.
-        // Android VPN consent is still required whenever the OS requests it.
-        if (NoVpnTransportPolicy.usesAndroidVpn()
-                && EmbeddedRemoteTunnel.hasConfig(this)
-                && !EmbeddedRemoteTunnel.isActive()) {
-            if (EmbeddedRemoteTunnel.isStarting()) return;
-            startingVpnForWatch = true;
-            try {
-                Intent consent = VpnService.prepare(this);
-                if (consent != null) {
-                    startActivityForResult(consent, REMOTE_VPN_WATCH_PERMISSION_REQUEST);
-                } else {
-                    startPrivateVpnAfterConsent(true);
-                }
-            } catch (RuntimeException error) {
-                startingVpnForWatch = false;
-                Toast.makeText(this, R.string.remote_embedded_auth_denied,
-                        Toast.LENGTH_LONG).show();
-            }
             return;
         }
         if (oneTapConnection == null) oneTapConnection = new OneTapConnection(this);
@@ -2423,7 +2206,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         EditText wakeHost = findViewById(R.id.editText_wake_host);
         EditText wakeKey = findViewById(R.id.editText_wake_key);
         if (wakeHost != null) wakeHost.setText(peer.host + ":" + WakeLanService.PORT);
-        boolean remote = AutoRemoteProvisioner.isRegistered(this);
+        boolean remote = NoVpnApi.isRegistered(this);
         if (wakeKey != null) {
             // Beta4 pairing keys must never be copied into an editable
             // text field or duplicated in plaintext listener preferences.
@@ -2472,7 +2255,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         // Once a device is enrolled into Beta4, pairing is exclusively
         // authorized by HTTPS group/device identity. A LAN discovery
         // result or a six-digit legacy QR must never overwrite that binding.
-        if (AutoRemoteProvisioner.isRegistered(this)) {
+        if (NoVpnApi.isRegistered(this)) {
             openAutoRemoteSetup();
             return;
         }
@@ -2546,7 +2329,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                                 Toast.makeText(this, result.error, Toast.LENGTH_LONG).show();
                                 return;
                             }
-                            if (AutoRemoteProvisioner.isRegistered(this)) {
+                            if (NoVpnApi.isRegistered(this)) {
                                 openAutoRemoteSetup();
                                 return;
                             }
@@ -3129,7 +2912,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         // Once a device is enrolled into Beta4, pairing is exclusively
         // authorized by HTTPS group/device identity. A LAN discovery
         // result or a six-digit legacy QR must never overwrite that binding.
-        if (AutoRemoteProvisioner.isRegistered(this)) {
+        if (NoVpnApi.isRegistered(this)) {
             openAutoRemoteSetup();
             return;
         }
@@ -3180,7 +2963,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         // Once a device is enrolled into Beta4, pairing is exclusively
         // authorized by HTTPS group/device identity. A LAN discovery
         // result or a six-digit legacy QR must never overwrite that binding.
-        if (AutoRemoteProvisioner.isRegistered(this)) {
+        if (NoVpnApi.isRegistered(this)) {
             openAutoRemoteSetup();
             return;
         }
