@@ -29,8 +29,8 @@ MAX_BODY = 4096
 TOKEN = re.compile(r"[a-f0-9]{48}\Z")
 DEVICE_ID = re.compile(r"[a-f0-9]{32}\Z")
 ALLOWED_EVENTS = {"hello", "watch_request", "watch_decline", "watch_accept",
-                  "watch_end", "ice_candidate", "offer", "answer"}
-# Only signaling. Offer/answer/ICE are for a future user-authorized WebRTC session.
+                  "watch_end"}
+# No WebRTC offer/answer/ICE and no ADB-command channel in this relay.
 MAX_SIGNAL_AGE = 90
 MAX_SIGNAL_COUNT = 32
 STALE_ONLINE_SECONDS = 45
