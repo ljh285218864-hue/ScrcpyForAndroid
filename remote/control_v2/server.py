@@ -440,6 +440,37 @@ def api_revoke(db: sqlite3.Connection, caller: sqlite3.Row) -> dict:
     return {"state": "revoked"}
 
 
+class BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    """Reject excess sockets before allocating threads on tiny VPS instances.
+
+    Reverse proxy must also enforce request and connection limits; this only
+    bounds *backend* request thread count and is not DDoS protection.
+    """
+    MAX_REQUEST_THREADS = 8
+    request_queue_size = 16
+    daemon_threads = True
+
+    def __init__(self, address, handler):
+        self._request_slots = threading.BoundedSemaphore(self.MAX_REQUEST_THREADS)
+        super().__init__(address, handler)
+
+    def process_request(self, request, client_address):
+        if not self._request_slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
     timeout = 10
@@ -536,7 +567,7 @@ def main() -> None:
         print(issue_owner_code(ttl))
         return
     init_runtime()
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    server = BoundedThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     server.daemon_threads = True
     print("ScreenSync v2 control plane listening only on loopback", flush=True)
     server.serve_forever()
