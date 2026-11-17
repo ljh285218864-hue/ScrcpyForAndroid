@@ -2,7 +2,11 @@ package org.client.scrcpy;
 
 import android.content.Context;
 import android.net.Uri;
-import android.net.wifi.WifiManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.LinkAddress;
+import android.net.LinkProperties;
 import android.text.TextUtils;
 
 import java.net.Inet4Address;
@@ -36,7 +40,7 @@ public final class PairQrCode {
     }
 
     public static String createAppPayload(String host, String sixDigitCode) {
-        if (!isPrivateIpv4(host) || sixDigitCode == null
+        if (!isLocalLanIpv4(host) || sixDigitCode == null
                 || !sixDigitCode.matches("[0-9]{6}")) {
             throw new IllegalArgumentException("Invalid local QR pairing information");
         }
@@ -53,7 +57,7 @@ public final class PairQrCode {
             String host = uri.getQueryParameter("host");
             String portString = uri.getQueryParameter("port");
             String code = uri.getQueryParameter("code");
-            if (!isPrivateIpv4(host) || code == null
+            if (!isLocalLanIpv4(host) || code == null
                     || !code.matches("[0-9]{6}")
                     || !String.valueOf(WakeLanService.PORT).equals(portString)) {
                 return null;
@@ -114,40 +118,40 @@ public final class PairQrCode {
     }
 
     /**
-     * Prefer the active Wi-Fi IPv4. Avoid cellular/VPN IPs appearing in a QR.
-     * Apps cannot silently enable Wi-Fi on the other device.
+     * LAN QR may only contain an address of the currently active Wi-Fi link.
+     * Never use VPN overlay endpoints here: Beta4 QR uses a server-generated
+     * invite code with no IP or port encoded in the QR.
      */
-    public static String localWifiIp(Context context) {
-        // An active user-configured private VPN can reach the same already
-        // authorized peer across networks; advertise it automatically.
-        String overlay = RemoteOverlayNetwork.localVpnIp(context);
-        if (overlay != null) return overlay;
-        try {
-            WifiManager wifi = (WifiManager) context.getApplicationContext()
-                    .getSystemService(Context.WIFI_SERVICE);
-            if (wifi != null && wifi.getConnectionInfo() != null) {
-                int ip = wifi.getConnectionInfo().getIpAddress();
-                String address = String.format(Locale.ROOT, "%d.%d.%d.%d",
-                        ip & 255, (ip >> 8) & 255, (ip >> 16) & 255, (ip >> 24) & 255);
-                if (isPrivateIpv4(address)) return address;
-            }
-        } catch (RuntimeException ignored) { }
+    public static boolean isLocalLanIpv4(String host) {
+        return isPrivateIpv4(host)
+                && !RemoteOverlayNetwork.isOverlayAddress(host)
+                && !"0.0.0.0".equals(host);
+    }
 
+    public static String localWifiIp(Context context) {
         try {
-            Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
-            if (interfaces == null) return null;
-            for (NetworkInterface adapter : Collections.list(interfaces)) {
-                if (!adapter.isUp() || adapter.isLoopback()
-                        || !adapter.getName().toLowerCase(Locale.ROOT).startsWith("wlan")) {
-                    continue;
-                }
-                for (InetAddress inet : Collections.list(adapter.getInetAddresses())) {
-                    if (inet instanceof Inet4Address && isPrivateIpv4(inet.getHostAddress())) {
-                        return inet.getHostAddress();
+            ConnectivityManager manager = (ConnectivityManager) context
+                    .getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (manager == null) return null;
+            // Verify the link's transport rather than guessing an arbitrary
+            // "wlan*" adapter or using WifiManager's potentially stale IP.
+            for (Network network : manager.getAllNetworks()) {
+                NetworkCapabilities caps = manager.getNetworkCapabilities(network);
+                if (caps == null || !caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                        || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue;
+                LinkProperties properties = manager.getLinkProperties(network);
+                if (properties == null) continue;
+                for (LinkAddress address : properties.getLinkAddresses()) {
+                    InetAddress ip = address.getAddress();
+                    if (ip instanceof Inet4Address
+                            && isLocalLanIpv4(ip.getHostAddress())) {
+                        return ip.getHostAddress();
                     }
                 }
             }
-        } catch (Exception ignored) { }
+        } catch (RuntimeException ignored) { }
+        // No Wi-Fi IPv4: report unavailable instead of advertising a guessed
+        // private address that could point to another phone after DHCP churn.
         return null;
     }
 }

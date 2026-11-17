@@ -24,16 +24,37 @@ public final class PairedDeviceStore {
         if (!WakeAuth.isHex(secret, 32) || TextUtils.isEmpty(host)) {
             throw new IllegalArgumentException("Invalid paired peer");
         }
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+        try {
+            DeviceSecretStore.write(context, "paired_secret", secret);
+        } catch (Exception error) {
+            throw new IllegalStateException("Cannot securely store paired-device key", error);
+        }
+        boolean saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString("name", TextUtils.isEmpty(name) ? "Android" : name)
-                .putString("host", host).putString("secret", secret)
+                .putString("host", host).remove("secret")
                 .putString("overlay_host",
                         RemoteOverlayNetwork.isOverlayAddress(host) ? host : "")
-                .putInt("adb_port", Math.max(0, adbPort)).apply();
+                .putInt("adb_port", Math.max(0, adbPort)).commit();
+        if (!saved) throw new IllegalStateException("Cannot save paired-device metadata");
     }
     public static Peer load(Context context) {
         SharedPreferences p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        String code = p.getString("secret", "");
+        String code;
+        try {
+            String legacy = p.getString("secret", "");
+            if (WakeAuth.isHex(legacy, 32)) {
+                // One-time migration of previously stored Beta3/Beta4 LAN
+                // pairing credentials. Preserve legacy data on failure.
+                DeviceSecretStore.write(context, "paired_secret", legacy);
+                if (!p.edit().remove("secret").commit())
+                    throw new IllegalStateException("pairing migration not committed");
+                code = legacy;
+            } else {
+                code = DeviceSecretStore.read(context, "paired_secret");
+            }
+        } catch (Exception error) {
+            return null;
+        }
         String host = p.getString("host", "");
         if (!WakeAuth.isHex(code, 32) || TextUtils.isEmpty(host)) return null;
         return new Peer(p.getString("name", "Android"), host, code, p.getInt("adb_port", 0),
@@ -69,6 +90,7 @@ public final class PairedDeviceStore {
         }
     }
     public static void clear(Context context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply();
+        DeviceSecretStore.remove(context, "paired_secret");
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().commit();
     }
 }

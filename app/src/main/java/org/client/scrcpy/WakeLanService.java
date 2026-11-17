@@ -180,9 +180,22 @@ public final class WakeLanService extends Service {
     private void handleClient(Socket client, String code) {
         try (Socket socket = client) {
             socket.setSoTimeout(2400);
-            // Only directly connected private LAN or loopback peers, never an
-            // unauthenticated public-Internet endpoint.
-            if (!RemoteOverlayNetwork.isAllowedPeerIp(socket.getInetAddress())) return;
+            // A registered Beta4 receiver only accepts traffic from the
+            // exact peer IP last verified via HTTPS and the owner's approval.
+            // Do not let LAN/DHCP changes silently switch device identities.
+            String callerIp = socket.getInetAddress().getHostAddress();
+            if (AutoRemoteProvisioner.isRegistered(this)) {
+                String allowed = AutoRemoteProvisioner.approvedPeerIp(this);
+                String assigned = AutoRemoteProvisioner.approvedLocalIp(this);
+                if (!TrustedPairEndpoint.isBeta4ClientIp(allowed)
+                        || !allowed.equals(callerIp)
+                        || !assigned.equals(RemoteOverlayNetwork.localVpnIp(this))) {
+                    return;
+                }
+            } else if (!RemoteOverlayNetwork.isAllowedPeerIp(
+                    socket.getInetAddress())) {
+                return;
+            }
             BufferedReader in = new BufferedReader(new InputStreamReader(
                     socket.getInputStream(), StandardCharsets.US_ASCII));
             BufferedWriter out = new BufferedWriter(new OutputStreamWriter(
@@ -218,13 +231,16 @@ public final class WakeLanService extends Service {
                                 ? response.substring(5) : null,
                             WakeAuth.mac(peer.secret, nonce, challenge));
             if (acceptedByPeer && peer != null
-                    && !socket.getInetAddress().getHostAddress().equals(peer.host)) {
-                PairedDeviceStore.updateAddress(this,
-                        socket.getInetAddress().getHostAddress());
+                    && !AutoRemoteProvisioner.isRegistered(this)
+                    && !callerIp.equals(peer.host)) {
+                // LAN compatibility only: a fresh authenticated sender can
+                // update DHCP address, not a Beta4 device's bound VPN IP.
+                PairedDeviceStore.updateAddress(this, callerIp);
             }
             // After a persistent pairing exists, disable the old temporary
             // test token. Only the saved peer's random long token may wake us.
-            boolean legacyAccepted = peer == null && response != null
+            boolean legacyAccepted = !AutoRemoteProvisioner.isRegistered(this)
+                    && peer == null && response != null
                     && response.startsWith("AUTH ")
                     && WakeAuth.verify(response.substring(5), expected);
             if (response == null || response.length() != 69
@@ -239,7 +255,10 @@ public final class WakeLanService extends Service {
             if (isInfo && peer != null && acceptedByPeer) {
                 // Authenticated, read-only metadata exchange. Never starts the
                 // remote screen and never disables system privacy indicators.
-                if (RemoteOverlayNetwork.isOverlayAddress(parts[2])) {
+                if (RemoteOverlayNetwork.isOverlayAddress(parts[2])
+                        && !AutoRemoteProvisioner.isRegistered(this)) {
+                    // Metadata supplied by a LAN peer cannot override a
+                    // server-assigned, device-ID-bound Beta4 endpoint.
                     PairedDeviceStore.updateOverlayAddress(this, parts[2]);
                 }
                 String serverProof = WakeAuth.mac(peer.secret, challenge, nonce);

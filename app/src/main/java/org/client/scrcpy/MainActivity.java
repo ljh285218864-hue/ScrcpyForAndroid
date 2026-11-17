@@ -1592,6 +1592,12 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (watch != null) watch.setOnClickListener(v -> watchPairedDevice());
         if (systemAdb != null) systemAdb.setOnClickListener(v -> authorizeSystemAdb());
         if (remove != null) remove.setOnClickListener(v -> {
+            if (AutoRemoteProvisioner.isRegistered(this)) {
+                // Remote unpair must revoke the server ACL and peer first.
+                // Local-only clear would leave a previously authorized tunnel.
+                openAutoRemoteSetup();
+                return;
+            }
             new android.app.AlertDialog.Builder(this)
                     .setTitle(R.string.pair_remove_title)
                     .setMessage(R.string.pair_remove_detail)
@@ -1617,6 +1623,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     }
 
     private void showLocalPairCode() {
+        // Once a device is enrolled into Beta4, pairing is exclusively
+        // authorized by HTTPS group/device identity. A LAN discovery
+        // result or a six-digit legacy QR must never overwrite that binding.
+        if (AutoRemoteProvisioner.isRegistered(this)) {
+            openAutoRemoteSetup();
+            return;
+        }
         String code = WakeLanService.openPairingWindow(this);
         try {
             WakeLanService.startByOwner(this);
@@ -1674,6 +1687,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     private static final int APP_QR_SCAN_REQUEST = 8292;
 
     private void scanAppPairQr() {
+        // Once a device is enrolled into Beta4, pairing is exclusively
+        // authorized by HTTPS group/device identity. A LAN discovery
+        // result or a six-digit legacy QR must never overwrite that binding.
+        if (AutoRemoteProvisioner.isRegistered(this)) {
+            openAutoRemoteSetup();
+            return;
+        }
         if (PairedDeviceStore.load(this) != null) {
             Toast.makeText(this, R.string.qr_device_already_paired, Toast.LENGTH_LONG).show();
             return;
@@ -1757,6 +1777,10 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                 if (PairedDeviceStore.load(this) != null) {
                     Toast.makeText(this, R.string.qr_device_already_paired,
                             Toast.LENGTH_LONG).show();
+                    return;
+                }
+                if (AutoRemoteProvisioner.isRegistered(this)) {
+                    openAutoRemoteSetup();
                     return;
                 }
                 PairedDeviceStore.save(this, "已扫码手机", target.host, result.secret, 0);
@@ -1866,9 +1890,9 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         Button vpnToggle = findViewById(R.id.remote_vpn_toggle_button);
         Switch receiver = findViewById(R.id.quick_receive_switch);
         if (primary != null) primary.setOnClickListener(v -> startOneTapWatch());
-        if (showCode != null) showCode.setOnClickListener(v -> showLocalPairCode());
+        if (showCode != null) showCode.setOnClickListener(v -> openAutoRemoteSetup());
         if (search != null) search.setOnClickListener(v -> startLanAutoDiscovery());
-        if (scanQr != null) scanQr.setOnClickListener(v -> scanAppPairQr());
+        if (scanQr != null) scanQr.setOnClickListener(v -> openAutoRemoteSetup());
         if (authorizeQr != null) authorizeQr.setOnClickListener(v -> showSystemAdbPairQr());
         if (openSystemSettings != null) openSystemSettings.setOnClickListener(v ->
                 openWirelessDebugSettings());
@@ -1884,7 +1908,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (cleanupNotifications != null) {
             cleanupNotifications.setOnClickListener(v -> showElderNotificationHelper());
         }
-        if (vpnSetup != null) vpnSetup.setOnClickListener(v -> importPrivateVpnConfig());
+        if (vpnSetup != null) vpnSetup.setOnClickListener(v -> openAutoRemoteSetup());
         if (vpnToggle != null) vpnToggle.setOnClickListener(v -> togglePrivateVpn());
         refreshPrivateVpnStatus();
         if (advanced != null) advanced.setOnClickListener(v -> {
@@ -1983,6 +2007,10 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         }
     }
 
+    private void openAutoRemoteSetup() {
+        startActivity(new Intent(this, RemoteSetupActivity.class));
+    }
+
     private void importPrivateVpnConfig() {
         try {
             Intent picker = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -2028,6 +2056,8 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     private void togglePrivateVpn() {
         if (EmbeddedRemoteTunnel.isStarting()) return;
         if (EmbeddedRemoteTunnel.isActive()) {
+            // Deliberate user disconnect takes precedence over any network or
+            // Always-on recovery callback. Never silently reconnect afterward.
             EmbeddedRemoteTunnel.stop(this, (running, message) -> {
                 if (isFinishing() || isDestroyed()) return;
                 refreshPrivateVpnStatus();
@@ -2037,12 +2067,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             return;
         }
         if (!EmbeddedRemoteTunnel.hasConfig(this)) {
-            new android.app.AlertDialog.Builder(this)
-                    .setTitle(R.string.remote_help_title)
-                    .setMessage(R.string.remote_help_detail)
-                    .setPositiveButton(R.string.remote_embedded_import,
-                            (d, which) -> importPrivateVpnConfig())
-                    .setNegativeButton(android.R.string.cancel, null).show();
+            openAutoRemoteSetup();
             return;
         }
         try {
@@ -2066,7 +2091,9 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         EmbeddedRemoteTunnel.start(this, (running, message) -> {
             if (isFinishing() || isDestroyed()) return;
             refreshPrivateVpnStatus();
-            if (running) syncRemoteOverlayForSavedPair();
+            if (running) {
+                syncRemoteOverlayForSavedPair();
+            }
             if (thenWatch) {
                 startingVpnForWatch = false;
                 if (running) startOneTapWatch();
@@ -2086,6 +2113,10 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
      * existing receiver and VPN to be enabled by their owners.
      */
     private void syncRemoteOverlayForSavedPair() {
+        // Beta4 resolves its addresses only from authenticated HTTPS status.
+        // Never allow a legacy LAN metadata exchange to replace a pinned
+        // server-assigned VPN address or peer identity.
+        if (AutoRemoteProvisioner.isRegistered(this)) return;
         PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
         if (peer == null || RemoteOverlayNetwork.localVpnIp(this) == null) return;
         long now = SystemClock.elapsedRealtime();
@@ -2209,7 +2240,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             return;
         PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
         if (peer == null) {
-            showFirstUseQuickPair();
+            openAutoRemoteSetup();
+            return;
+        }
+        if (AutoRemoteProvisioner.isRegistered(this) &&
+                !EmbeddedRemoteTunnel.hasConfig(this)) {
+            // Account is linked, but VPN config may still await other owner approval.
+            openAutoRemoteSetup();
             return;
         }
         // Daily use stays one-tap. After the one-time admin VPN provisioning,
@@ -2274,9 +2311,32 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                 int detail = reason == OneTapConnection.Failure.DEVICE_NOT_FOUND
                         ? R.string.quick_fail_offline : R.string.quick_fail_adb;
                 setQuickStage(detail);
+                String message;
+                switch (reason) {
+                    case PAIRING_NOT_READY:
+                        message = "尚未完成服务器双方确认，或身份信息已失效。"
+                                + "请进入「异地连接」检查配对和核对码。";
+                        break;
+                    case VPN_NOT_READY:
+                        message = "当前手机的专属 VPN 尚未建立，"
+                                + "或实际 VPN 地址与服务器分配的地址不一致。"
+                                + "请检查 VPN 授权和网络连接，不会尝试旧局域网 IP。";
+                        break;
+                    case IDENTITY_MISMATCH:
+                        message = "设备身份无法确认：对方没有通过双向密钥验证，"
+                                + "或地址与服务器登记的不一致。"
+                                + "已停止连接，避免误连其他设备。";
+                        break;
+                    case WIRELESS_DEBUGGING_NOT_READY:
+                        message = "已找到目标设备，但当前无线调试的 ADB 端口"
+                                + "不可用或未取得系统授权；不会复用旧端口。";
+                        break;
+                    default:
+                        message = getString(detail);
+                }
                 new android.app.AlertDialog.Builder(MainActivity.this)
                         .setTitle(R.string.quick_fail_title)
-                        .setMessage(detail)
+                        .setMessage(message)
                         .setPositiveButton(R.string.quick_retry,
                                 (d, which) -> startOneTapWatch())
                         .setNeutralButton(R.string.quick_repair,
@@ -2313,10 +2373,21 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         EditText wakeHost = findViewById(R.id.editText_wake_host);
         EditText wakeKey = findViewById(R.id.editText_wake_key);
         if (wakeHost != null) wakeHost.setText(peer.host + ":" + WakeLanService.PORT);
-        if (wakeKey != null) wakeKey.setText(peer.secret);
-        getSharedPreferences(WakeLanService.PREF, MODE_PRIVATE).edit()
-                .putString("viewer_host", peer.host + ":" + WakeLanService.PORT)
-                .putString("viewer_code", peer.secret).apply();
+        boolean remote = AutoRemoteProvisioner.isRegistered(this);
+        if (wakeKey != null) {
+            // Beta4 pairing keys must never be copied into an editable
+            // text field or duplicated in plaintext listener preferences.
+            wakeKey.setText(remote ? "" : peer.secret);
+            wakeKey.setEnabled(!remote);
+        }
+        if (remote) {
+            getSharedPreferences(WakeLanService.PREF, MODE_PRIVATE).edit()
+                    .remove("viewer_host").remove("viewer_code").apply();
+        } else {
+            getSharedPreferences(WakeLanService.PREF, MODE_PRIVATE).edit()
+                    .putString("viewer_host", peer.host + ":" + WakeLanService.PORT)
+                    .putString("viewer_code", peer.secret).apply();
+        }
         if (peer.adbPort > 0) {
             String serial = peer.host + ":" + peer.adbPort;
             EditText adbHost = findViewById(R.id.editText_server_host);
@@ -2348,6 +2419,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     }
 
     private void pairWithChosenDevice(LanDeviceDiscovery.Device device) {
+        // Once a device is enrolled into Beta4, pairing is exclusively
+        // authorized by HTTPS group/device identity. A LAN discovery
+        // result or a six-digit legacy QR must never overwrite that binding.
+        if (AutoRemoteProvisioner.isRegistered(this)) {
+            openAutoRemoteSetup();
+            return;
+        }
         PairedDeviceStore.Peer existing = PairedDeviceStore.load(this);
         if (existing != null && device.address.equals(existing.host)) {
             if (device.adbPort > 0) PairedDeviceStore.updatePort(this, device.adbPort);
@@ -2416,6 +2494,10 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                             if (isFinishing() || isDestroyed()) return;
                             if (!result.ok()) {
                                 Toast.makeText(this, result.error, Toast.LENGTH_LONG).show();
+                                return;
+                            }
+                            if (AutoRemoteProvisioner.isRegistered(this)) {
+                                openAutoRemoteSetup();
                                 return;
                             }
                             PairedDeviceStore.save(this, device.name,
@@ -2994,6 +3076,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     }
 
     private void startLanAutoDiscovery() {
+        // Once a device is enrolled into Beta4, pairing is exclusively
+        // authorized by HTTPS group/device identity. A LAN discovery
+        // result or a six-digit legacy QR must never overwrite that binding.
+        if (AutoRemoteProvisioner.isRegistered(this)) {
+            openAutoRemoteSetup();
+            return;
+        }
         stopLanAutoDiscovery();
         lanDevices = new ArrayList<>();
         TextView status = findViewById(R.id.text_auto_find_status);
@@ -3038,6 +3127,13 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
     }
 
     private void selectLanDiscoveredDevice(LanDeviceDiscovery.Device device) {
+        // Once a device is enrolled into Beta4, pairing is exclusively
+        // authorized by HTTPS group/device identity. A LAN discovery
+        // result or a six-digit legacy QR must never overwrite that binding.
+        if (AutoRemoteProvisioner.isRegistered(this)) {
+            openAutoRemoteSetup();
+            return;
+        }
         // A broadcast name/IP is never sufficient to authorize viewing:
         // a matching secret and previously approved ADB key are still required.
         String wakeHost = device.address + ":" + device.wakePort;

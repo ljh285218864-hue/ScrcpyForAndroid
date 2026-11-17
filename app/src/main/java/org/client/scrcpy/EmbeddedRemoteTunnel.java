@@ -59,6 +59,34 @@ public final class EmbeddedRemoteTunnel {
         return new File(context.getFilesDir(), CONFIG_FILE).isFile();
     }
 
+    /** Only erase the private VPN config when the tunnel is fully stopped. */
+    public static boolean removeConfig(Context context) {
+        synchronized (LOCK) {
+            if (active || starting) return false;
+            return !hasConfig(context) || new File(context.getFilesDir(), CONFIG_FILE).delete();
+        }
+    }
+
+    /** Compare without returning any private key to callers. */
+    public static boolean configMatches(Context context, byte[] desired) {
+        if (desired == null || desired.length == 0 || !hasConfig(context))
+            return false;
+        try (FileInputStream in = context.openFileInput(CONFIG_FILE)) {
+            byte[] actual = new byte[desired.length + 1];
+            int size = 0;
+            while (size < actual.length) {
+                int n = in.read(actual, size, actual.length - size);
+                if (n < 0) break;
+                size += n;
+            }
+            if (size != desired.length || in.read() != -1) return false;
+            return java.security.MessageDigest.isEqual(
+                    java.util.Arrays.copyOf(actual, size), desired);
+        } catch (IOException ignored) {
+            return false;
+        }
+    }
+
     public static boolean isActive() { return active; }
     public static boolean isStarting() { return starting; }
 
@@ -126,6 +154,14 @@ public final class EmbeddedRemoteTunnel {
             boolean success = false;
             String message;
             try {
+                if (AutoRemoteProvisioner.isRegistered(app)) {
+                    // Fail closed: revalidate the current pair and load only
+                    // its server-assigned config BEFORE starting the VPN.
+                    // This prevents booting an imported Beta3 config simply
+                    // because a stale private .conf file still exists.
+                    org.json.JSONObject current = AutoRemoteProvisioner.status(app);
+                    AutoRemoteProvisioner.applyPairedConfig(app, current);
+                }
                 GoBackend go;
                 synchronized (LOCK) {
                     if (backend == null) backend = new GoBackend(app);

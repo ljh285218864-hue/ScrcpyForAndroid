@@ -31,7 +31,10 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = 38
-        versionName = "1.8.0"
+        versionName = "1.8.0-beta4"
+        // Configured HTTPS control plane; never put activation/admin secrets in APK.
+        buildConfigField 'String', 'SCREENSYNC_API_URL', '"' +
+                (System.getenv('SCREENSYNC_API_URL') ?: 'https://screensync.privyluxe.com:8443') + '"'
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

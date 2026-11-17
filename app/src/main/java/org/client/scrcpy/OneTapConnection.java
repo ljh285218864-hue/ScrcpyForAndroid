@@ -6,19 +6,26 @@ import android.os.Looper;
 
 import org.client.scrcpy.utils.AdbHelper;
 import org.client.scrcpy.utils.ThreadUtils;
+import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Connects to an already owner-approved local peer, without ever granting ADB,
- * turning on wireless debugging, or starting a screen stream on the remote.
- * Call start/cancel on the main thread.
+ * Never identify a phone by its IP address, mDNS label or an online ADB port.
+ * Beta4 resolves the approved device via authenticated HTTPS group/device IDs
+ * and then requires a mutual HMAC proof on the EXACT assigned VPN address.
+ *
+ * LAN compatibility mode also requires an authenticated receiver before ADB.
+ * Neither mode performs ADB discovery against an unverified candidate.
  */
 public final class OneTapConnection {
     public enum Failure {
         DEVICE_NOT_FOUND,
-        WIRELESS_DEBUGGING_NOT_READY
+        WIRELESS_DEBUGGING_NOT_READY,
+        PAIRING_NOT_READY,
+        VPN_NOT_READY,
+        IDENTITY_MISMATCH
     }
 
     public interface Callback {
@@ -30,8 +37,8 @@ public final class OneTapConnection {
     private final Context context;
     private final Handler main = new Handler(Looper.getMainLooper());
     private LanDeviceDiscovery discovery;
-    private int generation;
-    private boolean active;
+    private volatile int generation;
+    private volatile boolean active;
 
     public OneTapConnection(Context context) {
         this.context = context.getApplicationContext();
@@ -51,61 +58,119 @@ public final class OneTapConnection {
     }
 
     public void start(PairedDeviceStore.Peer peer, Callback callback) {
-        if (peer == null || callback == null || active) return;
+        if (callback == null || active) return;
         active = true;
         final int request = ++generation;
         callback.onStage(R.string.quick_stage_saved_connection);
-        ThreadUtils.execute(() -> {
-            // Single "Watch" action: prefer an authenticated VPN route when
-            // available, without changing the existing ADB/scrcpy capture path.
-            String remoteAddress = null;
-            int remotePort = 0;
-            if (RemoteOverlayNetwork.localVpnIp(context) != null) {
-                String[] hosts = {peer.overlayHost, peer.host};
-                for (String target : hosts) {
-                    if (!isCurrent(request)) return;
-                    if (target == null || target.isEmpty()) continue;
-                    WakeLanClient.RemoteInfo info =
-                            WakeLanClient.queryRemoteInfo(context, target, peer.secret);
-                    if (!info.ok()) continue;
-                    if (info.overlayHost != null) {
-                        PairedDeviceStore.updateOverlayAddress(context, info.overlayHost);
-                    }
-                    String endpoint = info.overlayHost != null ? info.overlayHost : target;
-                    int port = info.adbPort > 0 ? info.adbPort : peer.adbPort;
-                    if (port > 0 && checkOnline(endpoint, port)) {
-                        remoteAddress = endpoint;
-                        remotePort = port;
-                        break;
-                    }
-                }
-                if (remoteAddress == null
-                        && RemoteOverlayNetwork.isOverlayAddress(peer.overlayHost)
-                        && peer.adbPort > 0
-                        && checkOnline(peer.overlayHost, peer.adbPort)) {
-                    remoteAddress = peer.overlayHost;
-                    remotePort = peer.adbPort;
-                }
+        if (AutoRemoteProvisioner.isRegistered(context)) {
+            // Registered Beta4 phones are ONLY allowed to use the vetted
+            // overlay peer from the current server. No LAN fallback, even
+            // when the phone's VPN is temporarily down or its IP changes.
+            ThreadUtils.execute(() -> connectVerifiedRemote(request, callback));
+        } else if (peer != null) {
+            ThreadUtils.execute(() -> connectVerifiedLegacyLocal(request, peer, callback));
+        } else {
+            fail(request, callback, Failure.PAIRING_NOT_READY);
+        }
+    }
+
+    private void connectVerifiedRemote(int request, Callback callback) {
+        try {
+            JSONObject status = AutoRemoteProvisioner.status(context);
+            if (!"paired".equals(status.optString("state"))) {
+                fail(request, callback, Failure.PAIRING_NOT_READY);
+                return;
             }
-            final String vpnHost = remoteAddress;
-            final int vpnPort = remotePort;
-            if (vpnHost != null) {
-                main.post(() -> {
-                    if (isCurrent(request)) complete(request, callback, vpnHost, vpnPort);
-                });
+            // Verifies token-associated device ID, public key, group ID,
+            // peer ID and exact dynamic IP. Does not overwrite a live VPN.
+            AutoRemoteProvisioner.applyPairedConfig(context, status);
+            if (!isCurrent(request)) return;
+
+            String myAddress = status.getString("device_ip");
+            String peerAddress = status.getString("peer_ip");
+            String sharedSecret = status.getString("shared_secret");
+            if (!TrustedPairEndpoint.validPair(myAddress, peerAddress)
+                    || !peerAddress.equals(AutoRemoteProvisioner.approvedPeerIp(context))
+                    || !myAddress.equals(AutoRemoteProvisioner.approvedLocalIp(context))) {
+                fail(request, callback, Failure.IDENTITY_MISMATCH);
                 return;
             }
 
-            boolean online = peer.adbPort > 0
-                    && checkOnline(peer.host, peer.adbPort);
-            main.post(() -> {
-                if (!isCurrent(request)) return;
-                if (online) {
-                    complete(request, callback, peer.host, peer.adbPort);
-                } else {
-                    scanForPeer(request, peer, callback);
+            // Android may expose the newly connected VPN LinkProperties
+            // slightly AFTER GoBackend reports UP. Give the assigned address
+            // a short bounded window to appear, never pick another VPN IP.
+            String actualVpnIp = null;
+            for (int attempt = 0; attempt < 6 && isCurrent(request); attempt++) {
+                actualVpnIp = RemoteOverlayNetwork.localVpnIp(context);
+                if (myAddress.equals(actualVpnIp)) break;
+                if (attempt < 5) Thread.sleep(400);
+            }
+            if (!EmbeddedRemoteTunnel.isActive()
+                    || !myAddress.equals(actualVpnIp)) {
+                fail(request, callback, Failure.VPN_NOT_READY);
+                return;
+            }
+
+            PairedDeviceStore.Peer saved = PairedDeviceStore.load(context);
+            if (saved == null || !peerAddress.equals(saved.overlayHost)
+                    || !sharedSecret.equals(saved.secret)) {
+                fail(request, callback, Failure.IDENTITY_MISMATCH);
+                return;
+            }
+
+            // The endpoint was chosen by the server, not by a LAN scan.
+            // Challenge-response proves that the device at this exact IP
+            // possesses the correct pair-specific secret.
+            // Network switching and Android wireless debugging can take a
+            // moment to publish the receiver. Retry ONLY the authenticated
+            // server-approved address; never guess a LAN IP or stale port.
+            boolean authenticated = false;
+            for (int attempt = 0; attempt < 3 && isCurrent(request); attempt++) {
+                WakeLanClient.RemoteInfo info = WakeLanClient.queryRemoteInfo(
+                        context, peerAddress, sharedSecret);
+                if (info.ok() && TrustedPairEndpoint.authenticatedPeerMatches(
+                        peerAddress, peerAddress, info.overlayHost)) {
+                    authenticated = true;
+                    if (TrustedPairEndpoint.validAdbPort(info.adbPort)) {
+                        if (checkOnline(peerAddress, info.adbPort)) {
+                            complete(request, callback, peerAddress, info.adbPort);
+                            return;
+                        }
+                    }
                 }
-            });
+                if (attempt < 2) Thread.sleep(800);
+            }
+            fail(request, callback, !authenticated
+                    ? Failure.DEVICE_NOT_FOUND
+                    : Failure.WIRELESS_DEBUGGING_NOT_READY);
+        } catch (Exception error) {
+            // Safe failure; do not "repair" the connection by selecting some
+            // other local/private IP or a previously authorized ADB device.
+            fail(request, callback, Failure.PAIRING_NOT_READY);
+        }
+    }
+
+    private void connectVerifiedLegacyLocal(
+            int request, PairedDeviceStore.Peer peer, Callback callback) {
+        if (!PairQrCode.isPrivateIpv4(peer.host)) {
+            fail(request, callback, Failure.DEVICE_NOT_FOUND);
+            return;
+        }
+        // Even a stored address can now belong to a different LAN phone
+        // after DHCP renewal. Require fresh, mutual HMAC proof.
+        WakeLanClient.RemoteInfo info = WakeLanClient.queryRemoteInfo(
+                context, peer.host, peer.secret);
+        if (info.ok()) {
+            int port = TrustedPairEndpoint.validAdbPort(info.adbPort)
+                    ? info.adbPort : peer.adbPort;
+            if (TrustedPairEndpoint.validAdbPort(port)
+                    && checkOnline(peer.host, port)) {
+                complete(request, callback, peer.host, port);
+                return;
+            }
+        }
+        main.post(() -> {
+            if (isCurrent(request)) scanForVerifiedLanPeer(request, peer, callback);
         });
     }
 
@@ -121,17 +186,12 @@ public final class OneTapConnection {
         return active && generation == request;
     }
 
-    private void scanForPeer(int request, PairedDeviceStore.Peer peer,
-                             Callback callback) {
+    private void scanForVerifiedLanPeer(
+            int request, PairedDeviceStore.Peer peer, Callback callback) {
         callback.onStage(R.string.quick_stage_discovering);
         discovery = new LanDeviceDiscovery(context, new LanDeviceDiscovery.Listener() {
-            @Override public void onChanged(List<LanDeviceDiscovery.Device> devices) {
-                // Allow mDNS time to resolve wake and ADB services on the same host.
-            }
-
-            @Override public void onError(String message) {
-                // A missing mDNS broadcast is handled by the explicit fallback.
-            }
+            @Override public void onChanged(List<LanDeviceDiscovery.Device> devices) { }
+            @Override public void onError(String message) { }
         });
         discovery.start();
         main.postDelayed(() -> {
@@ -141,63 +201,42 @@ public final class OneTapConnection {
             discovery.stop();
             discovery = null;
             callback.onStage(R.string.quick_stage_authorizing);
-            ThreadUtils.execute(() -> verifyCandidates(request, peer, callback, candidates));
+            ThreadUtils.execute(() -> verifyLanCandidates(
+                    request, peer, callback, candidates));
         }, 8000);
     }
 
-    private void verifyCandidates(int request, PairedDeviceStore.Peer peer,
-                                  Callback callback,
-                                  List<LanDeviceDiscovery.Device> candidates) {
-        boolean trustedPeerFound = false;
+    private void verifyLanCandidates(
+            int request, PairedDeviceStore.Peer peer, Callback callback,
+            List<LanDeviceDiscovery.Device> candidates) {
+        boolean provenDeviceFound = false;
         for (LanDeviceDiscovery.Device candidate : candidates) {
             if (!isCurrent(request)) return;
-            if (candidate.wakePort != WakeLanService.PORT) continue;
-            // A matching name or IP is not sufficient. Require the owner-approved
-            // long-lived pairing secret before trusting any discovered endpoint.
-            String failure = WakeLanClient.request(
-                    candidate.address + ":" + candidate.wakePort, peer.secret);
-            if (failure != null) continue;
-            trustedPeerFound = true;
-            int candidatePort = candidate.adbPort > 0 ? candidate.adbPort
-                    : candidate.address.equals(peer.host) ? peer.adbPort : 0;
-            if (candidatePort <= 0) continue;
-            final int port = candidatePort;
+            if (candidate.wakePort != WakeLanService.PORT
+                    || !PairQrCode.isPrivateIpv4(candidate.address)) continue;
+
+            WakeLanClient.RemoteInfo info = WakeLanClient.queryRemoteInfo(
+                    context, candidate.address, peer.secret);
+            if (!info.ok()) continue; // Name and IP alone prove nothing.
+            provenDeviceFound = true;
+            int port = TrustedPairEndpoint.validAdbPort(info.adbPort)
+                    ? info.adbPort
+                    : TrustedPairEndpoint.validAdbPort(candidate.adbPort)
+                        ? candidate.adbPort
+                        : candidate.address.equals(peer.host) ? peer.adbPort : 0;
+            if (!TrustedPairEndpoint.validAdbPort(port)) continue;
             if (checkOnline(candidate.address, port)) {
-                main.post(() -> {
-                    if (isCurrent(request)) {
-                        complete(request, callback, candidate.address, port);
-                    }
-                });
+                complete(request, callback, candidate.address, port);
                 return;
             }
         }
-        // Direct authenticated ADB fallback for the saved App-paired host.
-        // On some Android ROMs the ScreenSync wake mDNS record is suppressed,
-        // while the official ADB TLS connect service remains discoverable.
-        // This does not bypass Android's own TLS pairing/authorization.
-        if (isCurrent(request)) {
-            try {
-                org.client.scrcpy.utils.ExecUtil.AdbCommandResult mdns =
-                        AdbHelper.adbMdnsServices(context);
-                int port = SystemAdbQrPairingSession.findAdbConnectPort(
-                        mdns.combinedOutput(), peer.host);
-                if (port > 0 && checkOnline(peer.host, port)) {
-                    final int verifiedPort = port;
-                    main.post(() -> {
-                        if (isCurrent(request)) {
-                            complete(request, callback, peer.host, verifiedPort);
-                        }
-                    });
-                    return;
-                }
-            } catch (RuntimeException error) {
-                android.util.Log.w("Scrcpy", "Saved peer ADB mDNS fallback failed", error);
-            }
-        }
-
-        final Failure reason = trustedPeerFound
+        final Failure reason = provenDeviceFound
                 ? Failure.WIRELESS_DEBUGGING_NOT_READY
                 : Failure.DEVICE_NOT_FOUND;
+        fail(request, callback, reason);
+    }
+
+    private void fail(int request, Callback callback, Failure reason) {
         main.post(() -> {
             if (!isCurrent(request)) return;
             cancel();
@@ -206,8 +245,10 @@ public final class OneTapConnection {
     }
 
     private void complete(int request, Callback callback, String host, int port) {
-        if (!isCurrent(request)) return;
-        cancel();
-        callback.onConnected(host, port);
+        main.post(() -> {
+            if (!isCurrent(request)) return;
+            cancel();
+            callback.onConnected(host, port);
+        });
     }
 }

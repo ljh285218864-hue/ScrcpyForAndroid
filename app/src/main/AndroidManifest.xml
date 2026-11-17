@@ -50,6 +50,8 @@
             </intent-filter>
         </service>
 
+        <activity android:name=".RemoteSetupActivity" android:exported="false" />
+
         <activity
             android:name=".SettingActivity"
             android:exported="false" />
