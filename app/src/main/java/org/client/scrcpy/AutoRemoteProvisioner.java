@@ -47,7 +47,9 @@ public final class AutoRemoteProvisioner {
     }
 
     public static boolean isRegistered(Context context) {
-        return CODE.matcher(prefs(context).getString("token", "")).matches();
+        return DeviceSecretStore.exists(context, "token")
+                && ("owner".equals(registrationRole(context))
+                || "guest".equals(registrationRole(context)));
     }
 
     public static String registrationRole(Context context) {
@@ -75,15 +77,20 @@ public final class AutoRemoteProvisioner {
 
     private static JSONObject identity(Context context) throws Exception {
         SharedPreferences p = prefs(context);
-        String privateKey = p.getString("private_key", "");
+        String privateKey = DeviceSecretStore.read(context, "private_key");
         String publicKey = p.getString("public_key", "");
+        if (isRegistered(context) && (!WG_KEY.matcher(privateKey).matches()
+                || !WG_KEY.matcher(publicKey).matches())) {
+            throw new Failure("本机加密密钥丢失，已禁止重新生成；请先检查并解绑旧设备");
+        }
         if (!WG_KEY.matcher(privateKey).matches() ||
                 !WG_KEY.matcher(publicKey).matches()) {
             KeyPair generated = new KeyPair();
             privateKey = generated.getPrivateKey().toBase64();
             publicKey = generated.getPublicKey().toBase64();
-            p.edit().putString("private_key", privateKey)
-                    .putString("public_key", publicKey).commit();
+            DeviceSecretStore.write(context, "private_key", privateKey);
+            if (!p.edit().putString("public_key", publicKey).commit())
+                throw new Failure("本机无法保存设备公钥");
         }
         JSONObject body = new JSONObject();
         body.put("public_key", publicKey);
@@ -110,7 +117,7 @@ public final class AutoRemoteProvisioner {
         connection.setInstanceFollowRedirects(false);
         connection.setUseCaches(false);
         if (authenticated) {
-            String token = prefs(context).getString("token", "");
+            String token = DeviceSecretStore.read(context, "token");
             if (!CODE.matcher(token).matches()) throw new Failure("设备未开通");
             connection.setRequestProperty("Authorization", "Bearer " + token);
         }
@@ -152,9 +159,10 @@ public final class AutoRemoteProvisioner {
         String deviceId = response.getString("device_id");
         if (!CODE.matcher(token).matches() || !ID.matcher(deviceId).matches())
             throw new Failure("服务器身份信息不合法");
-        if (!prefs(context).edit().putString("token", token)
-                .putString("device_id", deviceId).putString("role", role)
-                .commit()) throw new Failure("本机无法保存设备身份");
+        DeviceSecretStore.write(context, "token", token);
+        if (!prefs(context).edit().putString("device_id", deviceId)
+                .putString("role", role).commit())
+            throw new Failure("本机无法保存设备身份");
     }
 
     public static JSONObject activate(Context context, String code) throws Exception {
@@ -252,7 +260,7 @@ public final class AutoRemoteProvisioner {
                 || !containsIpv4(range, peerIp)) {
             throw new Failure("服务器返回的独立加密网络地址段无效");
         }
-        String privateKey = prefs(context).getString("private_key", "");
+        String privateKey = DeviceSecretStore.read(context, "private_key");
         if (!RemoteOverlayNetwork.isOverlayAddress(deviceIp)
                 || !RemoteOverlayNetwork.isOverlayAddress(peerIp)
                 || deviceIp.equals(peerIp)
@@ -294,7 +302,7 @@ public final class AutoRemoteProvisioner {
             result = new JSONObject();
             result.put("state", "already_revoked");
         }
-        prefs(context).edit().clear().commit();
+        DeviceSecretStore.clear(context);
         PairedDeviceStore.clear(context);
         return result;
     }
