@@ -1,0 +1,85 @@
+name: ScreenSync Beta4 NO-VPN signaling experimental
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/screensync-beta4-novpn]
+    paths:
+      - 'remote/relay_v1/**'
+      - 'app/**'
+      - '.github/workflows/beta4-novpn.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'remote/relay_v1/**'
+      - 'app/**'
+
+permissions:
+  contents: read
+
+jobs:
+  signaling-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test HTTP no-VPN pairing and offline recovery protocol
+        run: |
+          python3 -m compileall -q remote/relay_v1
+          python3 -m unittest discover -s remote/relay_v1 -p 'test_*.py' -v
+
+  android-novpn:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: 'false'
+      - name: Install Android 36 platform
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+      - name: Restore previously verified arm64 ADB binary
+        env:
+          GH_TOKEN: {{ github.token }}}
+          GH_REPO: {{ github.repository }}}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/old-apk" app/src/main/jniLibs/arm64-v8a
+          gh release download screensync-qr-20261115 \
+            --pattern 'ScreenSync-QR-arm64.apk' \
+            --dir "$RUNNER_TEMP/old-apk"
+          unzip -p "$RUNNER_TEMP/old-apk/ScreenSync-QR-arm64.apk" \
+            'lib/arm64-v8a/libadb.so' > app/src/main/jniLibs/arm64-v8a/libadb.so
+          test "$(stat -c '%s' app/src/main/jniLibs/arm64-v8a/libadb.so)" -gt 3000000
+      - name: Verify no Android VPN component then unit tests and APK
+        env:
+          SCREENSYNC_API_URL: {{ vars.SCREENSYNC_API_URL }}}
+        run: |
+          set -euo pipefail
+          if grep -E 'android.net.VpnService|BIND_VPN_SERVICE' app/src/main/AndroidManifest.xml; then
+            echo 'No-VPN build must not declare Android VpnService' >&2
+            exit 1
+          fi
+          chmod +x gradlew
+          ./gradlew :app:testScrcpyDebugUnitTest :app:assembleScrcpyDebug \
+            -PskipLibadb -PlibadbAbis=arm64-v8a --no-daemon --stacktrace
+          apk="$(find app/build/outputs/apk/scrcpy/debug -maxdepth 1 -name '*.apk' -print -quit)"
+          test -n "$apk"
+          unzip -t "$apk" | tail -2
+          cp "$apk" ScreenSync-Beta4-NoVPN-signaling-experimental-arm64.apk
+          sha256sum ScreenSync-Beta4-NoVPN-signaling-experimental-arm64.apk \
+            > ScreenSync-Beta4-NoVPN-signaling-experimental-arm64.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScreenSync-Beta4-NoVPN-signaling-experimental
+          path: |
+            ScreenSync-Beta4-NoVPN-signaling-experimental-arm64.apk
+            ScreenSync-Beta4-NoVPN-signaling-experimental-arm64.sha256
+          retention-days: 14
+          if-no-files-found: error
