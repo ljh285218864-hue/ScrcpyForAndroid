@@ -55,6 +55,11 @@ legacy_before="$(ip netns exec "$S" wg show wg-screensync dump | sha256sum | cut
 
 # Separate Beta4 interface on 51821; independently keyed client tunnels.
 ip -n "$S" link add wg-ss-beta4 type wireguard
+# Exactly as wg-quick PreUp: install default-deny BEFORE binding WG keys.
+ip netns exec "$S" bash "$ROOT/remote/control_v2/ensure_deny.sh"
+ip netns exec "$S" nft list chain inet screensync_beta4 forward |
+  grep -q 'iifname "wg-ss-beta4" drop' || fail "PreUp did not install deny rule"
+pass "Pre-activation nft default-deny rules installed"
 ip -n "$S" addr add 100.81.0.1/16 dev wg-ss-beta4
 ip -n "$S" link set wg-ss-beta4 up
 wg genkey > "$TMP/server.key"
