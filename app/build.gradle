@@ -30,9 +30,10 @@ android {
         targetSdk = 36
         versionCode = 38
         versionName = "1.8.0-beta4"
-        // Configured HTTPS control plane; never put activation/admin secrets in APK.
-        buildConfigField 'String', 'SCREENSYNC_API_URL', '"' +
-                (System.getenv('SCREENSYNC_API_URL') ?: 'https://screensync.privyluxe.com:8443') + '"'
+        // Separate media WSS relay. This deliberately invalid default fails
+        // closed until a real independent TLS reverse proxy is deployed.
+        buildConfigField 'String', 'SCREENSYNC_MEDIA_URL', '"' +
+                (System.getenv('SCREENSYNC_MEDIA_URL') ?: 'wss://relay.invalid/media') + '"'
         // Distinct no-VPN HTTPS signaling endpoint. A deliberately invalid
         // default prevents accidentally contacting the old WireGuard API.
         buildConfigField 'String', 'SCREENSYNC_NOVPN_URL', '"' +
@@ -109,6 +110,7 @@ dependencies {
     // Best-effort, system-scheduled presence check: no foreground service or
     // persistent notification. Persists over normal process death/reboot.
     implementation 'androidx.work:work-runtime:2.12.0'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.3'
     // In-app QR creation and offline camera scanning for first-time pairing.
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
