@@ -47,6 +47,19 @@ public final class NoVpnApi {
         return prefs(context).getString("peer_device_id", "");
     }
 
+    static String groupId(Context context) {
+        return prefs(context).getString("group_id", "");
+    }
+
+    static String mediaToken(Context context) {
+        if (!isRegistered(context))
+            throw new IllegalStateException("本机尚未开通无 VPN 异地连接");
+        String token = DeviceSecretStore.read(context, SECRET_NAME);
+        if (!CODE.matcher(token == null ? "" : token).matches())
+            throw new IllegalStateException("本机视频中转凭证无效");
+        return token;
+    }
+
     public static String parseQr(String payload, String type) {
         if (payload == null || payload.length() > 200 || type == null) return null;
         if (!("activate".equals(type) || "remote".equals(type))) return null;
