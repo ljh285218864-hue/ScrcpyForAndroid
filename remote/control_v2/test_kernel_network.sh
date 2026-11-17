@@ -193,7 +193,21 @@ EOF
 systemctl daemon-reload
 systemctl start "$UNIT"
 systemctl is-active --quiet "$UNIT" || fail "Temporary systemd service did not start"
-ip netns exec "$S" "$python_bin" -c 'from urllib.request import urlopen; assert b"ok" in urlopen("http://127.0.0.1:8765/health", timeout=5).read()'
+# Type=simple returns before Python binds 127.0.0.1; wait for the actual
+# application health endpoint instead of assuming the unit is immediately ready.
+api_up=0
+for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  if ip netns exec "$S" "$python_bin" -c 'from urllib.request import urlopen; assert b"ok" in urlopen("http://127.0.0.1:8765/health", timeout=2).read()' >/dev/null 2>&1; then
+    api_up=1
+    break
+  fi
+  sleep 0.2
+done
+if [[ "$api_up" != 1 ]]; then
+  systemctl status "$UNIT" --no-pager || true
+  journalctl -u "$UNIT" -n 20 --no-pager || true
+  fail "Systemd unit started but control API did not become healthy"
+fi
 pass "Real systemd service and loopback-only HTTP health endpoint active"
 
 systemctl kill --kill-whom=main --signal=SIGKILL "$UNIT"
