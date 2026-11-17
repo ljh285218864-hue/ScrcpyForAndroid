@@ -40,9 +40,10 @@ class HttpApiContractTests(unittest.TestCase):
         server.ENDPOINT = "166.88.95.233:51821"
         server.MAX_PAIRS = 2
         server.HITS.clear()
+        self.kernel_patches = {}
         for operation in ("wg_add", "wg_remove", "update_acl"):
             patch = mock.patch.object(server, operation)
-            patch.start()
+            self.kernel_patches[operation] = patch.start()
             self.addCleanup(patch.stop)
         patch = mock.patch.object(server, "run",
                                   return_value=SimpleNamespace(stdout=PUBS[4] + "\n"))
@@ -116,6 +117,32 @@ class HttpApiContractTests(unittest.TestCase):
                          "paired")
         self.assertEqual(self.post("/v1/status", {}, guests[1]["token"])[1]["state"],
                          "paired")
+
+    def test_failed_kernel_acl_update_quarantines_until_manual_reconciliation(self):
+        code = server.issue_owner_code(600).split("code=", 1)[1]
+        _, owner = self.post("/v1/activate", {
+            "public_key": PUBS[0], "name": "owner",
+            "code": code})
+        invite = self.post("/v1/invite", {}, owner["token"])[1]["invite_code"]
+        _, guest = self.post("/v1/join", {
+            "public_key": PUBS[1], "name": "guest",
+            "invite_code": invite})
+        with mock.patch.object(server, "update_acl", side_effect=OSError(
+                "synthetic nft failure")), mock.patch.object(
+                server, "read_peer_routes",
+                return_value={PUBS[0]: ["100.81.0.2/32"],
+                              PUBS[1]: ["100.81.0.3/32"]}):
+            status, body = self.post("/v1/approve",
+                {"pending_id": guest["device_id"]}, owner["token"])
+            self.assertEqual(status, 503)
+            self.assertEqual(body["error"], "SERVICE_UNAVAILABLE")
+            self.assertTrue(server.mutation_marker().exists())
+            self.assertEqual(self.post("/v1/status", {}, owner["token"])[1]["error"],
+                             "SERVICE_QUARANTINED")
+            # The fallback removes all Beta4 WireGuard peers when nft fails.
+            self.assertEqual(self.kernel_patches["wg_remove"].call_count, 2)
+        with self.assertRaisesRegex(RuntimeError, "Incomplete Beta4"):
+            server.init_runtime()
 
     def test_invalid_credentials_input_and_no_public_privileges(self):
         status, result = self.post("/v1/status", {})
