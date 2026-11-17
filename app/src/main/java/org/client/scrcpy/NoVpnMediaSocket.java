@@ -1,0 +1,320 @@
+package org.client.scrcpy;
+
+import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.net.URI;
+import java.util.concurrent.TimeUnit;
+
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+import okhttp3.WebSocket;
+import okhttp3.WebSocketListener;
+import okio.ByteString;
+
+/**
+ * Viewer-visible, HTTPS/WSS-only video signaling transport. Never opens ADB,
+ * starts scrcpy, records the screen, launches a foreground service or requests
+ * VPN/MediaProjection permission. Screen acquisition remains a separate,
+ * explicitly authorized, user-stoppable component.
+ *
+ * The companion server sends binary frames only after an accepted session.
+ * A binary frame alone does NOT cause recording or an ADB command.
+ */
+public final class NoVpnMediaSocket {
+    public interface Listener {
+        void onStatus(String state);
+        void onRequest(String sessionId, String requestingPeerId);
+        void onVideoSetup(String sessionId, int[] dimensions, String codec);
+        void onVideoPacket(String sessionId, byte[] packet);
+    }
+
+    private static final OkHttpClient CLIENT = new OkHttpClient.Builder()
+            .pingInterval(20, TimeUnit.SECONDS)
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .build();
+
+    private final Context context;
+    private final Listener listener;
+    private final Handler main = new Handler(Looper.getMainLooper());
+
+    private volatile WebSocket socket;
+    private volatile boolean authenticated;
+    private volatile boolean shutdown;
+    private volatile String waitingRequest = "";
+    private volatile String sourceSession = "";
+    private volatile String viewerSession = "";
+
+    public NoVpnMediaSocket(Context context, Listener listener) {
+        this.context = context.getApplicationContext();
+        this.listener = listener;
+    }
+
+    private static void requireValidWss(String text) throws Exception {
+        URI uri = new URI(text);
+        if (!"wss".equalsIgnoreCase(uri.getScheme()) || uri.getUserInfo() != null
+                || uri.getHost() == null || uri.getHost().isEmpty()
+                || uri.getHost().endsWith(".invalid") || uri.getFragment() != null) {
+            throw new IllegalStateException("视频服务器尚未配置有效 WSS 地址");
+        }
+        if (uri.getPort() == 8767) {
+            throw new IllegalStateException("禁止把内部视频端口直接暴露给手机");
+        }
+    }
+
+    public synchronized void connect() throws Exception {
+        if (shutdown) throw new IllegalStateException("连接已关闭");
+        if (socket != null) return;
+        requireValidWss(BuildConfig.SCREENSYNC_MEDIA_URL);
+        String token = NoVpnApi.mediaToken(context);
+        if (NoVpnApi.peerId(context).isEmpty())
+            throw new IllegalStateException("必须先完成两台手机的双方身份确认");
+
+        WebSocketListener callbacks = new WebSocketListener() {
+            @Override public void onOpen(WebSocket ws, Response response) {
+                try {
+                    JSONObject auth = new JSONObject();
+                    auth.put("type", "auth");
+                    auth.put("token", token);
+                    ws.send(auth.toString());
+                    status("authenticating");
+                } catch (JSONException error) {
+                    ws.close(1008, "invalid_auth");
+                    status("auth_failed");
+                }
+            }
+            @Override public void onMessage(WebSocket ws, String value) {
+                if (shutdown || value.length() > 1024) {
+                    ws.close(1008, "unexpected_message");
+                    return;
+                }
+                try {
+                    handleMessage(value);
+                } catch (Exception error) {
+                    ws.close(1008, "invalid_message");
+                    status("protocol_error");
+                }
+            }
+            @Override public void onMessage(WebSocket ws, ByteString data) {
+                if (shutdown || !authenticated) return;
+                try {
+                    ScrcpyRelayWire.Frame frame =
+                            ScrcpyRelayWire.decode(data.toByteArray());
+                    if (!frame.sessionId.equals(viewerSession)) {
+                        ws.close(1008, "wrong_session");
+                        status("video_identity_mismatch");
+                        return;
+                    }
+                    byte[] packet = frame.videoPacket;
+                    main.post(() -> {
+                        if (!shutdown) listener.onVideoPacket(frame.sessionId, packet);
+                    });
+                } catch (IllegalArgumentException error) {
+                    ws.close(1008, "unsafe_video");
+                    status("unsafe_video_rejected");
+                }
+            }
+            @Override public void onClosing(WebSocket ws, int code, String reason) {
+                ws.close(1000, "closed");
+            }
+            @Override public void onClosed(WebSocket ws, int code, String reason) {
+                authenticated = false;
+                synchronized (NoVpnMediaSocket.this) {
+                    if (socket == ws) socket = null;
+                }
+                status("disconnected");
+            }
+            @Override public void onFailure(WebSocket ws, Throwable error,
+                                            Response response) {
+                authenticated = false;
+                synchronized (NoVpnMediaSocket.this) {
+                    if (socket == ws) socket = null;
+                }
+                status("network_unavailable");
+            }
+        };
+        socket = CLIENT.newWebSocket(
+                new Request.Builder().url(BuildConfig.SCREENSYNC_MEDIA_URL).build(),
+                callbacks);
+        status("connecting");
+    }
+
+    private void handleMessage(String message) throws JSONException {
+        JSONObject body = new JSONObject(message);
+        String type = body.optString("type");
+        switch (type) {
+            case "authenticated":
+                if (!NoVpnApi.deviceId(context).equals(body.optString("device_id"))
+                        || !NoVpnApi.groupId(context).equals(body.optString("group_id"))) {
+                    throw new SecurityException("服务器返回的设备身份不一致");
+                }
+                authenticated = true;
+                status("authenticated");
+                break;
+            case "peer_presence":
+                status(body.optBoolean("peer_connected") ? "peer_online" : "peer_offline");
+                break;
+            case "watch_request": {
+                String sid = body.optString("session_id");
+                String from = body.optString("viewer_device_id");
+                if (!authenticated || !ScrcpyRelayWire.validSessionId(sid)
+                        || !NoVpnApi.peerId(context).equals(from))
+                    throw new SecurityException("接收请求身份不一致");
+                waitingRequest = sid;
+                main.post(() -> {
+                    if (!shutdown) listener.onRequest(sid, from);
+                });
+                break;
+            }
+            case "watch_pending":
+                status("awaiting_peer_approval");
+                break;
+            case "watch_active": {
+                String sid = body.optString("session_id");
+                if (!ScrcpyRelayWire.validSessionId(sid))
+                    throw new SecurityException("无效观看会话");
+                viewerSession = sid;
+                status("viewer_session_active");
+                break;
+            }
+            case "stream_allowed": {
+                String sid = body.optString("session_id");
+                if (!ScrcpyRelayWire.validSessionId(sid)
+                        || !sid.equals(waitingRequest))
+                    throw new SecurityException("未授权的视频发送会话");
+                sourceSession = sid;
+                waitingRequest = "";
+                status("video_source_permitted");
+                break;
+            }
+            case "video_setup": {
+                String sid = body.optString("session_id");
+                if (!sid.equals(viewerSession)) throw new SecurityException("错误的画面会话");
+                JSONArray list = body.getJSONArray("dimensions");
+                if (list.length() != 4) throw new SecurityException("画面尺寸无效");
+                int[] sizes = new int[4];
+                for (int i = 0; i < 4; i++) {
+                    sizes[i] = list.getInt(i);
+                    if (sizes[i] < 16 || sizes[i] > 8192)
+                        throw new SecurityException("画面尺寸越界");
+                }
+                if (sizes[2] > sizes[0] * 2L || sizes[3] > sizes[1] * 2L)
+                    throw new SecurityException("画面尺寸不匹配");
+                String codec = body.optString("codec");
+                if (!("h264".equals(codec) || "h265".equals(codec)))
+                    throw new SecurityException("视频编码格式不支持");
+                main.post(() -> {
+                    if (!shutdown) listener.onVideoSetup(sid, sizes, codec);
+                });
+                break;
+            }
+            case "watch_end":
+                String id = body.optString("session_id");
+                if (id.equals(viewerSession)) viewerSession = "";
+                if (id.equals(sourceSession)) sourceSession = "";
+                if (id.equals(waitingRequest)) waitingRequest = "";
+                status("session_ended");
+                break;
+            case "error":
+                status("server_error:" + body.optString("code", "UNKNOWN"));
+                break;
+            default:
+                throw new SecurityException("不允许的中转消息类型");
+        }
+    }
+
+    private void status(String value) {
+        main.post(() -> {
+            if (!shutdown) listener.onStatus(value);
+        });
+    }
+
+    private boolean send(JSONObject message) {
+        WebSocket ws = socket;
+        return !shutdown && authenticated && ws != null && ws.send(message.toString());
+    }
+
+    public boolean requestWatch() {
+        String peer = NoVpnApi.peerId(context);
+        if (peer.isEmpty()) return false;
+        try {
+            return send(new JSONObject().put("type", "watch_request")
+                    .put("to_device_id", peer));
+        } catch (JSONException error) { return false; }
+    }
+
+    /** Call only from a real acceptance in the local user interface. */
+    public boolean acceptRequest(String sid) {
+        if (!ScrcpyRelayWire.validSessionId(sid) || !sid.equals(waitingRequest))
+            return false;
+        try {
+            return send(new JSONObject().put("type", "watch_accept")
+                    .put("session_id", sid));
+        } catch (JSONException error) { return false; }
+    }
+
+    public boolean declineRequest(String sid) {
+        if (!ScrcpyRelayWire.validSessionId(sid) || !sid.equals(waitingRequest))
+            return false;
+        waitingRequest = "";
+        try {
+            return send(new JSONObject().put("type", "watch_decline")
+                    .put("session_id", sid));
+        } catch (JSONException error) { return false; }
+    }
+
+    /** Used by a separately user-approved scrcpy capture bridge, not by UI. */
+    public boolean sendVideoSetup(int[] dims, String codec) {
+        if (dims == null || dims.length != 4 || sourceSession.isEmpty()
+                || !("h264".equals(codec) || "h265".equals(codec))) return false;
+        try {
+            return send(new JSONObject().put("type", "video_setup")
+                    .put("session_id", sourceSession)
+                    .put("dimensions", new JSONArray(dims)).put("codec", codec));
+        } catch (JSONException error) { return false; }
+    }
+
+    /** Accepts video payload only, never the raw bidirectional ADB stream. */
+    public boolean sendVideoPacket(byte[] scrcpyVideoPacket) {
+        WebSocket ws = socket;
+        if (!authenticated || shutdown || ws == null || sourceSession.isEmpty())
+            return false;
+        try {
+            return ws.send(ByteString.of(
+                    ScrcpyRelayWire.encode(sourceSession, scrcpyVideoPacket)));
+        } catch (IllegalArgumentException error) {
+            return false;
+        }
+    }
+
+    public void endSession() {
+        String[] ids = {viewerSession, sourceSession, waitingRequest};
+        viewerSession = "";
+        sourceSession = "";
+        waitingRequest = "";
+        for (String sid : ids) {
+            if (!ScrcpyRelayWire.validSessionId(sid)) continue;
+            try {
+                send(new JSONObject().put("type", "watch_end")
+                        .put("session_id", sid));
+            } catch (JSONException ignored) { }
+        }
+        status("session_stopped_by_user");
+    }
+
+    /** Closing the Activity releases the connection. No hidden background media. */
+    public synchronized void close() {
+        endSession();
+        shutdown = true;
+        WebSocket ws = socket;
+        socket = null;
+        authenticated = false;
+        if (ws != null) ws.close(1000, "user_left");
+    }
+}
