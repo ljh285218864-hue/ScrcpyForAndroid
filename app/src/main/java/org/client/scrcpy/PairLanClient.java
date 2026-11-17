@@ -28,9 +28,9 @@ public final class PairLanClient {
         }
         try {
             InetAddress ip = InetAddress.getByName(host);
-            if (!RemoteOverlayNetwork.isAllowedPeerIp(ip)
+            if (!PairQrCode.isPrivateIpv4(ip.getHostAddress())
                     || port != WakeLanService.PORT) {
-                return new Result(null, "仅允许局域网或受保护的私有 VPN 配对");
+                return new Result(null, "仅允许私有局域网配对");
             }
             String nonce = WakeAuth.randomHex(8);
             try (Socket socket = new Socket()) {
