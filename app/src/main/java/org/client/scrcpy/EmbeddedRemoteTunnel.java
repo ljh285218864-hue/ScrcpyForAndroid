@@ -154,6 +154,14 @@ public final class EmbeddedRemoteTunnel {
             boolean success = false;
             String message;
             try {
+                if (AutoRemoteProvisioner.isRegistered(app)) {
+                    // Fail closed: revalidate the current pair and load only
+                    // its server-assigned config BEFORE starting the VPN.
+                    // This prevents booting an imported Beta3 config simply
+                    // because a stale private .conf file still exists.
+                    org.json.JSONObject current = AutoRemoteProvisioner.status(app);
+                    AutoRemoteProvisioner.applyPairedConfig(app, current);
+                }
                 GoBackend go;
                 synchronized (LOCK) {
                     if (backend == null) backend = new GoBackend(app);
