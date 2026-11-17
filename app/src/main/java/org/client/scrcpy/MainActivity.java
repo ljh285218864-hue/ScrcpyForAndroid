@@ -2058,7 +2058,6 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (EmbeddedRemoteTunnel.isActive()) {
             // Deliberate user disconnect takes precedence over any network or
             // Always-on recovery callback. Never silently reconnect afterward.
-            RemoteConnectionRecovery.setEnabled(this, false);
             EmbeddedRemoteTunnel.stop(this, (running, message) -> {
                 if (isFinishing() || isDestroyed()) return;
                 refreshPrivateVpnStatus();
@@ -2094,11 +2093,6 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
             refreshPrivateVpnStatus();
             if (running) {
                 syncRemoteOverlayForSavedPair();
-                if (AutoRemoteProvisioner.isRegistered(this)) {
-                    // User has approved the VPN at least once. Only the
-                    // already-consented secure VPN is eligible for recovery.
-                    RemoteConnectionRecovery.setEnabled(this, true);
-                }
             }
             if (thenWatch) {
                 startingVpnForWatch = false;
