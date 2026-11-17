@@ -141,6 +141,8 @@ public final class RemoteSetupActivity extends Activity {
                             perform("正在从服务器撤销授权…",
                                     () -> AutoRemoteProvisioner.revoke(this),
                                     result -> {
+                                        // Explicit revocation also disables automatic recovery.
+                                        RemoteConnectionRecovery.setEnabled(this, false);
                                         // Stop active Android VPN before deleting its config.
                                         EmbeddedRemoteTunnel.stop(this, (active, info) -> {
                                             if (EmbeddedRemoteTunnel.isActive()) {
