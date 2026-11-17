@@ -60,6 +60,7 @@ jobs:
       - name: Verify no Android VPN component then unit tests and APK
         env:
           SCREENSYNC_API_URL: ${{ vars.SCREENSYNC_API_URL }}
+          SCREENSYNC_NOVPN_URL: ${{ vars.SCREENSYNC_NOVPN_URL }}
         run: |
           set -euo pipefail
           if grep -E 'android.net.VpnService|BIND_VPN_SERVICE' app/src/main/AndroidManifest.xml; then
