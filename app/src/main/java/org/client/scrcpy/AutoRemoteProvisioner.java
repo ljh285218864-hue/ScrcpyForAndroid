@@ -198,7 +198,15 @@ public final class AutoRemoteProvisioner {
             throw new Failure("待审批设备无效");
         JSONObject body = new JSONObject();
         body.put("pending_id", pendingId);
-        return post(context, "/v1/approve", body, true);
+        JSONObject result = post(context, "/v1/approve", body, true);
+        if ("paired".equals(result.optString("state"))) {
+            // Explicit owner approval authorizes a newly selected device.
+            // Clear prior identity only here, never on a failed /status call.
+            prefs(context).edit().remove("approved_peer_id")
+                    .remove("approved_peer_ip")
+                    .remove("pair_verify_code").commit();
+        }
+        return result;
     }
 
     public static JSONObject decline(Context context, String pendingId) throws Exception {
@@ -290,6 +298,12 @@ public final class AutoRemoteProvisioner {
                 || !endpoint.matches("[A-Za-z0-9.-]+:[0-9]{1,5}")) {
             throw new Failure("服务端返回的加密配置无效");
         }
+        String oldGroup = prefs(context).getString("approved_group_id", "");
+        String oldPeer = prefs(context).getString("approved_peer_id", "");
+        if (!oldGroup.isEmpty() && !oldGroup.equals(groupId))
+            throw new Failure("设备配对组发生变化，请重新激活并核对身份");
+        if (!oldPeer.isEmpty() && !oldPeer.equals(peerId))
+            throw new Failure("配对的手机身份发生变化，必须重新确认配对");
         String config = "[Interface]\nAddress = " + deviceIp + "/32\n"
                 + "PrivateKey = " + privateKey + "\n\n"
                 + "[Peer]\nPublicKey = " + serverKey + "\n"
@@ -302,14 +316,7 @@ public final class AutoRemoteProvisioner {
         if (!EmbeddedRemoteTunnel.configMatches(context, desired))
             EmbeddedRemoteTunnel.importConfig(context, desired);
         PairedDeviceStore.Peer existing = PairedDeviceStore.load(context);
-        String oldGroup = prefs(context).getString("approved_group_id", "");
-        String oldPeer = prefs(context).getString("approved_peer_id", "");
-        // Server approval can rotate a peer. Ensure no existing live VPN is
-        // silently redirected to another identity; users must re-confirm.
-        if (!oldGroup.isEmpty() && !oldGroup.equals(groupId))
-            throw new Failure("设备配对组发生变化，请手动解绑并重新确认");
-        if (!oldPeer.isEmpty() && !oldPeer.equals(peerId))
-            throw new Failure("配对设备已经更换，请重新确认并建立连接");
+
         if (existing == null || !sharedSecret.equals(existing.secret)
                 || !peerIp.equals(existing.overlayHost)
                 || !peerIp.equals(existing.host)) {
