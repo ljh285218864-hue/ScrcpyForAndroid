@@ -158,6 +158,28 @@ public final class RemoteSetupActivity extends Activity {
                     .setNegativeButton("取消", null).show();
         });
 
+        Button alwaysOn = action(content, "首次设置：系统始终开启 VPN（建议）", v -> {
+            new AlertDialog.Builder(this)
+                    .setTitle("让 VPN 在重启后自动恢复")
+                    .setMessage("Android 可在你首次开启「始终开启 VPN」后"
+                            + "尝试在重新开机、系统更新、网络恢复时重连。"
+                            + "\n接下来会打开系统 VPN 设置，请找到 ScreenSync 并手动开启「始终开启 VPN」。"
+                            + "\n不建议开启「无 VPN 时阻止所有连接」，"
+                            + "避免服务器维护时影响整部手机上网。"
+                            + "\n注意：系统撤销 VPN 权限或关闭无线调试时，"
+                            + "仍需由手机持有人恢复授权。")
+                    .setPositiveButton("打开 VPN 设置", (dialog, which) -> {
+                        try {
+                            startActivity(new Intent(
+                                    android.provider.Settings.ACTION_VPN_SETTINGS));
+                        } catch (RuntimeException error) {
+                            message("无法打开 VPN 页面，请从系统设置搜索 VPN");
+                        }
+                    })
+                    .setNegativeButton("取消", null).show();
+        });
+        alwaysOn.setContentDescription("第一次在系统设置中启用 VPN 自动恢复，保留人工断开和撤销权利");
+
         Button back = action(content, "完成，返回立即观看", v -> finish());
         back.setContentDescription("返回主页，使用已授权的立即观看按钮");
 
