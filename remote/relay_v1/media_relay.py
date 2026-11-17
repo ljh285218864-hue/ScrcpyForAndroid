@@ -107,24 +107,22 @@ class MediaRelay:
         if not api.TOKEN.fullmatch(token):
             return None
         with api.db_connect() as db:
-            row = db.execute("SELECT id,group_id,state FROM devices WHERE token_hash=?",
+            row = db.execute("SELECT * FROM devices WHERE token_hash=?",
                              (api.sha(token),)).fetchone()
-            if not row or row["state"] != "paired":
+            if not row or row["state"] != "paired" or not api.peer(db, row):
                 return None
-            other = db.execute("SELECT 1 FROM devices WHERE group_id=? AND "
-                               "id<>? AND state='paired'",
-                               (row["group_id"], row["id"])).fetchone()
-            return (row["id"], row["group_id"], api.sha(token)) if other else None
+            return row["id"], row["group_id"], api.sha(token)
 
     @staticmethod
     def valid_pair(session: Session) -> bool:
         # Check on EVERY binary send: HTTP revocation immediately stops data
         # propagation, even when sockets remain open.
         with api.db_connect() as db:
-            rows = db.execute("SELECT id FROM devices WHERE group_id=? AND "
-                              "id IN (?,?) AND state='paired'",
-                              (session.group_id, session.viewer, session.source)).fetchall()
-            return len(rows) == 2
+            caller = db.execute(
+                "SELECT * FROM devices WHERE id=? AND group_id=? AND state='paired'",
+                (session.viewer, session.group_id)).fetchone()
+            other = api.peer(db, caller) if caller else None
+            return bool(other and other["id"] == session.source)
 
     async def tell(self, device_id: str, payload: dict) -> bool:
         client = self.online.get(device_id)
@@ -153,14 +151,15 @@ class MediaRelay:
 
     def paired_online(self, client: Device) -> str | None:
         with api.db_connect() as db:
-            row = db.execute("SELECT id FROM devices WHERE group_id=? "
-                             "AND id<>? AND state='paired'",
-                             (client.group_id, client.device_id)).fetchone()
-            if not row:
+            caller = db.execute(
+                "SELECT * FROM devices WHERE id=? AND group_id=? AND state='paired'",
+                (client.device_id, client.group_id)).fetchone()
+            member = api.peer(db, caller) if caller else None
+            if not member:
                 return None
-            other = row["id"]
-            peer = self.online.get(other)
-            return other if peer and peer.group_id == client.group_id else None
+            other = member["id"]
+            connected = self.online.get(other)
+            return other if connected and connected.group_id == client.group_id else None
 
     async def receive_command(self, client: Device, message: str) -> None:
         if len(message) > MAX_MESSAGE:
@@ -190,6 +189,14 @@ class MediaRelay:
                                                    "code": "RECIPIENT_NOT_AUTHORIZED"})
                 return
             count = sum(s.group_id == client.group_id for s in self.sessions.values())
+            # Within each pair, one A->B and one B->A may coexist, but
+            # duplicate viewing requests in the same direction are forbidden.
+            if any(s.group_id == client.group_id
+                   and s.viewer == client.device_id and s.source == other
+                   for s in self.sessions.values()):
+                await self.tell(client.device_id, {"type": "error",
+                                                   "code": "DIRECTION_ALREADY_ACTIVE"})
+                return
             if count >= MAX_GROUP_SESSIONS:
                 await self.tell(client.device_id, {"type": "error", "code": "SESSION_LIMIT"})
                 return
