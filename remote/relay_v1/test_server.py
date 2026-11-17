@@ -158,7 +158,7 @@ class RelayHTTPTests(unittest.TestCase):
 
     def test_bad_payloads_and_unknown_endpoints_rejected(self):
         a, b = self.pair()
-        for event in ("shell", "adb_command", "remote_input", None):
+        for event in ("shell", "adb_command", "remote_input", "offer", "answer", "ice_candidate", None):
             self.assertEqual(self.post("/v1/signal/send", {
                 "type": event, "to_device_id": b["device_id"], "payload": {}},
                 a["token"])[0], 400)
