@@ -197,6 +197,56 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
         await d_source.send(frame_two)
         self.assertEqual(await self.read(c_viewer), frame_two)
 
+    async def test_eight_independent_customer_pairs_in_same_server(self):
+        # 16 simultaneous device sockets belonging to 8 separate pairs.
+        # This is a protocol isolation test, NOT a production bandwidth test.
+        import secrets
+        pairs = []
+        with api.db_connect() as db:
+            for i in range(20, 28):
+                group = f"{i:032x}"
+                owner_id, guest_id = f"{i+100:032x}", f"{i+200:032x}"
+                db.execute("INSERT INTO groups VALUES (?,?)", (group, owner_id))
+                for role, device_id in (("owner", owner_id), ("guest", guest_id)):
+                    secret = secrets.token_hex(24)
+                    self.tokens[device_id] = secret
+                    db.execute("INSERT INTO devices VALUES (?,?,?,?,?,'paired',0)",
+                               (device_id, group, role, "test-" + role, api.sha(secret)))
+                pairs.append((owner_id, guest_id, group))
+
+        clients = []
+        for a, b, group in pairs:
+            viewer = await self.login(a)
+            source = await self.login(b)
+            sid = await self.open_session(viewer, source)
+            await source.send(json.dumps({"type": "watch_accept",
+                                          "session_id": sid}))
+            self.assertEqual((await self.read(viewer))["type"], "watch_active")
+            self.assertEqual((await self.read(source))["type"], "stream_allowed")
+            await source.send(json.dumps({
+                "type": "video_setup", "session_id": sid,
+                "dimensions": [1080, 2400, 720, 1600], "codec": "h264"}))
+            self.assertEqual((await self.read(viewer))["type"], "video_setup")
+            clients.append((viewer, source, sid, group))
+
+        self.assertEqual(len(self.relay.sessions), 8)
+        self.assertEqual(len(self.relay.online), 16)
+        for index, (viewer, source, sid, group) in enumerate(clients):
+            data = video_packet() + bytes([index])
+            frame = media.video_frame(sid, data)
+            await source.send(frame)
+            self.assertEqual(await self.read(viewer), frame)
+
+        # First customer cancels; second customer must continue normally.
+        viewer, source, sid, group = clients[0]
+        await viewer.send(json.dumps({"type": "watch_end", "session_id": sid}))
+        self.assertEqual((await self.read(viewer))["type"], "watch_end")
+        self.assertEqual((await self.read(source))["type"], "watch_end")
+        other_viewer, other_source, other_sid, _ = clients[1]
+        data = media.video_frame(other_sid, video_packet() + b"still-independent")
+        await other_source.send(data)
+        self.assertEqual(await self.read(other_viewer), data)
+
     async def test_group_isolation_and_revocation(self):
         one, two = self.ids["a"]
         three, four = self.ids["b"]
