@@ -1,0 +1,182 @@
+"""Real socket tests for video-only WSS relay (localhost transport in CI).
+
+The TLS termination layer is intentionally excluded from this unit test.
+Public exposure requires an independently configured HTTPS/WSS reverse proxy.
+No Android ADB or screen capture is started in these tests.
+"""
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from websockets.asyncio.client import connect
+from websockets.asyncio.server import serve
+from websockets.exceptions import ConnectionClosed
+
+import server as api
+import media_relay as media
+
+
+def video_packet(type_byte=1, flag=1):
+    return bytes([type_byte, flag]) + bytes(8) + b"mock-h264-keyframe"
+
+
+class RelayMediaUnitTests(unittest.TestCase):
+    def test_only_scrcpy_video_is_valid(self):
+        self.assertTrue(media.legal_video_packet(video_packet()))
+        self.assertTrue(media.legal_video_packet(bytes([1, 4]) + bytes(8)))
+        for type_byte in (0, 2, 3, 255):
+            self.assertFalse(media.legal_video_packet(video_packet(type_byte)))
+        self.assertFalse(media.legal_video_packet(bytes([1, 9]) + bytes(16)))
+        self.assertFalse(media.legal_video_packet(b"\x01\x01"))
+        self.assertFalse(media.legal_video_packet(bytes([1, 1]) + bytes(8)))
+        self.assertFalse(media.legal_video_packet(bytes([1, 0]) +
+                                                 bytes(media.MAX_VIDEO)))
+        for wrong in ([1080, 2400, 0, 300], [True, 100, 100, 100],
+                      [1080, 2400, 32000, 100], ["1080", 2400, 200, 400]):
+            self.assertFalse(media.legal_dimensions(wrong))
+        self.assertTrue(media.legal_dimensions([1080, 2400, 720, 1600]))
+        session_id = "b" * 32
+        frame = media.video_frame(session_id, video_packet())
+        self.assertEqual(media.parse_video_frame(frame), (session_id, video_packet()))
+        self.assertIsNone(media.parse_video_frame(frame[:16] + b"\x00" * 4 +
+                                                   frame[20:]))
+        self.assertIsNone(media.parse_video_frame(frame[:-1]))
+
+
+class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.old_database = api.DATABASE
+        api.DATABASE = Path(self.temp.name) / "media-test.db"
+        api.schema()
+        self.tokens = {}
+        self.ids = {}
+        for group in ("a", "b"):
+            group_id = (group * 32)
+            one = ("1" if group == "a" else "3") * 32
+            two = ("2" if group == "a" else "4") * 32
+            with api.db_connect() as db:
+                db.execute("INSERT INTO groups VALUES (?,?)", (group_id, one))
+                for role, dev in (("owner", one), ("guest", two)):
+                    token = ("a" if dev == one else "b") * 24 + dev[:24]
+                    assert len(token) == 48
+                    self.tokens[dev] = token
+                    db.execute("INSERT INTO devices(id,group_id,role,name,token_hash,"
+                               "state,last_seen) VALUES (?,?,?,?,?,'paired',0)",
+                               (dev, group_id, role, role, api.sha(token)))
+            self.ids[group] = (one, two)
+        self.relay = media.MediaRelay()
+        self.server = await serve(self.relay.handle, "127.0.0.1", 0,
+                                  origins=[None], compression=None,
+                                  max_size=media.MAX_BINARY, max_queue=2)
+        self.url = "ws://127.0.0.1:" + str(self.server.sockets[0].getsockname()[1])
+        self.sockets = []
+
+    async def asyncTearDown(self):
+        for sock in self.sockets:
+            await sock.close()
+        self.server.close()
+        await self.server.wait_closed()
+        api.DATABASE = self.old_database
+        self.temp.cleanup()
+
+    async def login(self, device_id):
+        socket = await connect(self.url, compression=None)
+        self.sockets.append(socket)
+        await socket.send(json.dumps({"type": "auth",
+                                      "token": self.tokens[device_id]}))
+        self.assertEqual((await self.read(socket))["type"], "authenticated")
+        return socket
+
+    async def read(self, socket):
+        value = await socket.recv()
+        return json.loads(value) if isinstance(value, str) else value
+
+    async def open_session(self, viewer, source):
+        await viewer.send(json.dumps({"type": "watch_request"}))
+        request = await self.read(source)
+        self.assertEqual(request["type"], "watch_request")
+        sid = request["session_id"]
+        self.assertEqual((await self.read(viewer))["session_id"], sid)
+        return sid
+
+    async def test_invalid_token_cannot_join(self):
+        socket = await connect(self.url, compression=None)
+        self.sockets.append(socket)
+        await socket.send(json.dumps({"type": "auth", "token": "f" * 48}))
+        with self.assertRaises(ConnectionClosed):
+            await socket.recv()
+
+    async def test_video_must_have_live_source_approval(self):
+        one, two = self.ids["a"]
+        viewer = await self.login(one)
+        source = await self.login(two)
+        sid = await self.open_session(viewer, source)
+
+        await source.send(media.video_frame(sid, video_packet()))
+        self.assertEqual((await self.read(source))["code"], "VIDEO_SESSION_NOT_ACTIVE")
+
+        await source.send(json.dumps({"type": "watch_accept", "session_id": sid}))
+        self.assertEqual((await self.read(viewer))["type"], "watch_active")
+        self.assertEqual((await self.read(source))["type"], "stream_allowed")
+
+        await source.send(json.dumps({"type": "video_setup", "session_id": sid,
+                                      "dimensions": [1080, 2400, 720, 1600],
+                                      "codec": "h264"}))
+        self.assertEqual((await self.read(viewer))["type"], "video_setup")
+
+        # No raw ADB CONTROL or COMMAND, nor audio or random bytes.
+        for invalid in (video_packet(0), video_packet(2), video_packet(3)):
+            frame = bytes.fromhex(sid) + len(invalid).to_bytes(4, "big") + invalid
+            await source.send(frame)
+            self.assertEqual((await self.read(source))["code"], "NON_VIDEO_REJECTED")
+
+        good = media.video_frame(sid, video_packet())
+        await source.send(good)
+        self.assertEqual(await self.read(viewer), good)
+
+        # A cannot impersonate B and inject frames into a B -> A session.
+        await viewer.send(good)
+        self.assertEqual((await self.read(viewer))["code"], "VIDEO_SESSION_NOT_ACTIVE")
+        await viewer.send(json.dumps({"type": "watch_end", "session_id": sid}))
+        self.assertEqual((await self.read(viewer))["type"], "watch_end")
+        self.assertEqual((await self.read(source))["type"], "watch_end")
+
+    async def test_group_isolation_and_revocation(self):
+        one, two = self.ids["a"]
+        three, four = self.ids["b"]
+        viewer = await self.login(one)
+        source = await self.login(two)
+        third = await self.login(three)
+        fourth = await self.login(four)
+        sid = await self.open_session(viewer, source)
+
+        # A different tenant cannot accept or end another group's session.
+        await fourth.send(json.dumps({"type": "watch_accept", "session_id": sid}))
+        self.assertEqual((await self.read(fourth))["code"], "SESSION_UNKNOWN")
+
+        await source.send(json.dumps({"type": "watch_accept", "session_id": sid}))
+        await self.read(viewer)
+        await self.read(source)
+        await source.send(json.dumps({"type": "video_setup", "session_id": sid,
+                                      "dimensions": [1080, 2400, 720, 1600],
+                                      "codec": "h264"}))
+        await self.read(viewer)
+        with api.db_connect() as db:
+            db.execute("DELETE FROM signals WHERE group_id=?", ("a" * 32,))
+            db.execute("DELETE FROM invites WHERE group_id=?", ("a" * 32,))
+            db.execute("DELETE FROM devices WHERE group_id=?", ("a" * 32,))
+            db.execute("DELETE FROM groups WHERE id=?", ("a" * 32,))
+        await source.send(media.video_frame(sid, video_packet()))
+        self.assertEqual((await self.read(source))["type"], "watch_end")
+        self.assertEqual((await self.read(viewer))["reason"], "pairing_revoked")
+
+        # The unrelated tenant remains connected and may signal their own peer.
+        await third.send(json.dumps({"type": "watch_request"}))
+        self.assertEqual((await self.read(fourth))["type"], "watch_request")
+        self.assertEqual((await self.read(third))["type"], "watch_pending")
+
+
+if __name__ == "__main__":
+    unittest.main()
