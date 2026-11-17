@@ -73,6 +73,12 @@ jobs:
           apk="$(find app/build/outputs/apk/scrcpy/debug -maxdepth 1 -name '*.apk' -print -quit)"
           test -n "$apk"
           unzip -t "$apk" | tail -2
+          echo "Verify merged APK declares no Android VPN service:"
+          if "$ANDROID_HOME/build-tools/36.0.0/aapt" dump xmltree "$apk" AndroidManifest.xml \
+              | grep -E 'android.net.VpnService|BIND_VPN_SERVICE|GoBackend\\$VpnService'; then
+            echo "VPN service unexpectedly present in final APK" >&2
+            exit 1
+          fi
           cp "$apk" ScreenSync-Beta4-NoVPN-signaling-experimental-arm64.apk
           sha256sum ScreenSync-Beta4-NoVPN-signaling-experimental-arm64.apk \
             > ScreenSync-Beta4-NoVPN-signaling-experimental-arm64.sha256
