@@ -2150,11 +2150,7 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                         message = "尚未完成服务器双方确认，或身份信息已失效。"
                                 + "请进入「异地连接」检查配对和核对码。";
                         break;
-                    case VPN_NOT_READY:
-                        message = "当前手机的专属 VPN 尚未建立，"
-                                + "或实际 VPN 地址与服务器分配的地址不一致。"
-                                + "请检查 VPN 授权和网络连接，不会尝试旧局域网 IP。";
-                        break;
+
                     case IDENTITY_MISMATCH:
                         message = "设备身份无法确认：对方没有通过双向密钥验证，"
                                 + "或地址与服务器登记的不一致。"
