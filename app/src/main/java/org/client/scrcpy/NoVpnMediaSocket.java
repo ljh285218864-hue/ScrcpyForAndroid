@@ -242,9 +242,10 @@ public final class NoVpnMediaSocket {
                 String codec = body.optString("codec");
                 if (!("h264".equals(codec) || "h265".equals(codec)))
                     throw new SecurityException("视频编码格式不支持");
-                main.post(() -> {
-                    if (!shutdown) listener.onVideoSetup(sid, sizes, codec);
-                });
+                // Keep video_setup and binary frames in WSS receive order.
+                // Posting setup to the UI queue can lose the first CONFIG
+                // and keyframe when the decoder has not yet been initialized.
+                if (!shutdown) listener.onVideoSetup(sid, sizes, codec);
                 break;
             }
             case "watch_end":
