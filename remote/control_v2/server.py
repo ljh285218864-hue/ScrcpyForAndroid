@@ -572,7 +572,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/health":
-            self.reply(200, {"ok": True, "service": "screensync-v2"})
+            if mutation_marker().exists():
+                self.reply(503, {"ok": False, "error": "SERVICE_QUARANTINED"})
+            else:
+                self.reply(200, {"ok": True, "service": "screensync-v2"})
         else:
             self.reply(404, {"error": "NOT_FOUND"})
 
