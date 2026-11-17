@@ -1,0 +1,29 @@
+# TEMPLATE ONLY. Do not install before confirming ports/TLS/old services.
+[Unit]
+Description=ScreenSync no-VPN pairing/signaling API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=screensync
+Group=screensync
+WorkingDirectory=/opt/screensync-relay/remote/relay_v1
+Environment=SS_NOVPN_HOST=127.0.0.1
+Environment=SS_NOVPN_PORT=8766
+Environment=SS_NOVPN_DB=/var/lib/screensync-relay/relay.db
+ExecStart=/opt/screensync-relay/.venv/bin/python server.py serve
+StateDirectory=screensync-relay
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/screensync-relay
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target
