@@ -122,6 +122,10 @@ must_drop "$C" 100.81.0.5
 must_drop "$A" 100.81.0.4
 
 driver approve2
+# A newly admitted WireGuard client must initiate a handshake: the server
+# cannot send to a mobile phone until it learns that peer's UDP endpoint.
+# A blocked ping to the VPS's tunnel IP still establishes the WG handshake.
+ip netns exec "$D" ping -n -c 1 -W 2 100.81.0.1 >/dev/null 2>&1 || true
 must_pass "$C" 100.81.0.5
 must_pass "$D" 100.81.0.4
 must_drop "$A" 100.81.0.4
