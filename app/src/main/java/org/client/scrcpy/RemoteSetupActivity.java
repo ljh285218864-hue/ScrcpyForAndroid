@@ -56,8 +56,9 @@ public final class RemoteSetupActivity extends Activity {
                         NoVpnApi.heartbeat(RemoteSetupActivity.this);
                         // Each polling cycle also retrieves messages sent
                         // during brief disconnections within 90 seconds.
-                        JSONArray events = NoVpnApi.poll(RemoteSetupActivity.this);
-                        state.put("_events", events);
+                        JSONObject relay = NoVpnApi.poll(RemoteSetupActivity.this);
+                        state.put("_events", relay.getJSONArray("messages"));
+                        state.put("_cursor", relay.getLong("cursor"));
                     }
                     return state;
                 }, RemoteSetupActivity.this::showStatus, true);
@@ -273,6 +274,17 @@ public final class RemoteSetupActivity extends Activity {
                 }
             }
             status.setText(description);
+            // Only acknowledge after the verified messages are rendered.
+            // A process death before this call permits safe replay.
+            if (state.has("_cursor")) {
+                try {
+                    NoVpnApi.acknowledge(this, state.getLong("_cursor"));
+                } catch (Exception error) {
+                    // The next poll will resend the message rather than lose
+                    // a pending connection request.
+                    status.append("\n信令已收到，但确认保存失败，可能再次显示。");
+                }
+            }
         } else {
             status.setText("服务器状态：" + currentState);
         }
