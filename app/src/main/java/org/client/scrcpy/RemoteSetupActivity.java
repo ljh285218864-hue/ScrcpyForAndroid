@@ -61,6 +61,25 @@ public final class RemoteSetupActivity extends Activity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
+        if (!NoVpnTransportPolicy.usesAndroidVpn()) {
+            setTitle("ScreenSync 无 VPN 异地连接");
+            LinearLayout screen = new LinearLayout(this);
+            screen.setOrientation(LinearLayout.VERTICAL);
+            screen.setPadding(dp(18), dp(26), dp(18), dp(18));
+            TextView notice = new TextView(this);
+            notice.setText(NoVpnTransportPolicy.pendingMessage()
+                    + "\n\n新的扫码配对和 HTTPS/WSS 服务器中转正在独立开发。"
+                    + "\n不会使用系统 VPN，也不会偷偷回退旧版网络通道。"
+                    + "\n屏幕分享仍须按照 Android 的授权规则进行。");
+            notice.setTextSize(16f);
+            screen.addView(notice);
+            Button done = new Button(this);
+            done.setText("返回");
+            done.setOnClickListener(v -> finish());
+            screen.addView(done);
+            setContentView(screen);
+            return;
+        }
         setTitle("ScreenSync 异地连接");
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -185,6 +204,7 @@ public final class RemoteSetupActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        if (!NoVpnTransportPolicy.usesAndroidVpn()) return;
         resumed = true;
         ui.removeCallbacks(refresh);
         if (!AutoRemoteProvisioner.isRegistered(this)) updateStatus();
