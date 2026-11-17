@@ -157,8 +157,8 @@ public final class RemoteSetupActivity extends Activity {
                     .setNegativeButton("取消", null).show();
         });
 
-        Button alwaysOn = action(content, "首次设置：系统始终开启 VPN（建议）", v -> {
-            new AlDescription("返回主页，使用已授权的立即观看按钮");
+        Button back = action(content, "完成，返回立即观看", v -> finish());
+        back.setContentDescription("返回主页，使用已授权的立即观看按钮");
 
         ScrollView root = new ScrollView(this);
         root.addView(content);
