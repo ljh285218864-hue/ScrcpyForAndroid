@@ -51,7 +51,7 @@ public final class NoVpnApi {
         return prefs(context).getString("group_id", "");
     }
 
-    static String mediaToken(Context context) {
+    static String mediaToken(Context context) throws Exception {
         if (!isRegistered(context))
             throw new IllegalStateException("本机尚未开通无 VPN 异地连接");
         String token = DeviceSecretStore.read(context, SECRET_NAME);
