@@ -222,8 +222,13 @@ def allowed_pairs(db: sqlite3.Connection, exclude_group: str | None = None):
 def render_acl(pairs: list[tuple[str, str]]) -> str:
     """Atomic nft transaction: default-deny ONLY traffic within Beta4 WG."""
     # A fixed non-user-controlled table/interface prevents nft injection.
+    # Rebuild our *own* table within one atomic nft transaction.
+    # 'flush table' only deletes rules; it keeps the chains, so a later
+    # 'add chain' would fail on the second pairing or unpair operation.
+    # The table is created once by init_runtime() before this is called.
     lines = [
-        "flush table inet " + TABLE,
+        "delete table inet " + TABLE,
+        "add table inet " + TABLE,
         "add chain inet " + TABLE +
         " forward { type filter hook forward priority -150; policy accept; }",
         "add chain inet " + TABLE +
