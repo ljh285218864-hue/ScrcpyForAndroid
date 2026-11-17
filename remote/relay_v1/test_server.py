@@ -147,8 +147,12 @@ class RelayHTTPTests(unittest.TestCase):
             self.assertEqual(len(queued["messages"]), 1)
             self.assertEqual(queued["messages"][0]["from_device_id"],
                              owner["device_id"])
-            self.assertEqual(self.post("/v1/signal/poll", {"after": 0},
-                             foreign["token"])[1]["messages"], [])
+            # Other groups may have their OWN previously queued messages.
+            # They must never see THIS group's sender or payload.
+            _, foreign_queue = self.post("/v1/signal/poll", {"after": 0},
+                                         foreign["token"])
+            self.assertTrue(all(message["from_device_id"] != owner["device_id"]
+                                for message in foreign_queue["messages"]))
         # Unbinding one customer cannot erase eleven unrelated pairs.
         self.assertEqual(self.post("/v1/revoke", {}, groups[0][0]["token"])[0], 200)
         self.assertEqual(self.post("/v1/status", {}, groups[0][1]["token"])[0], 401)
