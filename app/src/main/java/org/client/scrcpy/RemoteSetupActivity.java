@@ -396,7 +396,10 @@ public final class RemoteSetupActivity extends Activity {
                                                         String codec) {
                         if (active && renderer != null) {
                             renderer.startSession(sid, dimensions, codec);
-                            mediaState.setText("视频配置 " + codec + "；等待远端关键帧");
+                            runOnUiThread(() -> {
+                                if (active && !isFinishing())
+                                    mediaState.setText("视频配置 " + codec + "；等待远端关键帧");
+                            });
                         }
                     }
                     @Override public void onVideoPacket(String sid, byte[] packet) {
