@@ -47,6 +47,16 @@ public final class NoVpnPresenceWorker extends Worker {
         } catch (SecurityException error) {
             NoVpnBackgroundSync.record(app, "identity_mismatch", false);
             return Result.failure();
+        } catch (IllegalStateException error) {
+            if ("服务端拒绝：AUTH_REQUIRED".equals(error.getMessage())) {
+                // The other device revoked this group. Avoid retry storms;
+                // never automatically recreate or reapprove the pairing.
+                NoVpnBackgroundSync.setEnabled(app, false);
+                NoVpnBackgroundSync.record(app, "pairing_revoked_by_peer", false);
+                return Result.success();
+            }
+            NoVpnBackgroundSync.record(app, "network_unavailable", false);
+            return Result.retry();
         } catch (Exception error) {
             // Temporary radio/network errors are retried by WorkManager
             // while it can run. No unbounded process loop or foreground task.
