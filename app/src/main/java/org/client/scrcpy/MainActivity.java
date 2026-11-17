@@ -2285,9 +2285,32 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
                 int detail = reason == OneTapConnection.Failure.DEVICE_NOT_FOUND
                         ? R.string.quick_fail_offline : R.string.quick_fail_adb;
                 setQuickStage(detail);
+                String message;
+                switch (reason) {
+                    case PAIRING_NOT_READY:
+                        message = "尚未完成服务器双方确认，或身份信息已失效。"
+                                + "请进入「异地连接」检查配对和核对码。";
+                        break;
+                    case VPN_NOT_READY:
+                        message = "当前手机的专属 VPN 尚未建立，"
+                                + "或实际 VPN 地址与服务器分配的地址不一致。"
+                                + "请检查 VPN 授权和网络连接，不会尝试旧局域网 IP。";
+                        break;
+                    case IDENTITY_MISMATCH:
+                        message = "设备身份无法确认：对方没有通过双向密钥验证，"
+                                + "或地址与服务器登记的不一致。"
+                                + "已停止连接，避免误连其他设备。";
+                        break;
+                    case WIRELESS_DEBUGGING_NOT_READY:
+                        message = "已找到目标设备，但当前无线调试的 ADB 端口"
+                                + "不可用或未取得系统授权；不会复用旧端口。";
+                        break;
+                    default:
+                        message = getString(detail);
+                }
                 new android.app.AlertDialog.Builder(MainActivity.this)
                         .setTitle(R.string.quick_fail_title)
-                        .setMessage(detail)
+                        .setMessage(message)
                         .setPositiveButton(R.string.quick_retry,
                                 (d, which) -> startOneTapWatch())
                         .setNeutralButton(R.string.quick_repair,
