@@ -1889,6 +1889,17 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         Button vpnSetup = findViewById(R.id.remote_vpn_setup_button);
         Button vpnToggle = findViewById(R.id.remote_vpn_toggle_button);
         Switch receiver = findViewById(R.id.quick_receive_switch);
+        if (!NoVpnTransportPolicy.usesAndroidVpn()) {
+            // No-VPN beta does not run the old LAN foreground receiver.
+            // Hide entry points that would start a legacy notified service
+            // or request ADB debugging for a transport not used by Beta4.
+            if (enableReceiver != null) enableReceiver.setVisibility(View.GONE);
+            if (receiver != null) receiver.setVisibility(View.GONE);
+            if (advanced != null) advanced.setVisibility(View.GONE);
+            if (search != null) search.setVisibility(View.GONE);
+            if (authorizeQr != null) authorizeQr.setVisibility(View.GONE);
+            if (openSystemSettings != null) openSystemSettings.setVisibility(View.GONE);
+        }
         if (primary != null) primary.setOnClickListener(v -> startOneTapWatch());
         if (showCode != null) showCode.setOnClickListener(v -> openAutoRemoteSetup());
         if (search != null) search.setOnClickListener(v -> startLanAutoDiscovery());
