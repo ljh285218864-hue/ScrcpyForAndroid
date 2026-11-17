@@ -125,7 +125,6 @@ jobs:
           PY
       - name: Verify no Android VPN component then unit tests and APK
         env:
-          SCREENSYNC_API_URL: ${{ vars.SCREENSYNC_API_URL }}
           SCREENSYNC_NOVPN_URL: ${{ vars.SCREENSYNC_NOVPN_URL }}
           SCREENSYNC_MEDIA_URL: ${{ vars.SCREENSYNC_MEDIA_URL }}
         run: |
@@ -146,14 +145,14 @@ jobs:
             echo "VPN service unexpectedly present in final APK" >&2
             exit 1
           fi
-          cp "$apk" ScreenSync-Beta4-NoVPN-signaling-experimental-arm64.apk
-          sha256sum ScreenSync-Beta4-NoVPN-signaling-experimental-arm64.apk \
-            > ScreenSync-Beta4-NoVPN-signaling-experimental-arm64.sha256
+          cp "$apk" ScreenSync-Beta4-NoVPN-PreServer-Experimental-arm64.apk
+          sha256sum ScreenSync-Beta4-NoVPN-PreServer-Experimental-arm64.apk \
+            > ScreenSync-Beta4-NoVPN-PreServer-Experimental-arm64.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: ScreenSync-Beta4-NoVPN-signaling-experimental
+          name: ScreenSync-Beta4-NoVPN-PreServer-Experimental
           path: |
-            ScreenSync-Beta4-NoVPN-signaling-experimental-arm64.apk
-            ScreenSync-Beta4-NoVPN-signaling-experimental-arm64.sha256
+            ScreenSync-Beta4-NoVPN-PreServer-Experimental-arm64.apk
+            ScreenSync-Beta4-NoVPN-PreServer-Experimental-arm64.sha256
           retention-days: 14
           if-no-files-found: error
