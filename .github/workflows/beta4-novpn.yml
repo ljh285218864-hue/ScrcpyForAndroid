@@ -23,6 +23,30 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - name: Guard against abandoned VPN and WebRTC solutions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          base = Path("app/src/main/java/org/client/scrcpy")
+          for old in ("AutoRemoteProvisioner.java", "EmbeddedRemoteTunnel.java",
+                      "RemoteOverlayNetwork.java", "NoVpnTransportPolicy.java"):
+              assert not (base / old).exists(), f"retired class restored: {old}"
+          assert "com.wireguard.android:tunnel" not in Path("app/build.gradle").read_text()
+          assert not Path("remote/control").exists()
+          assert not Path("remote/control_v2").exists()
+          assert not Path("remote/setup_wg_vps_ubuntu.sh").exists()
+          code = Path("remote/relay_v1/server.py").read_text()
+          declared = code.split("ALLOWED_EVENTS = ", 1)[1].split("}",1)[0]
+          for disallowed in ('"offer"', '"answer"', '"ice_candidate"'):
+              assert disallowed not in declared, f"discarded signaling: {disallowed}"
+          main = (base / "MainActivity.java").read_text()
+          assert "VpnService.prepare(" not in main
+          assert "EmbeddedRemoteTunnel" not in main
+          layout = Path("app/src/main/res/layout/activity_main.xml").read_text()
+          assert "remote_vpn_toggle_button" not in layout
+          assert "remote_vpn_setup_button" not in layout
+          print("Retired VPN and WebRTC routes absent from no-VPN branch")
+          PY
       - name: Test HTTP no-VPN pairing and offline recovery protocol
         run: |
           python3 -m compileall -q remote/relay_v1
