@@ -33,7 +33,10 @@ public final class DroidConnection implements Closeable {
 
 
     private static Socket listenAndAccept() throws IOException {
-        ServerSocket serverSocket = new ServerSocket(7007);
+        // adb forward connects from this device's loopback interface.
+        // Never expose the unauthenticated scrcpy socket to Wi-Fi/LAN peers.
+        ServerSocket serverSocket = new ServerSocket();
+        serverSocket.bind(new java.net.InetSocketAddress("127.0.0.1", 7007), 1);
         Socket sock = null;
         try {
             sock = serverSocket.accept();
