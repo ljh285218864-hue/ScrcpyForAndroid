@@ -39,6 +39,10 @@ public final class RemoteSetupActivity extends Activity {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private TextView status;
     private Button invite, approve, decline, test, revoke, backgroundToggle;
+    private Button mediaConnectButton, mediaRequestButton, mediaEndButton;
+    private TextView mediaState;
+    private NoVpnMediaSocket mediaSocket;
+    private int receivedVideoFrames;
     private boolean active;
     private boolean busy;
     private String currentState = "";
@@ -76,9 +80,10 @@ public final class RemoteSetupActivity extends Activity {
 
         TextView intro = new TextView(this);
         intro.setText("无 VPN 异地连接实验版：两台手机扫码、核对6位码并同意配对。"
-                + "通过 HTTPS 同步在线状态和连接信令；不会启用系统 VPN。"
-                + "\n\n注意：当前只能测试配对和网络信令，还没有实际屏幕视频。"
-                + "将来的屏幕分享仍须按 Android 系统要求取得授权。");
+                + "通过 HTTPS/WSS 信令和中转连接，不使用系统 VPN。"
+                + "\n\n当前可以测试媒体服务器连接和视频包协议。"
+                + "尚未接入真正的本机 scrcpy 视频采集及解码，不能实际观看。"
+                + "\n首次无线调试授权仍须由手机持有人按照系统要求完成。");
         intro.setTextSize(15);
         content.addView(intro);
 
@@ -124,6 +129,24 @@ public final class RemoteSetupActivity extends Activity {
                             new JSONObject().put("request_id", UUID.randomUUID().toString()));
                 }, result -> report("连接测试消息已发送。对方打开本页面会看到消息。"),
                         false));
+        mediaState = new TextView(this);
+        mediaState.setText("媒体连接：未连接。无后台常驻通知；当前只测试中转协议。");
+        mediaState.setPadding(0, dp(12), 0, dp(8));
+        content.addView(mediaState);
+        mediaConnectButton = action(content, "连接 WSS 视频中转（只测试连接）",
+                v -> connectMediaTest());
+        mediaRequestButton = action(content, "向配对手机发送观看测试请求", v -> {
+            if (mediaSocket == null || !mediaSocket.requestWatch()) {
+                mediaState.setText("视频请求未发出，请先完成 WSS 连接和身份验证");
+            } else {
+                mediaState.setText("已请求对方确认本次视频连接；还不会启动 scrcpy 采集");
+            }
+        });
+        mediaEndButton = action(content, "结束视频中转会话", v -> {
+            if (mediaSocket != null) mediaSocket.endSession();
+            mediaState.setText("已主动结束本次视频会话");
+        });
+
         backgroundToggle = action(content, "启用后台定期检查（不显示常驻通知）", v -> {
             if (!NoVpnApi.isRegistered(this) || !"paired".equals(currentState)) {
                 report("两台手机完成双方确认后，才能启用后台恢复检查");
@@ -147,6 +170,10 @@ public final class RemoteSetupActivity extends Activity {
                                 + "之后必须重新扫描并经双方批准。")
                         .setPositiveButton("确定撤销", (d, w) ->
                                 runNetwork(() -> NoVpnApi.revoke(this), result -> {
+                                    if (mediaSocket != null) {
+                                        mediaSocket.close();
+                                        mediaSocket = null;
+                                    }
                                     NoVpnBackgroundSync.setEnabled(this, false);
                                     pendingId = "";
                                     currentState = "";
@@ -173,7 +200,72 @@ public final class RemoteSetupActivity extends Activity {
     @Override protected void onPause() {
         active = false;
         ui.removeCallbacks(refresh);
+        // No foreground notification or hidden media receiver. Leaving
+        // the setup screen ends its temporary network/media test session.
+        if (mediaSocket != null) {
+            mediaSocket.close();
+            mediaSocket = null;
+        }
         super.onPause();
+    }
+
+    private void connectMediaTest() {
+        if (!NoVpnApi.isRegistered(this) || !"paired".equals(currentState)) {
+            report("先完成两台手机的配对确认，再测试 WSS 中转");
+            return;
+        }
+        if (mediaSocket != null) {
+            mediaState.setText("已有中转连接，请先结束后再重新连接");
+            return;
+        }
+        receivedVideoFrames = 0;
+        NoVpnMediaSocket socket = new NoVpnMediaSocket(this,
+                new NoVpnMediaSocket.Listener() {
+                    @Override public void onStatus(String value) {
+                        if (!active || isFinishing()) return;
+                        mediaState.setText("媒体中转：" + value
+                                + "\n此处不启动屏幕视频采集。");
+                    }
+                    @Override public void onRequest(String sid, String viewerId) {
+                        if (!active || isFinishing()) return;
+                        new AlertDialog.Builder(RemoteSetupActivity.this)
+                                .setTitle("已配对设备请求观看")
+                                .setMessage("对方设备 ID 尾号：" +
+                                        viewerId.substring(Math.max(0, viewerId.length() - 6))
+                                        + "\n是否允许本次测试会话？"
+                                        + "\n当前还没有接入实际屏幕采集。")
+                                .setPositiveButton("同意本次测试", (dialog, which) -> {
+                                    if (mediaSocket != null)
+                                        mediaSocket.acceptRequest(sid);
+                                })
+                                .setNegativeButton("拒绝", (dialog, which) -> {
+                                    if (mediaSocket != null)
+                                        mediaSocket.declineRequest(sid);
+                                }).show();
+                    }
+                    @Override public void onVideoSetup(String sid, int[] dimensions,
+                                                       String codec) {
+                        if (active) mediaState.setText(
+                                "收到编码参数：" + codec + "，尚未接入视频解码器");
+                    }
+                    @Override public void onVideoPacket(String sid, byte[] packet) {
+                        if (!active) return;
+                        receivedVideoFrames++;
+                        if (receivedVideoFrames == 1 || receivedVideoFrames % 30 == 0)
+                            mediaState.setText("已收到 " + receivedVideoFrames
+                                    + " 个验证通过的视频包；画面显示尚未实现");
+                    }
+                });
+        try {
+            socket.connect();
+            mediaSocket = socket;
+            mediaState.setText("正在认证 WSS 中转连接……");
+        } catch (Exception error) {
+            mediaState.setText(error.getMessage() == null
+                    ? "WSS 中转连接配置无效"
+                    : error.getMessage());
+            socket.close();
+        }
     }
 
     private int dp(int points) {
@@ -202,6 +294,10 @@ public final class RemoteSetupActivity extends Activity {
             test.setEnabled(registered && "paired".equals(currentState) && !busy);
         if (revoke != null)
             revoke.setEnabled(registered && !busy);
+        boolean paired = registered && "paired".equals(currentState);
+        if (mediaConnectButton != null) mediaConnectButton.setEnabled(paired && !busy);
+        if (mediaRequestButton != null) mediaRequestButton.setEnabled(paired && !busy);
+        if (mediaEndButton != null) mediaEndButton.setEnabled(paired && !busy);
         if (backgroundToggle != null) {
             backgroundToggle.setEnabled(registered
                     && "paired".equals(currentState) && !busy);
