@@ -150,6 +150,10 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
         source = await self.login(two)
         third = await self.login(three)
         fourth = await self.login(four)
+        await viewer.send(json.dumps({"type": "watch_request",
+                                      "to_device_id": four}))
+        self.assertEqual((await self.read(viewer))["code"],
+                         "RECIPIENT_NOT_AUTHORIZED")
         sid = await self.open_session(viewer, source)
 
         # A different tenant cannot accept or end another group's session.
