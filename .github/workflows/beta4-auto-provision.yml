@@ -33,6 +33,7 @@ jobs:
           python3 -m unittest discover -s remote/control_v2 -p 'test_*.py' -v
           bash -n remote/control/install_ubuntu.sh
           bash -n remote/control_v2/install_ubuntu.sh
+          bash -n remote/control_v2/ensure_deny.sh
           bash -n remote/control_v2/issue_owner_qr.sh
 
   kernel-isolation:
