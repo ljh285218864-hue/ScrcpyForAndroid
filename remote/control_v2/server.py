@@ -436,7 +436,8 @@ def api_revoke(db: sqlite3.Connection, caller: sqlite3.Row) -> dict:
 
 
 class Handler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
+    protocol_version = "HTTP/1.0"
+    timeout = 10
 
     def log_message(self, *args) -> None:
         # Never write tokens or one-time invitations to plaintext logs.
@@ -461,8 +462,14 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 remote = "unverified"
         bucket = remote + ":" + self.path
-        recent = HITS[bucket]
         now = time.monotonic()
+        if bucket not in HITS and len(HITS) >= 1024:
+            stale = [k for k, hits in HITS.items() if not hits or hits[-1] < now - 60]
+            for k in stale:
+                del HITS[k]
+            if len(HITS) >= 1024:
+                raise ApiError("RATE_LIMITED", 429)
+        recent = HITS[bucket]
         while recent and recent[0] < now - 60:
             recent.popleft()
         if len(recent) >= 30:
@@ -476,45 +483,45 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(404, {"error": "NOT_FOUND"})
 
     def do_POST(self) -> None:
-        with LOCK:
-            try:
+        try:
+            if self.path not in (
+                "/v1/activate", "/v1/join", "/v1/invite",
+                "/v1/status", "/v1/approve", "/v1/decline", "/v1/revoke"
+            ):
+                raise ApiError("NOT_FOUND", 404)
+            with LOCK:
                 self.throttled()
-                length = int(self.headers.get("Content-Length", "0"))
-                if not 0 < length <= 4096:
-                    raise ApiError("INVALID_BODY", 413)
-                body = json.loads(self.rfile.read(length))
-                if not isinstance(body, dict):
-                    raise ApiError("INVALID_BODY")
-                if self.path not in (
-                    "/v1/activate", "/v1/join", "/v1/invite",
-                    "/v1/status", "/v1/approve", "/v1/decline", "/v1/revoke"
-                ):
-                    raise ApiError("NOT_FOUND", 404)
-                with db_connect() as db:
-                    db.execute("BEGIN IMMEDIATE")
-                    if self.path == "/v1/activate":
-                        result = api_activate(db, body)
-                    elif self.path == "/v1/join":
-                        result = api_join(db, body)
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 4096:
+                raise ApiError("INVALID_BODY", 413)
+            body = json.loads(self.rfile.read(length))
+            if not isinstance(body, dict):
+                raise ApiError("INVALID_BODY")
+            with LOCK, db_connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                if self.path == "/v1/activate":
+                    result = api_activate(db, body)
+                elif self.path == "/v1/join":
+                    result = api_join(db, body)
+                else:
+                    caller = authorize(db, self.headers.get("Authorization"))
+                    if self.path == "/v1/invite":
+                        result = api_invite(db, caller)
+                    elif self.path == "/v1/status":
+                        result = api_status(db, caller)
+                    elif self.path == "/v1/approve":
+                        result = api_approve(db, caller, body)
+                    elif self.path == "/v1/decline":
+                        result = api_decline(db, caller, body)
                     else:
-                        caller = authorize(db, self.headers.get("Authorization"))
-                        if self.path == "/v1/invite":
-                            result = api_invite(db, caller)
-                        elif self.path == "/v1/status":
-                            result = api_status(db, caller)
-                        elif self.path == "/v1/approve":
-                            result = api_approve(db, caller, body)
-                        elif self.path == "/v1/decline":
-                            result = api_decline(db, caller, body)
-                        else:
-                            result = api_revoke(db, caller)
-                    db.commit()
-                self.reply(200, result)
-            except ApiError as err:
-                self.reply(err.status, {"error": err.code})
-            except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError,
-                    json.JSONDecodeError, RuntimeError):
-                self.reply(503, {"error": "SERVICE_UNAVAILABLE"})
+                        result = api_revoke(db, caller)
+                db.commit()
+            self.reply(200, result)
+        except ApiError as err:
+            self.reply(err.status, {"error": err.code})
+        except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError,
+                json.JSONDecodeError, RuntimeError):
+            self.reply(503, {"error": "SERVICE_UNAVAILABLE"})
 
 
 def main() -> None:
