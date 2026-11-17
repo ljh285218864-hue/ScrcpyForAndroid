@@ -20,9 +20,9 @@ public final class Server {
         try (DroidConnection connection = DroidConnection.open(ip)) {
             ScreenEncoder screenEncoder = new ScreenEncoder(options);
 
-            // asynchronous
-            startEventController(device, connection, screenEncoder);
-
+            // Read-only no-VPN product: no EventController thread.
+            // Local scrcpy never consumes touch/key/command frames.
+            // The encoder periodically produces its own keyframes.
             try {
                 // synchronous
                 screenEncoder.streamScreen(options, device, connection.getOutputStream());
@@ -33,20 +33,6 @@ public final class Server {
 
             }
         }
-    }
-
-    private static void startEventController(final Device device, final DroidConnection connection, ScreenEncoder screenEncoder) {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    new EventController(device, connection, screenEncoder).control();
-                } catch (IOException e) {
-                    // this is expected on close
-                    Ln.d("Event controller stopped");
-                }
-            }
-        }).start();
     }
 
     @SuppressWarnings("checkstyle:MagicNumber")
