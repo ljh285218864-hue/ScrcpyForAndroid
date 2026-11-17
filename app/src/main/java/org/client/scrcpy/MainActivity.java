@@ -2078,16 +2078,9 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (oneTapConnecting || isFinishing() || isDestroyed())
             return;
         if (NoVpnApi.isRegistered(this)) {
-            // The HTTPS signaling prototype is NOT screen video. Do not
-            // silently use legacy LAN ADB or the removed VPN transport.
-            new android.app.AlertDialog.Builder(this)
-                    .setTitle("无 VPN 异地连接")
-                    .setMessage("双方扫码配对、在线状态和信令连接已经可测试；"
-                            + "实际屏幕视频尚未接入。"
-                            + "\n不能自动退回旧 VPN、ADB 或其他手机 IP。")
-                    .setPositiveButton("查看配对状态",
-                            (dialog, which) -> openAutoRemoteSetup())
-                    .setNegativeButton(android.R.string.cancel, null).show();
+            // Real source/viewer protocol is implemented in the dedicated
+            // Activity. Never fall back to LAN IP or raw remote ADB.
+            openAutoRemoteSetup();
             return;
         }
         PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
