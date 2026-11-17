@@ -147,6 +147,7 @@ public final class RemoteSetupActivity extends Activity {
         super.onResume();
         active = true;
         ui.removeCallbacks(refresh);
+        if (!NoVpnApi.isRegistered(this)) refreshStatus();
         refresh.run();
         refreshButtons();
     }
