@@ -1857,8 +1857,6 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         Button enableReceiver = findViewById(R.id.quick_receive_button);
         Button advanced = findViewById(R.id.quick_advanced_button);
         Button cleanupNotifications = findViewById(R.id.quick_notification_cleanup);
-        Button vpnSetup = findViewById(R.id.remote_vpn_setup_button);
-        Button vpnToggle = findViewById(R.id.remote_vpn_toggle_button);
         Switch receiver = findViewById(R.id.quick_receive_switch);
         {
             // No-VPN beta does not run the old LAN foreground receiver.
@@ -1890,9 +1888,6 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (cleanupNotifications != null) {
             cleanupNotifications.setOnClickListener(v -> showElderNotificationHelper());
         }
-        // System VPN is not a connection option in this build.
-        if (vpnSetup != null) vpnSetup.setVisibility(View.GONE);
-        if (vpnToggle != null) vpnToggle.setVisibility(View.GONE);
         refreshNoVpnStatus();
         if (advanced != null) advanced.setOnClickListener(v -> {
             LinearLayout details = findViewById(R.id.layout_advanced_controls);
@@ -1970,8 +1965,6 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         TextView status = findViewById(R.id.quick_remote_network_status);
         if (status != null) status.setText(
                 "异地连接：不使用系统 VPN（scrcpy 视频中转尚未接通）");
-        Button toggle = findViewById(R.id.remote_vpn_toggle_button);
-        if (toggle != null) toggle.setVisibility(View.GONE);
     }
 
     private void openAutoRemoteSetup() {
