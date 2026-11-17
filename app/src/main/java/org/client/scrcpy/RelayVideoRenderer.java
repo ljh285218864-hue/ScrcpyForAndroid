@@ -26,6 +26,8 @@ public final class RelayVideoRenderer {
 
     private final SurfaceView surfaceView;
     private final Listener listener;
+    private final SurfaceHolder.Callback surfaceCallback;
+    private volatile boolean closed;
     private final ThreadPoolExecutor decoderThread =
             new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
                     new ArrayBlockingQueue<>(8),
@@ -46,9 +48,11 @@ public final class RelayVideoRenderer {
     public RelayVideoRenderer(SurfaceView view, Listener listener) {
         this.surfaceView = view;
         this.listener = listener;
-        visibleSurface = view.getHolder().getSurface().isValid();
-        view.getHolder().addCallback(new SurfaceHolder.Callback() {
+        Surface initial = view.getHolder().getSurface();
+        visibleSurface = initial != null && initial.isValid();
+        surfaceCallback = new SurfaceHolder.Callback() {
             @Override public void surfaceCreated(SurfaceHolder holder) {
+                if (closed) return;
                 visibleSurface = true;
                 decoderThread.execute(() -> {
                     if (!session.isEmpty() && lastConfiguration != null)
@@ -59,16 +63,18 @@ public final class RelayVideoRenderer {
                                                    int format, int width, int height) { }
             @Override public void surfaceDestroyed(SurfaceHolder holder) {
                 visibleSurface = false;
-                decoderThread.execute(RelayVideoRenderer.this::releaseDecoder);
+                if (!closed) decoderThread.execute(RelayVideoRenderer.this::releaseDecoder);
             }
-        });
+        };
+        view.getHolder().addCallback(surfaceCallback);
     }
 
     public void startSession(String sid, int[] dims, String videoCodec) {
-        if (!ScrcpyRelayWire.validSessionId(sid) || dims == null || dims.length != 4
+        if (closed || !ScrcpyRelayWire.validSessionId(sid)
+                || dims == null || dims.length != 4
                 || dims[2] < 16 || dims[3] < 16
                 || dims[2] > 8192 || dims[3] > 8192
-                || !(videoCodec.equals("h264") || videoCodec.equals("h265"))) {
+                || !("h264".equals(videoCodec) || "h265".equals(videoCodec))) {
             listener.onState("收到无效的远程视频编码设置");
             return;
         }
@@ -87,7 +93,8 @@ public final class RelayVideoRenderer {
     }
 
     public void onPacket(String sid, byte[] packet) {
-        if (!sid.equals(session) || !ScrcpyRelayPacketPolicy.allowedVideoPayload(packet))
+        if (closed || !sid.equals(session)
+                || !ScrcpyRelayPacketPolicy.allowedVideoPayload(packet))
             return;
         if (packet[1] == 2) {
             // Never let an avalanche of stale P-frames evict CONFIG.
@@ -176,6 +183,7 @@ public final class RelayVideoRenderer {
 
     public void stopSession() {
         session = "";
+        if (closed) return;
         decoderThread.getQueue().clear();
         decoderThread.execute(() -> {
             releaseDecoder();
@@ -184,7 +192,10 @@ public final class RelayVideoRenderer {
     }
 
     public void close() {
+        if (closed) return;
         stopSession();
+        closed = true;
+        surfaceView.getHolder().removeCallback(surfaceCallback);
         decoderThread.shutdown();
     }
 }
