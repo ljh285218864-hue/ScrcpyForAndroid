@@ -23,8 +23,9 @@ public final class NoVpnTransportPolicy {
     }
 
     public static String pendingMessage() {
-        return "无 VPN 异地连接正在开发。此版本不启用系统 VPN、"
-                + "不请求 VPN 授权，也不会使用旧 WireGuard 通道。"
-                + "局域网配对功能不受影响；异地观看需待新传输通道完成。";
+        return "无 VPN 配对与 HTTPS 连接信令已加入测试版。"
+                + "此版本不启用系统 VPN、不请求 VPN 授权，也不会使用旧 WireGuard 通道。"
+                + "中转服务器尚未部署，屏幕视频尚未实现。"
+                + "局域网兼容模式不受影响；请勿把信令在线当成可以观看。";
     }
 }
