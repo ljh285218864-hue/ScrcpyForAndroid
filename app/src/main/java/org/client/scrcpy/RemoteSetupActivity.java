@@ -38,6 +38,8 @@ import java.util.function.Consumer;
  * No Android system VPN service, activation UI or import is available.
  */
 public final class RemoteSetupActivity extends Activity {
+    public static final String EXTRA_REQUEST_WATCH_ONCE =
+            "org.client.scrcpy.EXTRA_REQUEST_WATCH_ONCE";
     private static final int SCAN = 9371;
     private static final int CAMERA = 9372;
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -81,6 +83,8 @@ public final class RemoteSetupActivity extends Activity {
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        requestAfterConnect = getIntent().getBooleanExtra(
+                EXTRA_REQUEST_WATCH_ONCE, false);
         setTitle("ScreenSync 无 VPN 配对");
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
