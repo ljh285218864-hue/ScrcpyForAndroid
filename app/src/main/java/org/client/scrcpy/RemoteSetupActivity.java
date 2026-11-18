@@ -3,11 +3,6 @@ package org.client.scrcpy;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
-import android.app.PendingIntent;
-import android.os.Build;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
@@ -54,8 +49,6 @@ public final class RemoteSetupActivity extends Activity {
     private NoVpnMediaSocket mediaSocket;
     private NoVpnMediaSocket.Listener mediaListener;
     private String shownIncomingSession = "";
-    private static final String WATCH_CHANNEL = "screensync_incoming_request";
-    private static final int WATCH_NOTICE_ID = 8416;
     private AccessibilityJpegStreamer jpegStreamer;
     private JpegFrameRenderer jpegRenderer;
     private ImageView jpegImage;
@@ -427,9 +420,7 @@ public final class RemoteSetupActivity extends Activity {
                 + NoVpnApi.isRegistered(this)
                 + " accessibility=" + AccessibilityShotService.ready());
         active = true;
-        NotificationManager notifications = (NotificationManager)
-                getSystemService(NOTIFICATION_SERVICE);
-        if (notifications != null) notifications.cancel(WATCH_NOTICE_ID);
+        ScreenSyncWatchNotice.clear(this);
         if (mediaSocket != null) mediaSocket.redispatchIncomingRequest();
         ui.removeCallbacks(refresh);
         if (!NoVpnApi.isRegistered(this)) refreshStatus();
@@ -555,36 +546,6 @@ public final class RemoteSetupActivity extends Activity {
         }
     }
 
-    private void notifyIncomingWatchRequest() {
-        if (Build.VERSION.SDK_INT >= 33
-                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                        != PackageManager.PERMISSION_GRANTED) {
-            ScreenSyncDiagnostics.record(this, "WATCH_NOTICE", "notification_denied");
-            return;
-        }
-        NotificationManager manager = (NotificationManager)
-                getSystemService(NOTIFICATION_SERVICE);
-        if (manager == null || !manager.areNotificationsEnabled()) return;
-        if (Build.VERSION.SDK_INT >= 26) {
-            manager.createNotificationChannel(new NotificationChannel(WATCH_CHANNEL,
-                    "ScreenSync 观看申请", NotificationManager.IMPORTANCE_HIGH));
-        }
-        Intent open = new Intent(this, RemoteSetupActivity.class);
-        open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP
-                | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        PendingIntent tap = PendingIntent.getActivity(this, WATCH_NOTICE_ID, open,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Notification.Builder builder = Build.VERSION.SDK_INT >= 26
-                ? new Notification.Builder(this, WATCH_CHANNEL)
-                : new Notification.Builder(this);
-        builder.setSmallIcon(android.R.drawable.ic_menu_view)
-                .setContentTitle("配对手机申请观看")
-                .setContentText("点击打开 ScreenSync，确认是否开始本次屏幕共享")
-                .setAutoCancel(true).setContentIntent(tap)
-                .setOnlyAlertOnce(true);
-        manager.notify(WATCH_NOTICE_ID, builder.build());
-    }
-
     private void connectMediaTest() {
         if (!NoVpnApi.isRegistered(this) || !"paired".equals(currentState)) {
             report("请先完成两台手机的扫码配对");
@@ -664,7 +625,7 @@ public final class RemoteSetupActivity extends Activity {
                         if (!active || isFinishing()) {
                             ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
                                     "WATCH_INBOUND", "background_notification");
-                            notifyIncomingWatchRequest();
+                            ScreenSyncWatchNotice.show(RemoteSetupActivity.this);
                             return;
                         }
                         if (sid.equals(shownIncomingSession)) return;
