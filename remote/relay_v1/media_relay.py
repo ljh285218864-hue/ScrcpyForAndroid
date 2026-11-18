@@ -149,6 +149,15 @@ class MediaRelay:
             if session.expires <= current:
                 await self.discard(session_id, "session_expired")
 
+    async def maintain_sessions(self) -> None:
+        while True:
+            await asyncio.sleep(1)
+            for session_id, session in list(self.sessions.items()):
+                if session.expires <= time.monotonic():
+                    await self.discard(session_id, "session_expired")
+                elif not self.valid_pair(session):
+                    await self.discard(session_id, "pairing_revoked")
+
     def paired_online(self, client: Device) -> str | None:
         with api.db_connect() as db:
             caller = db.execute(
@@ -354,7 +363,12 @@ async def run():
                      origins=[None], compression=None,
                      max_size=MAX_BINARY, max_queue=2,
                      ping_interval=20, ping_timeout=20) as server:
-        await server.serve_forever()
+        maintenance = asyncio.create_task(relay.maintain_sessions())
+        try:
+            await server.serve_forever()
+        finally:
+            maintenance.cancel()
+            await asyncio.gather(maintenance, return_exceptions=True)
 
 
 if __name__ == "__main__":
