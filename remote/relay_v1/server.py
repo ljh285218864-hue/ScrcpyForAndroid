@@ -33,6 +33,11 @@ ALLOWED_EVENTS = {"hello", "watch_request", "watch_decline", "watch_accept",
 # No WebRTC offer/answer/ICE and no ADB-command channel in this relay.
 MAX_SIGNAL_AGE = 90
 MAX_SIGNAL_COUNT = 32
+# Self-service enrollment has no administrator-issued code. Disable by default
+# until this trusted install is explicitly configured and verified.
+SELF_SERVICE_ENABLED = os.getenv("SS_ALLOW_SELF_SERVICE", "0") == "1"
+MAX_SELF_REGISTER_HOUR = max(1, min(100, int(os.getenv("SS_SELF_REGISTER_HOUR", "12"))))
+MAX_SELF_REGISTER_DAY = max(1, min(300, int(os.getenv("SS_SELF_REGISTER_DAY", "30"))))
 STALE_ONLINE_SECONDS = 45
 LOCK = threading.RLock()
 
@@ -78,6 +83,14 @@ def schema() -> None:
         CREATE TABLE IF NOT EXISTS codes(
             hash TEXT PRIMARY KEY, expires INTEGER NOT NULL
         );
+        -- Global admission throttling for anonymous owner enrollment.
+        -- No client IP, QR contents or identity are stored in this audit.
+        CREATE TABLE IF NOT EXISTS self_register_events(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS self_register_age
+            ON self_register_events(created);
         CREATE TABLE IF NOT EXISTS invites(
             hash TEXT PRIMARY KEY, group_id TEXT NOT NULL,
             guest_id TEXT, expires INTEGER NOT NULL
@@ -193,6 +206,39 @@ def dispatch(db: sqlite3.Connection, path: str, body: dict, authorization: str) 
     timestamp = now()
     db.execute("DELETE FROM codes WHERE expires<?", (timestamp,))
     db.execute("DELETE FROM signals WHERE created<?", (timestamp-MAX_SIGNAL_AGE,))
+    if path == "/v1/self-register":
+        # Never turn signaling registration into automatic screen-sharing
+        # permission. A guest can join ONLY with the one-time QR invite, and
+        # a paired source still explicitly approves each media session.
+        if not SELF_SERVICE_ENABLED:
+            raise ApiError("SELF_REGISTER_DISABLED", 403)
+        name = nice_name(body.get("name"))
+        db.execute("DELETE FROM self_register_events WHERE created<?",
+                   (timestamp - 86400,))
+        if db.execute("SELECT COUNT(*) FROM self_register_events "
+                      "WHERE created>=?", (timestamp - 3600,)).fetchone()[0] \
+                >= MAX_SELF_REGISTER_HOUR:
+            raise ApiError("REGISTRATION_RATE_LIMIT", 429)
+        if db.execute("SELECT COUNT(*) FROM self_register_events "
+                      "WHERE created>=?", (timestamp - 86400,)).fetchone()[0] \
+                >= MAX_SELF_REGISTER_DAY:
+            raise ApiError("REGISTRATION_RATE_LIMIT", 429)
+        if db.execute("SELECT COUNT(*) FROM groups").fetchone()[0] >= MAX_GROUPS:
+            raise ApiError("GROUP_LIMIT", 409)
+        device_id = secrets.token_hex(16)
+        group_id = secrets.token_hex(16)
+        token = secrets.token_hex(24)
+        invite_code = secrets.token_hex(24)
+        db.execute("INSERT INTO groups VALUES (?,?)", (group_id, device_id))
+        db.execute("INSERT INTO devices VALUES (?,?,?,?,?,'ready',0)",
+                   (device_id, group_id, "owner", name, sha(token)))
+        db.execute("INSERT INTO invites VALUES (?,?,NULL,?)",
+                   (sha(invite_code), group_id, timestamp + 300))
+        db.execute("INSERT INTO self_register_events(created) VALUES (?)",
+                   (timestamp,))
+        return {"device_id": device_id, "group_id": group_id,
+                "token": token, "state": "ready",
+                "invite_code": invite_code, "expires_in": 300}
     if path == "/v1/activate":
         code = valid_token(body.get("code"))
         name = nice_name(body.get("name"))
@@ -369,7 +415,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path
-        if path not in ("/v1/activate", "/v1/join", "/v1/status", "/v1/invite",
+        if path not in ("/v1/self-register", "/v1/activate", "/v1/join",
+                        "/v1/status", "/v1/invite",
                         "/v1/approve", "/v1/decline", "/v1/revoke", "/v1/heartbeat",
                         "/v1/signal/send", "/v1/signal/poll"):
             self.reply(404, {"error": "NOT_FOUND"})
