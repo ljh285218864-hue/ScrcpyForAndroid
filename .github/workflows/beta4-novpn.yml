@@ -144,8 +144,10 @@ jobs:
           PY
       - name: Verify no Android VPN component then unit tests and APK
         env:
-          SCREENSYNC_NOVPN_URL: ${{ vars.SCREENSYNC_NOVPN_URL }}
-          SCREENSYNC_MEDIA_URL: ${{ vars.SCREENSYNC_MEDIA_URL }}
+          # Dedicated Osaka Beta4 test server. Do not use old/unset repo variables.
+          # Gradle's fail-closed invalid defaults remain unchanged for other builds.
+          SCREENSYNC_NOVPN_URL: https://relay.privyluxe.com:8443
+          SCREENSYNC_MEDIA_URL: wss://relay.privyluxe.com:8443/media
         run: |
           set -euo pipefail
           if grep -E 'android.net.VpnService|BIND_VPN_SERVICE' app/src/main/AndroidManifest.xml; then
@@ -164,14 +166,33 @@ jobs:
             echo "VPN service unexpectedly present in final APK" >&2
             exit 1
           fi
-          cp "$apk" ScreenSync-Beta4-NoVPN-PreServer-Experimental-arm64.apk
-          sha256sum ScreenSync-Beta4-NoVPN-PreServer-Experimental-arm64.apk \
-            > ScreenSync-Beta4-NoVPN-PreServer-Experimental-arm64.sha256
+          echo "Verify the assembled APK DEX includes the Osaka HTTPS/WSS endpoints:"
+          python3 - "$apk" <<'PY'
+          import sys, zipfile
+          apk = sys.argv[1]
+          with zipfile.ZipFile(apk) as zf:
+              dex_files = [n for n in zf.namelist() if n.startswith("classes") and n.endswith(".dex")]
+              assert dex_files, "APK does not contain classes DEX"
+              payload = b"".join(zf.read(n) for n in dex_files)
+          required = [
+              b"https://relay.privyluxe.com:8443",
+              b"wss://relay.privyluxe.com:8443/media",
+          ]
+          for endpoint in required:
+              assert endpoint in payload, "Missing compiled BuildConfig endpoint: " + endpoint.decode()
+              print("PASS embedded:", endpoint.decode())
+          for forbidden in (b"https://relay.invalid", b"wss://relay.invalid/media"):
+              assert forbidden not in payload, "Invalid placeholder endpoint found inside compiled DEX"
+          print("PASS: invalid placeholder URLs absent from compiled DEX")
+          PY
+          cp "$apk" ScreenSync-Beta4-NoVPN-Osaka8443-Test-arm64.apk
+          sha256sum ScreenSync-Beta4-NoVPN-Osaka8443-Test-arm64.apk \
+            > ScreenSync-Beta4-NoVPN-Osaka8443-Test-arm64.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: ScreenSync-Beta4-NoVPN-PreServer-Experimental
+          name: ScreenSync-Beta4-NoVPN-Osaka8443-Test
           path: |
-            ScreenSync-Beta4-NoVPN-PreServer-Experimental-arm64.apk
-            ScreenSync-Beta4-NoVPN-PreServer-Experimental-arm64.sha256
+            ScreenSync-Beta4-NoVPN-Osaka8443-Test-arm64.apk
+            ScreenSync-Beta4-NoVPN-Osaka8443-Test-arm64.sha256
           retention-days: 14
           if-no-files-found: error
