@@ -119,6 +119,33 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ConnectionClosed):
             await socket.recv()
 
+    async def test_connection_cap_rejects_before_authentication(self):
+        with patch.object(media, "MAX_CONNECTIONS", 1):
+            first = await connect(self.url, compression=None)
+            self.sockets.append(first)
+            second = await connect(self.url, compression=None)
+            self.sockets.append(second)
+            with self.assertRaises(ConnectionClosed):
+                await asyncio.wait_for(second.recv(), 2)
+            self.assertEqual(second.close_code, 4008)
+            await first.close()
+
+    async def test_command_flood_closes_only_offending_device(self):
+        one, _ = self.ids["a"]
+        third, _ = self.ids["b"]
+        offender = await self.login(one)
+        other = await self.login(third)
+        with patch.object(media, "MAX_COMMANDS_PER_SECOND", 1):
+            self.relay.online[one].command_window = media.time.monotonic() + 60
+            await offender.send(json.dumps({"type": "hello"}))
+            await self.read(offender)
+            await offender.send(json.dumps({"type": "hello"}))
+            with self.assertRaises(ConnectionClosed):
+                await offender.recv()
+            self.assertEqual(offender.close_code, 4008)
+        await other.send(json.dumps({"type": "hello"}))
+        self.assertEqual((await self.read(other))["type"], "peer_presence")
+
     async def test_late_old_connection_cleanup_preserves_replacement_session(self):
         one, two = self.ids["a"]
         authenticated = asyncio.Event()
