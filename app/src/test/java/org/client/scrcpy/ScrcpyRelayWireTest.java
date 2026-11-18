@@ -14,6 +14,19 @@ public final class ScrcpyRelayWireTest {
         return packet;
     }
 
+    @Test public void sharedGoldenVectorMatchesPythonByteForByte() {
+        byte[] packet = new byte[14];
+        packet[0] = 1; packet[1] = 1;
+        packet[10] = 1; packet[11] = 2; packet[12] = 3; packet[13] = 4;
+        byte[] result = ScrcpyRelayWire.encode(SESSION, packet);
+        StringBuilder hex = new StringBuilder();
+        for (byte value : result)
+            hex.append(String.format(java.util.Locale.US, "%02x", value & 255));
+        assertEquals("abcdef0123456789abcdef0123456789"
+                + "0000000e0101000000000000000001020304", hex.toString());
+        assertArrayEquals(packet, ScrcpyRelayWire.decode(result).videoPacket);
+    }
+
     @Test public void binaryFrameRoundTripsWithPythonRelayFormat() {
         byte[] p = video(1);
         byte[] frame = ScrcpyRelayWire.encode(SESSION, p);
