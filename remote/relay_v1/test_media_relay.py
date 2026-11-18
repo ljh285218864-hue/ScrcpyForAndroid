@@ -5,6 +5,8 @@ Public exposure requires an independently configured HTTPS/WSS reverse proxy.
 No Android ADB or screen capture is started in these tests.
 """
 import json
+import asyncio
+from unittest.mock import patch
 import tempfile
 import unittest
 from pathlib import Path
@@ -117,6 +119,46 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ConnectionClosed):
             await socket.recv()
 
+    async def test_late_old_connection_cleanup_preserves_replacement_session(self):
+        one, two = self.ids["a"]
+        authenticated = asyncio.Event()
+        disconnected = asyncio.Event()
+
+        class DelayedSocket:
+            async def recv(inner):
+                return json.dumps({"type": "auth", "token": self.tokens[one]})
+
+            async def send(inner, payload):
+                authenticated.set()
+
+            def __aiter__(inner):
+                return inner
+
+            async def __anext__(inner):
+                await disconnected.wait()
+                raise StopAsyncIteration
+
+        old = DelayedSocket()
+        task = asyncio.create_task(self.relay.handle(old))
+        try:
+            await asyncio.wait_for(authenticated.wait(), 2)
+            replacement = media.Device(object(), one, "a" * 32,
+                                       api.sha(self.tokens[one]))
+            self.relay.online[one] = replacement
+            sid = "c" * 32
+            self.relay.sessions[sid] = media.Session(
+                sid, one, two, "a" * 32, media.time.monotonic() + 30)
+            # The old transport can finish closing after a replacement has
+            # already established a newly consented session.
+            with patch.object(self.relay, "tell", return_value=True):
+                disconnected.set()
+                await asyncio.wait_for(task, 2)
+            self.assertIs(self.relay.online[one], replacement)
+            self.assertIn(sid, self.relay.sessions)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     async def test_video_must_have_live_source_approval(self):
         one, two = self.ids["a"]
         viewer = await self.login(one)
@@ -151,6 +193,22 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
         await viewer.send(json.dumps({"type": "watch_end", "session_id": sid}))
         self.assertEqual((await self.read(viewer))["type"], "watch_end")
         self.assertEqual((await self.read(source))["type"], "watch_end")
+
+    async def test_reconnect_revokes_old_session_and_requires_new_consent(self):
+        one, two = self.ids["a"]
+        viewer, source = await self.login(one), await self.login(two)
+        old_sid = await self.open_session(viewer, source)
+        replacement = await self.login(one)
+        ended = await asyncio.wait_for(self.read(source), 2)
+        self.assertEqual(ended["type"], "watch_end")
+        self.assertEqual(ended["session_id"], old_sid)
+        self.assertNotIn(old_sid, self.relay.sessions)
+        with self.assertRaises(ConnectionClosed):
+            await viewer.recv()
+        new_sid = await self.open_session(replacement, source)
+        self.assertNotEqual(new_sid, old_sid)
+        await source.send(media.video_frame(new_sid, video_packet()))
+        self.assertEqual((await self.read(source))["code"], "VIDEO_SESSION_NOT_ACTIVE")
 
     async def test_two_customer_pairs_stream_independently_and_reverse_watch(self):
         a1, b1 = self.ids["a"]
@@ -297,3 +355,4 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
