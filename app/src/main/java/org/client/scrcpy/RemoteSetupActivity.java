@@ -11,9 +11,8 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
-import android.text.InputType;
-import android.widget.EditText;
-import android.view.SurfaceView;
+import android.view.View;
+import android.widget.FrameLayout;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -44,18 +43,14 @@ public final class RemoteSetupActivity extends Activity {
     private static final int CAMERA = 9372;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private TextView status;
-    private Button invite, approve, decline, test, revoke, backgroundToggle;
-    private Button mediaConnectButton, mediaRequestButton, mediaEndButton;
+    private Button invite, approve, decline, revoke;
+    private Button mediaRequestButton, mediaEndButton;
     private TextView mediaState;
     private NoVpnMediaSocket mediaSocket;
-    private LocalScrcpyStreamer localStreamer;
     private AccessibilityJpegStreamer jpegStreamer;
     private JpegFrameRenderer jpegRenderer;
     private ImageView jpegImage;
-    private Button modeButton;
-    private boolean useJpegCapture = true;
-    private RelayVideoRenderer renderer;
-    private SurfaceView remoteVideoSurface;
+    private FullscreenViewer viewerLayer;
     private int receivedVideoFrames;
     private boolean requestAfterConnect;
     private boolean active;
@@ -91,7 +86,7 @@ public final class RemoteSetupActivity extends Activity {
     // for the FIRST phone; the second phone joins using a single pairing QR.
     private Button scanButton, accessibilityButton, notificationsButton;
     private TextView hint;
-    private LinearLayout previewPanel, permissionsPanel;
+    private LinearLayout permissionsPanel;
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -167,39 +162,50 @@ public final class RemoteSetupActivity extends Activity {
                     done -> refreshStatus(), false);
         });
 
-        previewPanel = panel(content);
-        heading(previewPanel, "对方屏幕");
-        jpegImage = new ImageView(this);
-        jpegImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        jpegImage.setBackgroundColor(Color.rgb(30, 37, 50));
-        jpegImage.setContentDescription("配对手机分享的当前屏幕画面");
-        previewPanel.addView(jpegImage, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(285)));
-        jpegRenderer = new JpegFrameRenderer(jpegImage);
-        mediaState = note(previewPanel, "等待对方允许屏幕共享");
-        mediaState.setPadding(dp(2), dp(8), dp(2), 0);
+        // The home screen has no black video placeholder; the remote image
+        // lives only in the fullscreen layer created below.
+        mediaState = note(statusPanel, "手机连接就绪后，点击观看对方屏幕");
+        mediaState.setPadding(0, dp(8), 0, dp(2));
 
         mediaRequestButton = action(content, "观看对方屏幕", v -> {
-            ScreenSyncDiagnostics.record(this, "USER_ACTION", "watch_requested");
+            ScreenSyncDiagnostics.record(this, "USER_ACTION", "watch_fullscreen");
+            if (viewerLayer != null) {
+                viewerLayer.openPicture(jpegRenderer != null
+                        && jpegRenderer.hasDisplayedFrame());
+            }
+            if (mediaSocket != null && mediaSocket.hasActiveViewerSession()) {
+                // Closing the viewer never cancels an already approved session.
+                return;
+            }
+            if (mediaSocket != null && mediaSocket.hasViewerRequestOutstanding()) {
+                if (viewerLayer != null)
+                    viewerLayer.showWaiting("等待对方手机确认本次共享…");
+                return;
+            }
             requestAfterConnect = true;
             if (mediaSocket == null) {
                 connectMediaTest();
             } else if (mediaSocket.requestWatch()) {
                 requestAfterConnect = false;
-                mediaState.setText("请求已发送，等待对方手机同意");
+                mediaState.setText("已发送观看请求，等待对方手机同意");
+                if (viewerLayer != null)
+                    viewerLayer.showWaiting("已发送请求，等待对方手机同意…");
             } else {
-                mediaState.setText("连接服务器中，正在准备观看请求…");
+                mediaState.setText("连接服务器中…");
+                if (viewerLayer != null)
+                    viewerLayer.showWaiting("连接服务器中…");
             }
         });
         primary(mediaRequestButton);
 
-        mediaEndButton = action(content, "停止观看 / 停止共享", v -> {
+        mediaEndButton = action(content, "结束本次观看 / 共享", v -> {
             ScreenSyncDiagnostics.record(this, "USER_ACTION", "stop_pressed");
             requestAfterConnect = false;
             stopLocalStream();
             if (jpegRenderer != null) jpegRenderer.stopSession();
             if (mediaSocket != null) mediaSocket.endSession();
-            mediaState.setText("已停止共享");
+            if (viewerLayer != null) viewerLayer.closePicture();
+            mediaState.setText("本次共享已结束，配对仍然有效");
         });
 
         permissionsPanel = panel(content);
@@ -242,7 +248,20 @@ public final class RemoteSetupActivity extends Activity {
                     .setNegativeButton("取消", null).show());
 
         action(content, "诊断日志 · 排查黑屏", v -> showDiagnostics());
-        setContentView(scroll);
+        FrameLayout root = new FrameLayout(this);
+        root.addView(scroll, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+        viewerLayer = new FullscreenViewer(this);
+        root.addView(viewerLayer, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+        jpegImage = viewerLayer.image();
+        jpegRenderer = new JpegFrameRenderer(jpegImage);
+        jpegRenderer.setFirstFrameCallback(() -> {
+            if (viewerLayer != null) viewerLayer.hideWaiting();
+        });
+        setContentView(root);
         ScreenSyncDiagnostics.environment(this);
         ScreenSyncDiagnostics.record(this, "APP", "simple_ui_started");
         refreshButtons();
@@ -369,6 +388,14 @@ public final class RemoteSetupActivity extends Activity {
         ui.postDelayed(this::refreshPermissions, 600);
     }
 
+    @Override public void onBackPressed() {
+        if (viewerLayer != null && viewerLayer.isShowing()) {
+            viewerLayer.closePicture();
+            return;
+        }
+        super.onBackPressed();
+    }
+
     @Override protected void onPause() {
         active = false;
         requestAfterConnect = false;
@@ -379,7 +406,6 @@ public final class RemoteSetupActivity extends Activity {
         ScreenSyncDiagnostics.record(this, "APP_PAUSE",
                 "sharing_continues=" + jpegShareContinues);
         if (!jpegShareContinues) stopLocalStream();
-        if (renderer != null) renderer.stopSession();
         if (jpegRenderer != null) jpegRenderer.stopSession();
         if (mediaSocket != null && !jpegShareContinues) {
             mediaSocket.close();
@@ -389,14 +415,11 @@ public final class RemoteSetupActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        if (viewerLayer != null) viewerLayer.closePicture();
         if (jpegStreamer == null) stopLocalStream();
         if (jpegRenderer != null) {
             jpegRenderer.close();
             jpegRenderer = null;
-        }
-        if (renderer != null) {
-            renderer.close();
-            renderer = null;
         }
         super.onDestroy();
     }
@@ -405,132 +428,34 @@ public final class RemoteSetupActivity extends Activity {
         AccessibilityJpegStreamer shot = jpegStreamer;
         jpegStreamer = null;
         if (shot != null) shot.stop();
-        LocalScrcpyStreamer current = localStreamer;
-        localStreamer = null;
-        if (current != null) current.stop();
     }
 
     private void startLocalStream() {
-        if (!active || mediaSocket == null || localStreamer != null || jpegStreamer != null)
-            return;
-        if (useJpegCapture) {
-            if (!AccessibilityShotService.ready()) {
-                ScreenSyncDiagnostics.record(this, "SOURCE_START", "accessibility_not_ready");
-                mediaState.setText("请先手动开启本机无障碍截图权限");
-                mediaSocket.endSourceSession();
-                return;
-            }
-            final AccessibilityJpegStreamer[] ref = new AccessibilityJpegStreamer[1];
-            AccessibilityJpegStreamer shot = new AccessibilityJpegStreamer(this, mediaSocket,
-                    reason -> {
-                        if (jpegStreamer == ref[0]) {
-                            jpegStreamer = null;
-                            if (active) mediaState.setText(reason);
-                        }
-                    });
-            ref[0] = shot;
-            if (shot.start()) {
-                ScreenSyncDiagnostics.record(this, "SOURCE_START", "jpeg_stream_started");
-                jpegStreamer = shot;
-                mediaState.setText("JPEG 截图共享中；可从通知栏停止");
-            } else {
-                ScreenSyncDiagnostics.record(this, "SOURCE_START", "jpeg_stream_start_failed");
-                mediaState.setText("启动失败：检查无障碍和通知权限");
-                mediaSocket.endSourceSession();
-            }
+        if (!active || mediaSocket == null || jpegStreamer != null) return;
+        if (!AccessibilityShotService.ready()) {
+            ScreenSyncDiagnostics.record(this, "SOURCE_START", "accessibility_not_ready");
+            mediaState.setText("需要在本机设置中开启无障碍截图权限");
+            mediaSocket.endSourceSession();
             return;
         }
-        final LocalScrcpyStreamer[] ref = new LocalScrcpyStreamer[1];
-        LocalScrcpyStreamer streamer = new LocalScrcpyStreamer(this, mediaSocket,
-                new LocalScrcpyStreamer.Listener() {
-                    @Override public void onState(String message) {
-                        if (active && localStreamer == ref[0])
-                            mediaState.setText(message);
-                    }
-                    @Override public void onStopped(String reason) {
-                        if (localStreamer != ref[0]) return;
-                        localStreamer = null;
-                        if (active && mediaSocket != null) {
-                            mediaState.setText("本机视频结束：" + reason);
-                            mediaSocket.endSourceSession();
-                        }
+        final AccessibilityJpegStreamer[] ref = new AccessibilityJpegStreamer[1];
+        AccessibilityJpegStreamer shot = new AccessibilityJpegStreamer(
+                this, mediaSocket, reason -> {
+                    if (jpegStreamer == ref[0]) {
+                        jpegStreamer = null;
+                        if (active) mediaState.setText(reason);
                     }
                 });
-        ref[0] = streamer;
-        localStreamer = streamer;
-        if (!streamer.startAfterLocalApproval()) localStreamer = null;
-    }
-
-    private void showLocalAdbPairDialog() {
-        String ownIp = PairQrCode.localWifiIp(this);
-        if (ownIp == null || !PairQrCode.isPrivateIpv4(ownIp)) {
-            report("请先连接 Wi-Fi，在本机设置打开无线调试");
-            return;
+        ref[0] = shot;
+        if (shot.start()) {
+            ScreenSyncDiagnostics.record(this, "SOURCE_START", "jpeg_stream_started");
+            jpegStreamer = shot;
+            mediaState.setText("屏幕共享中，可从通知栏立即停止");
+        } else {
+            ScreenSyncDiagnostics.record(this, "SOURCE_START", "jpeg_start_failed");
+            mediaState.setText("共享启动失败，请检查无障碍与通知权限");
+            mediaSocket.endSourceSession();
         }
-        LinearLayout input = new LinearLayout(this);
-        input.setOrientation(LinearLayout.VERTICAL);
-        input.setPadding(dp(18), dp(8), dp(18), 0);
-        EditText port = new EditText(this);
-        port.setHint("系统显示的配对端口（不是连接端口）");
-        port.setInputType(InputType.TYPE_CLASS_NUMBER);
-        input.addView(port);
-        EditText code = new EditText(this);
-        code.setHint("系统显示的六位配对码");
-        code.setInputType(InputType.TYPE_CLASS_NUMBER
-                | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
-        input.addView(code);
-        new AlertDialog.Builder(this)
-                .setTitle("首次配对本机无线调试")
-                .setMessage("先进入手机设置 → 开发者选项 → 无线调试"
-                        + " → 使用配对码配对设备。"
-                        + "\n请只输入本机系统显示的端口和六位码，"
-                        + "不会上传到 ScreenSync 服务器。"
-                        + "\n本机 Wi-Fi 地址：" + ownIp)
-                .setView(input)
-                .setPositiveButton("开始本机授权", (dialog, which) -> {
-                    String p = port.getText().toString().trim();
-                    String pin = code.getText().toString().trim();
-                    code.setText(""); // Never save or log the 6-digit code.
-                    try {
-                        final int pairPort = Integer.parseInt(p);
-                        if (!TrustedPairEndpoint.validAdbPort(pairPort)
-                                || !pin.matches("[0-9]{6}")) {
-                            report("端口或配对码格式不正确");
-                            return;
-                        }
-                        runNetwork(() -> {
-                            org.client.scrcpy.utils.ExecUtil.AdbCommandResult result =
-                                    org.client.scrcpy.utils.AdbHelper.adbPair(
-                                            this, ownIp, pairPort, pin);
-                            if (result.exitCode != 0 || result.timedOut) {
-                                throw new IllegalStateException(
-                                        "本机无线调试配对失败或超时，请重新打开配对码");
-                            }
-                            return new JSONObject().put("result", "paired_locally");
-                        }, result -> report("本机 ADB 配对已完成，请点击检查无线调试"),
-                                false);
-                    } catch (NumberFormatException invalid) {
-                        report("无线调试配对端口不是有效数字");
-                    }
-                })
-                .setNegativeButton("取消", null).show();
-    }
-
-    private void checkLocalAdbStatus() {
-        runNetwork(() -> {
-            String ip = PairQrCode.localWifiIp(this);
-            if (ip == null || !PairQrCode.isPrivateIpv4(ip))
-                throw new IllegalStateException("本机未连接 Wi-Fi");
-            org.client.scrcpy.utils.ExecUtil.AdbCommandResult mdns =
-                    org.client.scrcpy.utils.AdbHelper.adbMdnsServices(this);
-            int port = SystemAdbQrPairingSession.findAdbConnectPort(
-                    mdns.combinedOutput(), ip);
-            if (!TrustedPairEndpoint.validAdbPort(port))
-                throw new IllegalStateException("未发现本机无线调试连接端口");
-            if (!org.client.scrcpy.utils.AdbHelper.isDeviceOnline(this, ip, port))
-                throw new IllegalStateException("本机尚未授权 ADB，或无线调试已关闭");
-            return new JSONObject().put("state", "authorized");
-        }, result -> report("已确认本机 ADB 连接授权有效"), false);
     }
 
     private String friendlyMediaStatus(String status) {
@@ -590,6 +515,18 @@ public final class RemoteSetupActivity extends Activity {
                         }
                         if (!active || isFinishing()) return;
                         mediaState.setText(friendlyMediaStatus(value));
+                        if (viewerLayer != null && viewerLayer.isShowing()) {
+                            if ("awaiting_peer_approval".equals(value))
+                                viewerLayer.showWaiting("正在等待对方确认共享…");
+                            else if ("viewer_session_active".equals(value))
+                                viewerLayer.showWaiting("对方已同意，等待画面…");
+                            else if ("disconnected".equals(value)
+                                    || "network_unavailable".equals(value))
+                                viewerLayer.showWaiting("网络连接中断，请关闭后重试");
+                            else if ("protocol_error".equals(value)
+                                    || value.startsWith("server_error:"))
+                                viewerLayer.showWaiting(friendlyMediaStatus(value));
+                        }
                         if ("authenticated".equals(value) && requestAfterConnect) {
                             if (mediaSocket != null && mediaSocket.requestWatch()) {
                                 requestAfterConnect = false;
@@ -627,9 +564,7 @@ public final class RemoteSetupActivity extends Activity {
                                 .setMessage("对方设备 ID 尾号：" +
                                         viewerId.substring(Math.max(0, viewerId.length() - 6))
                                         + "\n是否允许对方观看你手机的当前屏幕？"
-                                        + (useJpegCapture
-                                           ? "\n将使用无障碍截图发送屏幕画面；通知栏显示正在共享。"
-                                           : "\n将使用本机已授权的 ADB + scrcpy 发送视频。")
+                                        + "\n将使用本机已授权的无障碍截图发送画面；通知栏显示正在共享。"
                                         + "\n可点击停止共享立即结束。")
                                 .setPositiveButton("允许本次屏幕共享", (dialog, which) -> {
                                     ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
@@ -648,28 +583,26 @@ public final class RemoteSetupActivity extends Activity {
                                                         String codec) {
                         ScreenSyncDiagnostics.record(RemoteSetupActivity.this, "VIEW_SETUP",
                                 "codec=" + codec + " active=" + active);
-                        if (active && "jpeg".equals(codec) && jpegRenderer != null) {
+                        if (!active) return;
+                        if ("jpeg".equals(codec) && jpegRenderer != null) {
                             jpegRenderer.startSession(sid);
                             runOnUiThread(() -> {
-                                jpegImage.setVisibility(android.view.View.VISIBLE);
-                                if (remoteVideoSurface != null)
-                                    remoteVideoSurface.setVisibility(android.view.View.GONE);
-                                mediaState.setText("等待对方手机发送画面…");
+                                receivedVideoFrames = 0;
+                                if (viewerLayer != null && viewerLayer.isShowing())
+                                    viewerLayer.showWaiting("正在等待对方发送屏幕画面…");
+                                mediaState.setText("已建立画面传输，等待首帧");
                             });
-                        } else if (active && renderer != null) {
+                        } else {
+                            ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
+                                    "VIEW_SETUP", "unsupported_video_codec=" + codec);
                             runOnUiThread(() -> {
-                                jpegImage.setVisibility(android.view.View.GONE);
-                                remoteVideoSurface.setVisibility(android.view.View.VISIBLE);
-                            });
-                            renderer.startSession(sid, dimensions, codec);
-                            runOnUiThread(() -> {
-                                if (active && !isFinishing())
-                                    mediaState.setText("视频配置 " + codec + "；等待远端关键帧");
+                                mediaState.setText("对方视频格式不兼容，请双方安装 JPEG 修复版");
+                                if (viewerLayer != null)
+                                    viewerLayer.showWaiting("对方视频格式不兼容");
                             });
                         }
                     }
                     @Override public void onVideoPacket(String sid, byte[] packet) {
-                        // Off UI thread: renderer uses bounded decode queue.
                         if (!active) return;
                         if (packet != null && packet.length > 0 && packet[0] == 2) {
                             JpegFrameRenderer target = jpegRenderer;
@@ -680,9 +613,6 @@ public final class RemoteSetupActivity extends Activity {
                                         if (active) mediaState.setText("正在观看对方屏幕");
                                     });
                             }
-                        } else {
-                            RelayVideoRenderer target = renderer;
-                            if (target != null) target.onPacket(sid, packet);
                         }
                     }
                 });
@@ -753,9 +683,6 @@ public final class RemoteSetupActivity extends Activity {
                     ? android.view.View.VISIBLE : android.view.View.GONE);
             decline.setEnabled(!busy);
         }
-        if (previewPanel != null)
-            previewPanel.setVisibility(paired ? android.view.View.VISIBLE
-                    : android.view.View.GONE);
         if (mediaRequestButton != null) {
             mediaRequestButton.setVisibility(paired
                     ? android.view.View.VISIBLE : android.view.View.GONE);
