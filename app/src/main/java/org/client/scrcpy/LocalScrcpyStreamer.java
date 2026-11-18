@@ -29,7 +29,8 @@ public final class LocalScrcpyStreamer {
         void onStopped(String reason);
     }
 
-    private static final int FORWARD_PORT = Scrcpy.LOCAL_FORWART_PORT;
+    // Dedicated loopback port: never steal the legacy LAN viewer's 7008.
+    private static final int FORWARD_PORT = 7018;
     private final Context app;
     private final NoVpnMediaSocket relay;
     private final Listener listener;
@@ -91,7 +92,7 @@ public final class LocalScrcpyStreamer {
             opts.setTunnelForward(true);
             opts.setEnableAudioForward(false);
             if (new SendCommands().SendAdbCommands(
-                    app, ownIp, ownPort, FORWARD_PORT, opts)
+                    app, ownIp, ownPort, FORWARD_PORT, opts, running::get)
                     != SendCommands.CmdStatus.SUCCESS) {
                 throw new IllegalStateException("本机 scrcpy 启动失败，检查无线调试");
             }
