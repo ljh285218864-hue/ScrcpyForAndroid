@@ -36,7 +36,11 @@ public final class NoVpnMediaSocket {
     }
 
     private static final OkHttpClient CLIENT = new OkHttpClient.Builder()
-            .pingInterval(20, TimeUnit.SECONDS)
+            // The Python WSS relay already sends Ping frames every 20s and
+            // expects Pong. Using a second 20s client-side watchdog can abort
+            // an otherwise functioning stream on congested mobile networks.
+            // OkHttp still automatically replies to server-initiated pings.
+            .pingInterval(0, TimeUnit.SECONDS)
             .connectTimeout(8, TimeUnit.SECONDS)
             .build();
 
@@ -56,6 +60,9 @@ public final class NoVpnMediaSocket {
     private volatile boolean viewerHasVideoSetup;
     private int reconnectAttempts;
     private int receivedFrames;
+    private volatile long connectedAtMs;
+    private volatile long lastSourceFrameAtMs;
+    private volatile int sourceFramesSent;
     private final Runnable retryConnection = () -> {
         if (shutdown || socket != null) return;
         try {
@@ -105,6 +112,9 @@ public final class NoVpnMediaSocket {
                     ws.close(1000, "stale_connection");
                     return;
                 }
+                connectedAtMs = android.os.SystemClock.elapsedRealtime();
+                ScreenSyncDiagnostics.record(context, "WSS_OPEN",
+                        "server_keepalive=true client_ping=false");
                 try {
                     JSONObject auth = new JSONObject();
                     auth.put("type", "auth");
@@ -166,7 +176,8 @@ public final class NoVpnMediaSocket {
                     clearSessions();
                 }
                 ScreenSyncDiagnostics.record(context, "WSS_CLOSE",
-                        "code=" + code);
+                        "code=" + code + " live_s="
+                        + ((android.os.SystemClock.elapsedRealtime() - connectedAtMs) / 1000));
                 status("disconnected");
                 scheduleReconnect();
             }
@@ -180,7 +191,13 @@ public final class NoVpnMediaSocket {
                 }
                 ScreenSyncDiagnostics.record(context, "WSS_FAIL",
                         "error=" + error.getClass().getSimpleName()
-                                + " http=" + (response == null ? 0 : response.code()));
+                                + " http=" + (response == null ? 0 : response.code())
+                                + " live_s="
+                                + ((android.os.SystemClock.elapsedRealtime() - connectedAtMs) / 1000)
+                                + " sent_frames=" + sourceFramesSent
+                                + " idle_tx_s=" + (lastSourceFrameAtMs == 0
+                                        ? -1 : (android.os.SystemClock.elapsedRealtime()
+                                                - lastSourceFrameAtMs) / 1000));
                 status("network_unavailable");
                 scheduleReconnect();
             }
@@ -213,6 +230,8 @@ public final class NoVpnMediaSocket {
                 }
                 authenticated = true;
                 receivedFrames = 0;
+                sourceFramesSent = 0;
+                lastSourceFrameAtMs = 0;
                 reconnectAttempts = 0;
                 main.removeCallbacks(retryConnection);
                 status("authenticated");
@@ -424,13 +443,27 @@ public final class NoVpnMediaSocket {
         }
     }
 
+    /** True when sending another screenshot would grow an old-frame queue. */
+    public boolean isSourceBackpressured() {
+        WebSocket ws = socket;
+        return ws != null
+                && ws.queueSize() > JpegStreamTuning.MAX_PENDING_BYTES_BEFORE_CAPTURE;
+    }
+
     /** JPEG-only frames, only inside a per-session approved source stream. */
     public boolean sendJpegFrame(byte[] jpeg) {
         WebSocket ws = socket;
         if (!authenticated || shutdown || ws == null || sourceSession.isEmpty()
-                || ws.queueSize() > 1024L * 1024) return false;
+                || ws.queueSize() > JpegStreamTuning.MAX_PENDING_BYTES_BEFORE_SEND)
+            return false;
         try {
-            return ws.send(ByteString.of(ScrcpyRelayWire.encodeJpeg(sourceSession, jpeg)));
+            boolean sent = ws.send(ByteString.of(
+                    ScrcpyRelayWire.encodeJpeg(sourceSession, jpeg)));
+            if (sent) {
+                lastSourceFrameAtMs = android.os.SystemClock.elapsedRealtime();
+                sourceFramesSent++;
+            }
+            return sent;
         } catch (IllegalArgumentException error) {
             return false;
         }
