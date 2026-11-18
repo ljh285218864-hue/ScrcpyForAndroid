@@ -247,6 +247,18 @@ public final class AccessibilityJpegStreamer {
         nm.cancel(NOTICE_ID);
     }
 
+    public static boolean sharingActive() {
+        AccessibilityJpegStreamer stream = current;
+        return stream != null && stream.running;
+    }
+
+    /** UI stop or loss of an already-approved network session.
+     * Never resume capture when the service/process is restarted. */
+    public static void stopActiveWithoutSending() {
+        AccessibilityJpegStreamer stream = current;
+        if (stream != null) stream.stop();
+    }
+
     public static void stopActiveFromNotification() {
         AccessibilityJpegStreamer stream = current;
         if (stream == null) return;
