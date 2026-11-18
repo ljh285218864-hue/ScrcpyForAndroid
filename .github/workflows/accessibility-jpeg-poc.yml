@@ -27,6 +27,7 @@ jobs:
         run: |
           bash -n remote/relay_v1/deploy/read-only-preflight.sh
           bash -n remote/relay_v1/deploy/diagnose-8443.sh
+          bash -n remote/relay_v1/deploy/deploy-accessibility-jpeg.sh
       - name: Guard against abandoned VPN and WebRTC solutions
         run: |
           python3 - <<'PY'
