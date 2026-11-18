@@ -8,8 +8,6 @@ import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.Log;
 
-import org.client.scrcpy.utils.AdbHelper;
-import org.client.scrcpy.utils.ExecUtil;
 import org.client.scrcpy.utils.PreUtils;
 import org.client.scrcpy.utils.SessionLog;
 import org.client.scrcpy.utils.ThreadUtils;
@@ -29,7 +27,6 @@ public class App extends Application implements Application.ActivityLifecycleCal
     public void onCreate() {
         super.onCreate();
         init();  // 初始化id 数据
-        AdbHelper.startAdbServer();
         SessionLog.resetAndStart(this);
         // Restore only explicitly enabled, best-effort signaling jobs.
         // No foreground service, receiver or screen capture on boot.
