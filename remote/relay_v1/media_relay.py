@@ -34,6 +34,8 @@ MAX_VIDEO = 4 * 1024 * 1024
 MAX_BINARY = 16 + 4 + MAX_VIDEO
 MAX_MESSAGE = 1024
 MAX_GROUP_SESSIONS = 2
+MAX_CONNECTIONS = 128
+MAX_COMMANDS_PER_SECOND = 30
 REQUEST_TTL_SECONDS = 30
 SESSION_TTL_SECONDS = 20 * 60
 MAX_FRAMES_PER_SECOND = 90
@@ -81,6 +83,8 @@ class Device:
     device_id: str
     group_id: str
     token_hash: str
+    command_window: float = 0.
+    command_count: int = 0
 
 
 @dataclass
@@ -101,6 +105,7 @@ class MediaRelay:
     def __init__(self):
         self.online: dict[str, Device] = {}
         self.sessions: dict[str, Session] = {}
+        self.connection_count = 0
 
     @staticmethod
     def authenticated(token: str) -> tuple[str, str, str] | None:
@@ -171,6 +176,14 @@ class MediaRelay:
             return other if connected and connected.group_id == client.group_id else None
 
     async def receive_command(self, client: Device, message: str) -> None:
+        current = time.monotonic()
+        if current - client.command_window >= 1:
+            client.command_window = current
+            client.command_count = 0
+        client.command_count += 1
+        if client.command_count > MAX_COMMANDS_PER_SECOND:
+            await client.socket.close(code=4008, reason="COMMAND_RATE_LIMIT")
+            return
         if len(message) > MAX_MESSAGE:
             await self.tell(client.device_id, {"type": "error", "code": "COMMAND_TOO_LARGE"})
             return
@@ -307,6 +320,10 @@ class MediaRelay:
             await self.discard(session_id, "viewer_unreachable")
 
     async def handle(self, socket) -> None:
+        if self.connection_count >= MAX_CONNECTIONS:
+            await socket.close(code=4008, reason="CONNECTION_LIMIT")
+            return
+        self.connection_count += 1
         client = None
         try:
             first = await asyncio.wait_for(socket.recv(), 8)
@@ -356,6 +373,7 @@ class MediaRelay:
         except (ConnectionClosed, asyncio.TimeoutError, OSError):
             pass
         finally:
+            self.connection_count -= 1
             if client and self.online.get(client.device_id) is client:
                 self.online.pop(client.device_id, None)
                 affected = [sid for sid, s in self.sessions.items()
