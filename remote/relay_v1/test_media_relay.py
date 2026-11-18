@@ -260,6 +260,36 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.read(viewer))["type"], "watch_end")
         self.assertEqual((await self.read(source))["type"], "watch_end")
 
+    async def test_valid_delivered_frames_renew_only_approved_session(self):
+        one, two = self.ids["a"]
+        viewer = await self.login(one)
+        source = await self.login(two)
+        sid = await self.open_session(viewer, source)
+        await source.send(json.dumps({"type": "watch_accept", "session_id": sid}))
+        self.assertEqual((await self.read(viewer))["type"], "watch_active")
+        self.assertEqual((await self.read(source))["type"], "stream_allowed")
+        await source.send(json.dumps({"type": "video_setup", "session_id": sid,
+                                      "dimensions": [1080, 2400, 648, 1440],
+                                      "codec": "jpeg"}))
+        self.assertEqual((await self.read(viewer))["codec"], "jpeg")
+        packet = bytes([2, 0]) + bytes(8) + b"\\xff\\xd8" + bytes(68) + b"\\xff\\xd9"
+        frame = media.video_frame(sid, packet)
+        self.relay.sessions[sid].expires = media.time.monotonic() + 1
+        with patch.object(media, "SESSION_TTL_SECONDS", 7):
+            await source.send(frame)
+            self.assertEqual(await self.read(viewer), frame)
+            renewed = self.relay.sessions[sid].expires
+            self.assertGreater(renewed, media.time.monotonic() + 6)
+            # Invalid frames are not authorized to extend sharing.
+            await source.send(media.video_frame(sid, video_packet()))
+            self.assertEqual((await self.read(source))["code"], "MEDIA_CODEC_MISMATCH")
+            self.assertEqual(self.relay.sessions[sid].expires, renewed)
+        # The consent owner can still end the rolling session immediately.
+        await source.send(json.dumps({"type": "watch_end", "session_id": sid}))
+        self.assertEqual((await self.read(viewer))["type"], "watch_end")
+        self.assertEqual((await self.read(source))["type"], "watch_end")
+        self.assertNotIn(sid, self.relay.sessions)
+
     async def test_reconnect_revokes_old_session_and_requires_new_consent(self):
         one, two = self.ids["a"]
         viewer, source = await self.login(one), await self.login(two)
