@@ -51,6 +51,18 @@ def legal_video_packet(packet: bytes) -> bool:
     return packet[1] == 4 or len(packet) > 10
 
 
+def legal_jpeg_packet(packet: bytes) -> bool:
+    """Bounded JPEG with a 10-byte header: type=2, flag=0, timestamp=8 bytes."""
+    return (74 <= len(packet) <= 1024 * 1024 + 10
+            and packet[:2] == b"\\x02\\x00"
+            and packet[10:12] == b"\\xff\\xd8"
+            and packet[-2:] == b"\\xff\\xd9")
+
+
+def legal_media_packet(packet: bytes) -> bool:
+    return legal_video_packet(packet) or legal_jpeg_packet(packet)
+
+
 def legal_dimensions(values: Any) -> bool:
     if not isinstance(values, list) or len(values) != 4:
         return False
@@ -65,15 +77,15 @@ def parse_video_frame(data: bytes) -> tuple[str, bytes] | None:
     session_id = data[:16].hex()
     packet_length = int.from_bytes(data[16:20], "big")
     packet = data[20:]
-    if packet_length != len(packet) or not legal_video_packet(packet):
+    if packet_length != len(packet) or not legal_media_packet(packet):
         return None
     return session_id, packet
 
 
 def video_frame(session_id: str, packet: bytes) -> bytes:
     """Test helper for the documented wire protocol, not a source of media."""
-    if not SESSION_ID.fullmatch(session_id) or not legal_video_packet(packet):
-        raise ValueError("INVALID_VIDEO_PACKET")
+    if not SESSION_ID.fullmatch(session_id) or not legal_media_packet(packet):
+        raise ValueError("INVALID_MEDIA_PACKET")
     return bytes.fromhex(session_id) + len(packet).to_bytes(4, "big") + packet
 
 
@@ -96,6 +108,7 @@ class Session:
     expires: float
     approved: bool = False
     configured: bool = False
+    codec: str = ""
     window_at: float = 0.
     frames_in_window: int = 0
     bytes_in_window: int = 0
@@ -269,10 +282,11 @@ class MediaRelay:
         if command == "video_setup" and client.device_id == session.source \
                 and session.approved:
             dims, codec = body.get("dimensions"), body.get("codec")
-            if not legal_dimensions(dims) or codec not in ("h264", "h265"):
+            if not legal_dimensions(dims) or codec not in ("h264", "h265", "jpeg"):
                 await self.tell(client.device_id, {"type": "error",
                                                   "code": "INVALID_VIDEO_SETUP"})
                 return
+            session.codec = codec
             session.configured = True
             await self.tell(session.viewer, {
                 "type": "video_setup", "session_id": session_id,
@@ -287,7 +301,7 @@ class MediaRelay:
         if parsed is None:
             await self.tell(client.device_id, {"type": "error", "code": "NON_VIDEO_REJECTED"})
             return
-        session_id, _ = parsed
+        session_id, payload = parsed
         session = self.sessions.get(session_id)
         if session is None or session.source != client.device_id \
                 or session.group_id != client.group_id \
@@ -295,6 +309,11 @@ class MediaRelay:
                 or time.monotonic() > session.expires:
             await self.tell(client.device_id, {"type": "error",
                                                "code": "VIDEO_SESSION_NOT_ACTIVE"})
+            return
+        if (payload[0] == 2 and session.codec != "jpeg") or (
+                payload[0] == 1 and session.codec not in ("h264", "h265")):
+            await self.tell(client.device_id, {
+                "type": "error", "code": "MEDIA_CODEC_MISMATCH"})
             return
         if not self.valid_pair(session):
             await self.discard(session_id, "pairing_revoked")
@@ -309,6 +328,9 @@ class MediaRelay:
             session.bytes_in_window = 0
         session.frames_in_window += 1
         session.bytes_in_window += len(data)
+        if payload[0] == 2 and session.frames_in_window > 4:
+            await self.discard(session_id, "jpeg_rate_limit")
+            return
         if session.frames_in_window > MAX_FRAMES_PER_SECOND \
                 or session.bytes_in_window > MAX_BYTES_PER_SECOND:
             await self.discard(session_id, "media_rate_limit")
