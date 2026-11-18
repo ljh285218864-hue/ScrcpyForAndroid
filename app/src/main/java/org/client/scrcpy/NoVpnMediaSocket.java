@@ -340,7 +340,8 @@ public final class NoVpnMediaSocket {
     /** Used by a separately user-approved scrcpy capture bridge, not by UI. */
     public boolean sendVideoSetup(int[] dims, String codec) {
         if (dims == null || dims.length != 4 || sourceSession.isEmpty()
-                || !("h264".equals(codec) || "h265".equals(codec))) return false;
+                || !("h264".equals(codec) || "h265".equals(codec)
+                        || "jpeg".equals(codec))) return false;
         for (int value : dims) if (value < 16 || value > 8192) return false;
         try {
             return send(new JSONObject().put("type", "video_setup")
@@ -358,6 +359,18 @@ public final class NoVpnMediaSocket {
         try {
             return ws.send(ByteString.of(
                     ScrcpyRelayWire.encode(sourceSession, scrcpyVideoPacket)));
+        } catch (IllegalArgumentException error) {
+            return false;
+        }
+    }
+
+    /** JPEG-only frames, only inside a per-session approved source stream. */
+    public boolean sendJpegFrame(byte[] jpeg) {
+        WebSocket ws = socket;
+        if (!authenticated || shutdown || ws == null || sourceSession.isEmpty()
+                || ws.queueSize() > 1024L * 1024) return false;
+        try {
+            return ws.send(ByteString.of(ScrcpyRelayWire.encodeJpeg(sourceSession, jpeg)));
         } catch (IllegalArgumentException error) {
             return false;
         }
