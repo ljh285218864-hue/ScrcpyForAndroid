@@ -38,6 +38,23 @@ public class RelayVideoFormatTest {
         }
     }
 
+    @Test public void rotationOnlySwapsDimensionsWhenOrientationChanges() {
+        int[] original = {1080, 2400, 720, 1600};
+        assertArrayEquals(original, RelayVideoFormat.forRotation(original, 0, 0));
+        assertArrayEquals(original, RelayVideoFormat.forRotation(original, 0, 2));
+        assertArrayEquals(new int[]{2400, 1080, 1600, 720},
+                RelayVideoFormat.forRotation(original, 0, 1));
+        assertArrayEquals(new int[]{2400, 1080, 1600, 720},
+                RelayVideoFormat.forRotation(original, 0, 3));
+        assertArrayEquals(original, RelayVideoFormat.forRotation(
+                RelayVideoFormat.forRotation(original, 0, 1), 1, 0));
+        assertArrayEquals(new int[]{1080, 2400, 720, 1600}, original);
+        try {
+            RelayVideoFormat.forRotation(original, -1, 1);
+            fail("Unknown rotation must be rejected");
+        } catch (IllegalArgumentException expected) { }
+    }
+
     @Test public void safeH264SpsPpsExtraction() {
         byte[] sps = {0, 0, 0, 1, 0x67, 0x42, 0, 0x1f, (byte) 0xff};
         byte[] pps = {0, 0, 0, 1, 0x68, (byte)0xce, 6, (byte)0xe2};
