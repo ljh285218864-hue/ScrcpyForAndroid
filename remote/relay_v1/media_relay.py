@@ -338,6 +338,12 @@ class MediaRelay:
         try:
             # Never buffer unbounded frames for a slow watcher.
             await asyncio.wait_for(self.online[session.viewer].socket.send(data), 2)
+            # Approved, actively delivered media stays alive until the owner
+            # stops, the pair is revoked, the connection fails, or no valid
+            # frames arrive for SESSION_TTL_SECONDS. A fixed lifetime wrongly
+            # ended long-running user-approved sessions after 20 minutes.
+            if self.sessions.get(session_id) is session:
+                session.expires = time.monotonic() + SESSION_TTL_SECONDS
         except (ConnectionClosed, asyncio.TimeoutError, OSError):
             await self.discard(session_id, "viewer_unreachable")
 
