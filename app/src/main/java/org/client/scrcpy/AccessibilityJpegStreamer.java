@@ -28,7 +28,7 @@ public final class AccessibilityJpegStreamer {
 
     private static final int NOTICE_ID = 8413;
     private static final String CHANNEL_ID = "screensync_active_share";
-    private static final long DELAY_MS = 400L;
+    private static final long DELAY_MS = JpegStreamTuning.CAPTURE_GAP_MS;
     private static volatile AccessibilityJpegStreamer current;
 
     private final Context app;
@@ -41,6 +41,8 @@ public final class AccessibilityJpegStreamer {
     private int captureSerial;
     private int outWidth, outHeight;
     private int screenshotCount, sendCount, sendFailCount, captureFailCount;
+    private int congestionSkips;
+    private int compressionQuality = JpegStreamTuning.JPEG_QUALITY;
     private final Runnable tick = this::capture;
 
     public AccessibilityJpegStreamer(Context ctx, NoVpnMediaSocket media, Listener cb) {
@@ -91,9 +93,10 @@ public final class AccessibilityJpegStreamer {
             return false;
         }
         DisplayMetrics metrics = app.getResources().getDisplayMetrics();
-        float scale = Math.min(1f, 960f / Math.max(metrics.widthPixels, metrics.heightPixels));
-        outWidth = Math.max(16, Math.round(metrics.widthPixels * scale));
-        outHeight = Math.max(16, Math.round(metrics.heightPixels * scale));
+        int[] dimensions = JpegStreamTuning.targetSize(
+                metrics.widthPixels, metrics.heightPixels);
+        outWidth = dimensions[0];
+        outHeight = dimensions[1];
         current = this;
         running = true;
         try {
@@ -118,13 +121,24 @@ public final class AccessibilityJpegStreamer {
             return false;
         }
         ScreenSyncDiagnostics.record(app, "CAPTURE_START", "success jpeg_width="
-                + outWidth + " jpeg_height=" + outHeight);
+                + outWidth + " jpeg_height=" + outHeight + " quality=" + compressionQuality
+                + " gap_ms=" + DELAY_MS);
         main.post(tick);
         return true;
     }
 
     private void capture() {
         if (!running || busy) return;
+        // Limit queueing before we spend CPU and data on a screenshot that
+        // would arrive late. Drop a frame rather than delay subsequent frames.
+        if (socket.isSourceBackpressured()) {
+            congestionSkips++;
+            if (congestionSkips == 1 || congestionSkips % 10 == 0)
+                ScreenSyncDiagnostics.record(app, "JPEG_BACKPRESSURE",
+                        "skipped=" + congestionSkips);
+            main.postDelayed(tick, JpegStreamTuning.CONGESTION_RETRY_MS);
+            return;
+        }
         busy = true;
         final int serial = ++captureSerial;
         // Some OEMs can leave takeScreenshot without a callback. Recover
@@ -151,19 +165,31 @@ public final class AccessibilityJpegStreamer {
                         if (running) {
                             Bitmap image = Bitmap.createScaledBitmap(
                                     screenshot, outWidth, outHeight, true);
-                            ByteArrayOutputStream buffer = new ByteArrayOutputStream(65536);
-                            image.compress(Bitmap.CompressFormat.JPEG, 60, buffer);
+                            ByteArrayOutputStream buffer = new ByteArrayOutputStream(131072);
+                            boolean encoded = image.compress(
+                                    Bitmap.CompressFormat.JPEG, compressionQuality, buffer);
+                            if (!encoded) throw new IllegalStateException("jpeg_encode_failed");
                             if (image != screenshot) image.recycle();
                             byte[] data = buffer.toByteArray();
                             screenshotCount++;
                             if (running && data.length >= 64 && data.length <= 1024 * 1024) {
                                 boolean sent = socket.sendJpegFrame(data);
-                                if (sent) sendCount++; else sendFailCount++;
+                                if (sent) {
+                                    sendCount++;
+                                    // Recover gradually after a slow-network phase.
+                                    if (sendCount % 25 == 0 && compressionQuality
+                                            < JpegStreamTuning.JPEG_QUALITY)
+                                        compressionQuality++;
+                                } else {
+                                    sendFailCount++;
+                                    compressionQuality = Math.max(58, compressionQuality - 3);
+                                }
                                 if (screenshotCount == 1 || screenshotCount % 20 == 0
                                         || (sendFailCount == 1 && !sent)) {
                                     ScreenSyncDiagnostics.record(app, "JPEG_SEND",
                                             "captured=" + screenshotCount + " sent=" + sendCount
-                                            + " failed=" + sendFailCount + " bytes=" + data.length);
+                                            + " failed=" + sendFailCount + " bytes=" + data.length
+                                            + " quality=" + compressionQuality);
                                 }
                             } else if (screenshotCount == 1) {
                                 ScreenSyncDiagnostics.record(app, "JPEG_SEND",
@@ -208,7 +234,8 @@ public final class AccessibilityJpegStreamer {
         captureSerial++;
         ScreenSyncDiagnostics.record(app, "CAPTURE_STOP",
                 "captured=" + screenshotCount + " sent=" + sendCount
-                + " send_failed=" + sendFailCount + " capture_failed=" + captureFailCount);
+                + " send_failed=" + sendFailCount + " capture_failed=" + captureFailCount
+                + " congestion_skips=" + congestionSkips);
         main.removeCallbacks(tick);
         encoder.shutdownNow();
         if (current == this) current = null;
