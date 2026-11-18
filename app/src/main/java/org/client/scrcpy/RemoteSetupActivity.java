@@ -3,6 +3,11 @@ package org.client.scrcpy;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.os.Build;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
@@ -47,6 +52,10 @@ public final class RemoteSetupActivity extends Activity {
     private Button mediaRequestButton, mediaEndButton;
     private TextView mediaState;
     private NoVpnMediaSocket mediaSocket;
+    private NoVpnMediaSocket.Listener mediaListener;
+    private String shownIncomingSession = "";
+    private static final String WATCH_CHANNEL = "screensync_incoming_request";
+    private static final int WATCH_NOTICE_ID = 8416;
     private AccessibilityJpegStreamer jpegStreamer;
     private JpegFrameRenderer jpegRenderer;
     private ImageView jpegImage;
@@ -232,7 +241,7 @@ public final class RemoteSetupActivity extends Activity {
                             stopLocalStream();
                             if (jpegRenderer != null) jpegRenderer.stopSession();
                             if (mediaSocket != null) {
-                                mediaSocket.close();
+                                ScreenSyncMediaKeeper.stop();
                                 mediaSocket = null;
                             }
                             NoVpnBackgroundSync.setEnabled(this, false);
@@ -418,6 +427,10 @@ public final class RemoteSetupActivity extends Activity {
                 + NoVpnApi.isRegistered(this)
                 + " accessibility=" + AccessibilityShotService.ready());
         active = true;
+        NotificationManager notifications = (NotificationManager)
+                getSystemService(NOTIFICATION_SERVICE);
+        if (notifications != null) notifications.cancel(WATCH_NOTICE_ID);
+        if (mediaSocket != null) mediaSocket.redispatchIncomingRequest();
         ui.removeCallbacks(refresh);
         if (!NoVpnApi.isRegistered(this)) refreshStatus();
         refresh.run();
@@ -438,27 +451,29 @@ public final class RemoteSetupActivity extends Activity {
         active = false;
         requestAfterConnect = false;
         ui.removeCallbacks(refresh);
-        // An explicitly approved JPEG share can continue when the owner opens
-        // another app; its visible notification offers an immediate STOP action.
-        boolean jpegShareContinues = jpegStreamer != null;
+        // Do not terminate a user-approved share or an authenticated WSS
+        // connection merely because this Activity is covered or swiped away.
+        // This is process-lifetime best effort, NOT a guarantee after
+        // Android kills the process, force-stop, or device reboot.
         ScreenSyncDiagnostics.record(this, "APP_PAUSE",
-                "sharing_continues=" + jpegShareContinues);
-        if (!jpegShareContinues) stopLocalStream();
-        if (jpegRenderer != null) jpegRenderer.stopSession();
-        if (mediaSocket != null && !jpegShareContinues) {
-            mediaSocket.close();
-            mediaSocket = null;
-        }
+                "socket_kept=" + (mediaSocket != null)
+                + " sharing=" + AccessibilityJpegStreamer.sharingActive());
         super.onPause();
     }
 
     @Override protected void onDestroy() {
         if (viewerLayer != null) viewerLayer.closePicture();
-        if (jpegStreamer == null) stopLocalStream();
+        if (mediaSocket != null && mediaListener != null)
+            mediaSocket.clearListenerIf(mediaListener);
+        // The transport is retained by ScreenSyncMediaKeeper in this process.
+        // The screenshot capturer has its own stop notification while active.
         if (jpegRenderer != null) {
             jpegRenderer.close();
             jpegRenderer = null;
         }
+        ScreenSyncDiagnostics.record(this, "APP_DESTROY",
+                "socket_kept=" + (ScreenSyncMediaKeeper.current() != null)
+                + " sharing=" + AccessibilityJpegStreamer.sharingActive());
         super.onDestroy();
     }
 
@@ -466,10 +481,14 @@ public final class RemoteSetupActivity extends Activity {
         AccessibilityJpegStreamer shot = jpegStreamer;
         jpegStreamer = null;
         if (shot != null) shot.stop();
+        else AccessibilityJpegStreamer.stopActiveWithoutSending();
     }
 
     private void startLocalStream() {
-        if (!active || mediaSocket == null || jpegStreamer != null) return;
+        // May arrive just after the device owner tapped "Allow" and left the
+        // Activity; explicit consent has already been authenticated by WSS.
+        if (mediaSocket == null || jpegStreamer != null
+                || AccessibilityJpegStreamer.sharingActive()) return;
         if (!AccessibilityShotService.ready()) {
             ScreenSyncDiagnostics.record(this, "SOURCE_START", "accessibility_not_ready");
             mediaState.setText("需要在本机设置中开启无障碍截图权限");
@@ -536,6 +555,36 @@ public final class RemoteSetupActivity extends Activity {
         }
     }
 
+    private void notifyIncomingWatchRequest() {
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED) {
+            ScreenSyncDiagnostics.record(this, "WATCH_NOTICE", "notification_denied");
+            return;
+        }
+        NotificationManager manager = (NotificationManager)
+                getSystemService(NOTIFICATION_SERVICE);
+        if (manager == null || !manager.areNotificationsEnabled()) return;
+        if (Build.VERSION.SDK_INT >= 26) {
+            manager.createNotificationChannel(new NotificationChannel(WATCH_CHANNEL,
+                    "ScreenSync 观看申请", NotificationManager.IMPORTANCE_HIGH));
+        }
+        Intent open = new Intent(this, RemoteSetupActivity.class);
+        open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        PendingIntent tap = PendingIntent.getActivity(this, WATCH_NOTICE_ID, open,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification.Builder builder = Build.VERSION.SDK_INT >= 26
+                ? new Notification.Builder(this, WATCH_CHANNEL)
+                : new Notification.Builder(this);
+        builder.setSmallIcon(android.R.drawable.ic_menu_view)
+                .setContentTitle("配对手机申请观看")
+                .setContentText("点击打开 ScreenSync，确认是否开始本次屏幕共享")
+                .setAutoCancel(true).setContentIntent(tap)
+                .setOnlyAlertOnce(true);
+        manager.notify(WATCH_NOTICE_ID, builder.build());
+    }
+
     private void connectMediaTest() {
         if (!NoVpnApi.isRegistered(this) || !"paired".equals(currentState)) {
             report("请先完成两台手机的扫码配对");
@@ -546,9 +595,13 @@ public final class RemoteSetupActivity extends Activity {
             return;
         }
         receivedVideoFrames = 0;
-        NoVpnMediaSocket socket = new NoVpnMediaSocket(this,
-                new NoVpnMediaSocket.Listener() {
+        NoVpnMediaSocket.Listener callback = new NoVpnMediaSocket.Listener() {
                     @Override public void onStatus(String value) {
+                        if ("video_source_permitted".equals(value)) {
+                            // Start the previously approved share even if the
+                            // owner just pressed Home after approving.
+                            startLocalStream();
+                        }
                         if ("source_session_ended".equals(value)
                                 || "source_session_stopped".equals(value)
                                 || "session_stopped_by_user".equals(value)
@@ -593,9 +646,7 @@ public final class RemoteSetupActivity extends Activity {
                                 mediaState.setText("已请求观看，等待对方同意本次屏幕共享");
                             }
                         }
-                        if ("video_source_permitted".equals(value)) {
-                            startLocalStream(); // after local consent + server confirmation
-                        } else if ("source_session_ended".equals(value)
+                        if ("source_session_ended".equals(value)
                                 || "source_session_stopped".equals(value)) {
                             stopLocalStream();
                         } else if ("viewer_session_ended".equals(value)) {
@@ -612,9 +663,12 @@ public final class RemoteSetupActivity extends Activity {
                     @Override public void onRequest(String sid, String viewerId) {
                         if (!active || isFinishing()) {
                             ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
-                                    "WATCH_INBOUND", "ignored_not_visible");
+                                    "WATCH_INBOUND", "background_notification");
+                            notifyIncomingWatchRequest();
                             return;
                         }
+                        if (sid.equals(shownIncomingSession)) return;
+                        shownIncomingSession = sid;
                         ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
                                 "WATCH_INBOUND", "request_received");
                         new AlertDialog.Builder(RemoteSetupActivity.this)
@@ -686,9 +740,22 @@ public final class RemoteSetupActivity extends Activity {
                             }
                         }
                     }
-                });
+                };
+        mediaListener = callback;
+        NoVpnMediaSocket retained = ScreenSyncMediaKeeper.current();
+        if (retained != null) {
+            retained.setListener(callback);
+            mediaSocket = retained;
+            if (retained.hasConfiguredVideo() && jpegRenderer != null)
+                jpegRenderer.startSession(retained.activeViewerSessionId());
+            mediaState.setText("已恢复进程内的连接");
+            retained.redispatchIncomingRequest();
+            return;
+        }
+        NoVpnMediaSocket socket = new NoVpnMediaSocket(this, callback);
         try {
             socket.connect();
+            ScreenSyncMediaKeeper.retain(socket);
             mediaSocket = socket;
             mediaState.setText("正在认证 WSS 中转连接……");
         } catch (Exception error) {
