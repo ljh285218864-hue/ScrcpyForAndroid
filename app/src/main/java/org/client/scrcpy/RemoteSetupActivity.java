@@ -91,7 +91,7 @@ public final class RemoteSetupActivity extends Activity {
     // for the FIRST phone; the second phone joins using a single pairing QR.
     private Button scanButton, accessibilityButton, notificationsButton;
     private TextView hint;
-    private LinearLayout previewPanel;
+    private LinearLayout previewPanel, permissionsPanel;
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -200,7 +200,7 @@ public final class RemoteSetupActivity extends Activity {
             mediaState.setText("已停止共享");
         });
 
-        LinearLayout permissionsPanel = panel(content);
+        permissionsPanel = panel(content);
         heading(permissionsPanel, "首次使用设置");
         accessibilityButton = action(permissionsPanel, "开启无障碍截图权限",
                 v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
@@ -316,6 +316,8 @@ public final class RemoteSetupActivity extends Activity {
         if (!NoVpnApi.isRegistered(this)) refreshStatus();
         refresh.run();
         refreshButtons();
+        refreshPermissions();
+        ui.postDelayed(this::refreshPermissions, 600);
     }
 
     @Override protected void onPause() {
@@ -591,36 +593,91 @@ public final class RemoteSetupActivity extends Activity {
     private Button action(LinearLayout layout, String text,
                           android.view.View.OnClickListener callback) {
         Button item = new Button(this);
+        item.setAllCaps(false);
         item.setText(text);
+        item.setTextSize(15);
+        item.setMinHeight(dp(49));
+        item.setPadding(dp(12), dp(12), dp(12), dp(12));
+        item.setTextColor(Color.rgb(53, 65, 84));
+        android.graphics.drawable.GradientDrawable surface =
+                new android.graphics.drawable.GradientDrawable();
+        surface.setColor(Color.WHITE);
+        surface.setCornerRadius(dp(12));
+        surface.setStroke(dp(1), Color.rgb(219, 225, 236));
+        item.setBackground(surface);
         item.setOnClickListener(callback);
-        layout.addView(item);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        p.bottomMargin = dp(8);
+        layout.addView(item, p);
         return item;
     }
 
     private void refreshButtons() {
         boolean registered = NoVpnApi.isRegistered(this);
-        if (invite != null)
-            invite.setEnabled(registered && "ready".equals(currentState) && !busy);
-        if (approve != null)
-            approve.setEnabled(registered && "ready".equals(currentState)
-                    && !pendingId.isEmpty() && !pendingExpired && !busy);
-        if (decline != null)
-            decline.setEnabled(registered && !pendingId.isEmpty() && !busy);
-        if (test != null)
-            test.setEnabled(registered && "paired".equals(currentState) && !busy);
-        if (revoke != null)
-            revoke.setEnabled(registered && !busy);
         boolean paired = registered && "paired".equals(currentState);
-        if (mediaConnectButton != null) mediaConnectButton.setEnabled(paired && !busy);
-        if (mediaRequestButton != null) mediaRequestButton.setEnabled(paired && !busy);
-        if (mediaEndButton != null) mediaEndButton.setEnabled(paired && !busy);
-        if (backgroundToggle != null) {
-            backgroundToggle.setEnabled(registered
-                    && "paired".equals(currentState) && !busy);
-            backgroundToggle.setText(NoVpnBackgroundSync.isEnabled(this)
-                    ? "关闭后台定期检查（保留配对）"
-                    : "启用后台定期检查（不显示常驻通知）");
+        boolean ready = registered && "ready".equals(currentState);
+        boolean pending = !pendingId.isEmpty() && !pendingExpired;
+        if (scanButton != null) {
+            scanButton.setVisibility(registered ? android.view.View.GONE
+                    : android.view.View.VISIBLE);
+            scanButton.setEnabled(!busy);
         }
+        if (invite != null) {
+            invite.setVisibility(ready && pendingId.isEmpty()
+                    ? android.view.View.VISIBLE : android.view.View.GONE);
+            invite.setEnabled(!busy);
+        }
+        if (approve != null) {
+            approve.setVisibility(ready && pending
+                    ? android.view.View.VISIBLE : android.view.View.GONE);
+            approve.setEnabled(!busy);
+        }
+        if (decline != null) {
+            decline.setVisibility(ready && !pendingId.isEmpty()
+                    ? android.view.View.VISIBLE : android.view.View.GONE);
+            decline.setEnabled(!busy);
+        }
+        if (previewPanel != null)
+            previewPanel.setVisibility(paired ? android.view.View.VISIBLE
+                    : android.view.View.GONE);
+        if (mediaRequestButton != null) {
+            mediaRequestButton.setVisibility(paired
+                    ? android.view.View.VISIBLE : android.view.View.GONE);
+            mediaRequestButton.setEnabled(!busy);
+        }
+        if (mediaEndButton != null) {
+            mediaEndButton.setVisibility(paired
+                    ? android.view.View.VISIBLE : android.view.View.GONE);
+            mediaEndButton.setEnabled(!busy);
+        }
+        if (permissionsPanel != null)
+            permissionsPanel.setVisibility(paired
+                    ? android.view.View.VISIBLE : android.view.View.GONE);
+        if (revoke != null) {
+            revoke.setVisibility(registered
+                    ? android.view.View.VISIBLE : android.view.View.GONE);
+            revoke.setEnabled(!busy);
+        }
+        if (hint != null) {
+            if (!registered) {
+                hint.setText("首次使用：扫描管理员发来的开通二维码。"
+                        + "第二台手机只需扫描另一台生成的配对码。");
+            } else if (ready) {
+                hint.setText(pendingId.isEmpty()
+                        ? "点击下方按钮显示配对二维码，让另一台手机扫码。"
+                        : "请确认两台手机显示同一个六位数字后再配对。");
+            } else if ("pending".equals(currentState)) {
+                hint.setText("请让另一台手机检查六位配对码并点击确认。");
+            } else if (paired) {
+                hint.setText("配对已完成。以后直接点击观看，"
+                        + "被观看方需要确认本次共享；不需要重新扫码。");
+            } else {
+                hint.setText("正在连接服务器…");
+            }
+        }
+        refreshPermissions();
     }
 
     private void report(String value) {
@@ -680,71 +737,34 @@ public final class RemoteSetupActivity extends Activity {
             pendingId = state.optString("pending_id", "");
             pendingCode = state.optString("pending_verify_code", "");
             pendingExpired = state.optBoolean("pending_expired", false);
-            status.setText(pendingId.isEmpty()
-                    ? "主手机已开通，尚未配对。生成二维码让另一台手机扫描。"
-                    : "等待主手机确认：" + state.optString("pending_name")
-                        + "\n六位核对码：" + pendingCode
-                        + (pendingExpired ? "\n邀请已过期，请拒绝后重新邀请。"
-                                : "\n与另一台手机核对一致后再批准。"));
+            status.setText(pendingId.isEmpty() ? "第一台手机已开通 · 等待扫码配对"
+                    : "收到配对申请：" + state.optString("pending_name", "新设备")
+                    + "\n核对码  " + pendingCode
+                    + (pendingExpired ? "\n申请已过期，请拒绝后重新扫码"
+                            : "\n请核对另一台手机的六位数字"));
         } else if ("pending".equals(currentState)) {
-            status.setText("申请已经提交，等待主手机同意。\n双方核对码："
-                    + state.optString("pending_verify_code"));
+            status.setText("申请已发送 · 等待另一台确认"
+                    + "\n核对码  " + state.optString("pending_verify_code"));
         } else if ("paired".equals(currentState)) {
-            String peerId = state.optString("peer_device_id", "");
-            JSONArray events = state.optJSONArray("_events");
-            StringBuilder description = new StringBuilder();
-            description.append("已配对：").append(state.optString("peer_name", "另一台手机"))
-                    .append("\n对方设备 ID 尾号：")
-                    .append(peerId.length() > 6 ? peerId.substring(peerId.length() - 6) : peerId)
-                    .append("\n双方核对码：").append(state.optString("pair_verify_code"))
-                    .append("\n对方状态：")
-                    .append(state.optBoolean("peer_online")
-                            ? "最近45秒有心跳" : "最近45秒没有心跳（后台可能延迟）")
-                    .append("\n对方最近心跳时间：")
-                    .append(state.optLong("peer_last_seen", 0) > 0
-                            ? new java.text.SimpleDateFormat("MM-dd HH:mm:ss",
-                                java.util.Locale.getDefault()).format(
-                                    new java.util.Date(
-                                        state.optLong("peer_last_seen") * 1000L))
-                            : "尚未收到")
-                    .append("\n本机后台检查：")
-                    .append(NoVpnBackgroundSync.isEnabled(this)
-                            ? "已启用，系统择机执行，不保证实时" : "未启用")
-                    .append("\n本机最后成功检查：")
-                    .append(NoVpnBackgroundSync.lastSuccess(this) > 0
-                            ? new java.text.SimpleDateFormat("MM-dd HH:mm:ss",
-                                java.util.Locale.getDefault()).format(
-                                    new java.util.Date(NoVpnBackgroundSync.lastSuccess(this)))
-                            : "尚无")
-                    .append("\n已启用：HTTPS 信令（无 VPN）")
-                    .append("\n尚未启用：屏幕视频");
-            if (events != null && events.length() > 0) {
-                description.append("\n刚收到 ").append(events.length()).append(" 条消息");
-                for (int i = 0; i < events.length(); i++) {
-                    JSONObject event = events.optJSONObject(i);
-                    if (event != null) description.append("\n")
-                            .append(event.optString("type", "message"));
-                }
-            }
-            status.setText(description);
-            // When the user opens this page, maintain a connection only
-            // while the Activity is visible. No foreground service is used.
+            String peerName = state.optString("peer_name", "配对手机");
+            status.setText("✓ 已连接配对手机：" + peerName
+                    + "\n" + (state.optBoolean("peer_online")
+                            ? "对方最近在线" : "对方暂未在线，可能需要打开软件"));
+            // Pairing remains valid after app restart. Only network identity
+            // reconnects automatically; no automatic screen capture.
             if (active && mediaSocket == null && NoVpnMediaSocket.endpointConfigured()) {
                 connectMediaTest();
             }
-            // Only acknowledge after the verified messages are rendered.
-            // A process death before this call permits safe replay.
             if (state.has("_cursor")) {
                 try {
                     NoVpnApi.acknowledge(this, state.getLong("_cursor"));
                 } catch (Exception error) {
-                    // The next poll will resend the message rather than lose
-                    // a pending connection request.
-                    status.append("\n信令已收到，但确认保存失败，可能再次显示。");
+                    status.append("\n消息状态刷新失败，请重试");
                 }
             }
         } else {
-            status.setText("服务器状态：" + currentState);
+            status.setText(currentState.isEmpty() ? "尚未开通，请扫码"
+                    : "正在准备：" + currentState);
         }
         refreshButtons();
     }
