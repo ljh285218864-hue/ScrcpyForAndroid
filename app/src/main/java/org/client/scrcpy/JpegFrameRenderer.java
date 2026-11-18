@@ -37,6 +37,7 @@ public final class JpegFrameRenderer {
             return;
         final int version = generation.get();
         final byte[] jpeg = Arrays.copyOfRange(packet, 10, packet.length);
+        try {
         decoder.execute(() -> {
             BitmapFactory.Options opts = new BitmapFactory.Options();
             opts.inJustDecodeBounds = true;
@@ -53,6 +54,9 @@ public final class JpegFrameRenderer {
                 } else bitmap.recycle();
             });
         });
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {
+            // Closing the viewer must not crash on a late network frame.
+        }
     }
 
     public void stopSession() {
