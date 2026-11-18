@@ -82,8 +82,8 @@ public final class RemoteSetupActivity extends Activity {
     };
 
     // Minimal everyday screen: no ADB, USB, Wi-Fi IP, VPN, ports or test controls.
-    // Admin-issued activation QR is still required by the existing secured backend
-    // for the FIRST phone; the second phone joins using a single pairing QR.
+    // Either phone can start an independent pair; the other scans its QR.
+    // The server is explicit opt-in and does not give media consent.
     private Button scanButton, accessibilityButton, notificationsButton;
     private TextView hint;
     private LinearLayout permissionsPanel;
@@ -123,22 +123,26 @@ public final class RemoteSetupActivity extends Activity {
         status.setTextColor(Color.rgb(48, 63, 83));
         status.setPadding(0, dp(5), 0, dp(3));
 
-        hint = note(content, "首次开通请扫描管理员提供的开通码；另一台手机直接扫描配对二维码即可。");
+        hint = note(content, "第一台手机生成二维码，第二台扫码，核对六位数字后即可连接。");
         hint.setPadding(dp(4), dp(12), dp(4), dp(12));
 
-        scanButton = action(content, "扫码连接手机", v -> startScanner());
-        primary(scanButton);
-
-        invite = action(content, "显示我的配对二维码", v ->
-                runNetwork(() -> NoVpnApi.invite(this), result -> {
-                    try {
-                        showQr("screensync://remote?code=" + result.getString("invite_code"));
-                        status.setText("让另一台手机扫描二维码，随后核对相同的六位码。");
-                    } catch (Exception error) {
-                        report("二维码生成失败，请重试");
-                    }
-                }, false));
+        invite = action(content, "生成配对二维码", v -> {
+            if (NoVpnApi.isRegistered(this)) {
+                runNetwork(() -> NoVpnApi.invite(this),
+                        result -> displayPairInvite(result), false);
+            } else {
+                runNetwork(() -> NoVpnApi.registerOwner(this),
+                        result -> {
+                            currentState = "ready";
+                            displayPairInvite(result);
+                            refreshButtons();
+                        }, false);
+            }
+        });
         primary(invite);
+
+        scanButton = action(content, "扫描另一台手机二维码", v -> startScanner());
+        primary(scanButton);
 
         approve = action(content, "确认配对", v -> {
             String id = pendingId;
@@ -677,7 +681,7 @@ public final class RemoteSetupActivity extends Activity {
             scanButton.setEnabled(!busy);
         }
         if (invite != null) {
-            invite.setVisibility(ready && pendingId.isEmpty()
+            invite.setVisibility((!registered || ready) && pendingId.isEmpty()
                     ? android.view.View.VISIBLE : android.view.View.GONE);
             invite.setEnabled(!busy);
         }
@@ -711,12 +715,12 @@ public final class RemoteSetupActivity extends Activity {
         }
         if (hint != null) {
             if (!registered) {
-                hint.setText("首次使用：扫描管理员发来的开通二维码。"
-                        + "第二台手机只需扫描另一台生成的配对码。");
+                hint.setText("A 手机直接生成二维码，B 手机扫码，双方确认六位数字。"
+                        + "不需要管理员开通码或输入服务器地址。");
             } else if (ready) {
                 hint.setText(pendingId.isEmpty()
-                        ? "点击下方按钮显示配对二维码，让另一台手机扫码。"
-                        : "请确认两台手机显示同一个六位数字后再配对。");
+                        ? "让另一台手机扫描本机生成的二维码。过期可直接重新生成。"
+                        : "请核对两台手机显示的六位数字，再点击确认配对。");
             } else if ("pending".equals(currentState)) {
                 hint.setText("请让另一台手机检查六位配对码并点击确认。");
             } else if (paired) {
@@ -768,7 +772,7 @@ public final class RemoteSetupActivity extends Activity {
     private void refreshStatus() {
         if (!NoVpnApi.isRegistered(this)) {
             currentState = "";
-            status.setText("尚未配对 · 点击扫码连接");
+            status.setText("尚未配对 · 生成二维码或扫描对方二维码");
             refreshButtons();
             return;
         }
@@ -787,7 +791,7 @@ public final class RemoteSetupActivity extends Activity {
             pendingId = state.optString("pending_id", "");
             pendingCode = state.optString("pending_verify_code", "");
             pendingExpired = state.optBoolean("pending_expired", false);
-            status.setText(pendingId.isEmpty() ? "第一台手机已开通 · 等待扫码配对"
+            status.setText(pendingId.isEmpty() ? "已创建配对组 · 等待另一台手机扫码"
                     : "收到配对申请：" + state.optString("pending_name", "新设备")
                     + "\n核对码  " + pendingCode
                     + (pendingExpired ? "\n申请已过期，请拒绝后重新扫码"
@@ -819,6 +823,19 @@ public final class RemoteSetupActivity extends Activity {
         refreshButtons();
     }
 
+    private void displayPairInvite(JSONObject result) {
+        try {
+            String inviteCode = result.getString("invite_code");
+            if (!inviteCode.matches("[a-f0-9]{48}"))
+                throw new IllegalArgumentException("invalid_invite");
+            showQr("screensync://remote?code=" + inviteCode);
+            status.setText("二维码已生成，请让第二台手机扫码并核对六位码");
+        } catch (Exception error) {
+            ScreenSyncDiagnostics.record(this, "PAIR_QR", "create_or_display_error");
+            report("二维码显示失败，可再次点击生成");
+        }
+    }
+
     private void showQr(String payload) throws Exception {
         BitMatrix image = new MultiFormatWriter().encode(
                 payload, BarcodeFormat.QR_CODE, 460, 460);
@@ -828,8 +845,8 @@ public final class RemoteSetupActivity extends Activity {
                 bitmap.setPixel(x, y, image.get(x, y) ? Color.BLACK : Color.WHITE);
         ImageView view = new ImageView(this);
         view.setImageBitmap(bitmap);
-        new AlertDialog.Builder(this).setTitle("5分钟有效的配对邀请")
-                .setMessage("请让另一台手机扫码。双方还需要核对6位码。")
+        new AlertDialog.Builder(this).setTitle("配对二维码 · 5分钟有效")
+                .setMessage("让另一台手机打开 ScreenSync 扫描本二维码。之后双方核对六位数字并确认。")
                 .setView(view)
                 .setPositiveButton("完成", (d, w) -> refreshStatus()).show();
     }
@@ -860,7 +877,7 @@ public final class RemoteSetupActivity extends Activity {
         String activation = NoVpnApi.parseQr(payload, "activate");
         String inviteCode = NoVpnApi.parseQr(payload, "remote");
         if (activation == null && inviteCode == null) {
-            report("不是有效的 ScreenSync 开通/配对二维码");
+            report("不是有效的 ScreenSync 配对二维码");
             return;
         }
         if (NoVpnApi.isRegistered(this)) {
@@ -869,7 +886,7 @@ public final class RemoteSetupActivity extends Activity {
         }
         boolean owner = activation != null;
         new AlertDialog.Builder(this)
-                .setTitle(owner ? "开通主手机" : "申请与主手机配对")
+                .setTitle(owner ? "兼容旧版开通二维码" : "申请与另一台手机配对")
                 .setMessage("只有在双方明确同意后才保存配对身份。"
                         + "\n此操作不采集或传输任何屏幕画面。")
                 .setPositiveButton("同意", (d, w) ->
