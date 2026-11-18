@@ -558,15 +558,26 @@ public final class RemoteSetupActivity extends Activity {
                             stopLocalStream();
                         }
                         if (!active || isFinishing()) return;
-                        mediaState.setText(friendlyMediaStatus(value));
+                        mediaState.setText("viewer_session_ended".equals(value)
+                                && receivedVideoFrames == 0
+                                ? "对方结束了共享且没有发送画面，请检查被观看手机权限"
+                                : friendlyMediaStatus(value));
                         if (viewerLayer != null && viewerLayer.isShowing()) {
                             if ("awaiting_peer_approval".equals(value))
                                 viewerLayer.showWaiting("正在等待对方确认共享…");
                             else if ("viewer_session_active".equals(value))
                                 viewerLayer.showWaiting("对方已同意，等待画面…");
                             else if ("viewer_session_ended".equals(value)
-                                    || "session_stopped_by_user".equals(value))
-                                viewerLayer.showWaiting("本次共享已结束，点击右上角关闭");
+                                    || "session_stopped_by_user".equals(value)) {
+                                if ("viewer_session_ended".equals(value)
+                                        && receivedVideoFrames == 0)
+                                    viewerLayer.showWaiting(
+                                            "没有收到画面。请在被观看手机开启无障碍截图和应用通知，"
+                                            + "然后关闭画面并重新申请观看。");
+                                else
+                                    viewerLayer.showWaiting(
+                                            "本次共享已结束，点击右上角关闭");
+                            }
                             else if ("peer_offline".equals(value))
                                 viewerLayer.showWaiting("配对手机暂未连接，请在对方手机打开软件");
                             else if ("disconnected".equals(value)
