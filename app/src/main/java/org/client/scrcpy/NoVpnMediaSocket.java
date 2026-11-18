@@ -83,6 +83,10 @@ public final class NoVpnMediaSocket {
         listener = next;
     }
 
+    public void clearListenerIf(Listener previous) {
+        if (listener == previous) listener = null;
+    }
+
     public String activeViewerSessionId() {
         return authenticated ? viewerSession : "";
     }
@@ -198,6 +202,7 @@ public final class NoVpnMediaSocket {
                     authenticated = false;
                     clearSessions();
                 }
+                AccessibilityJpegStreamer.stopActiveWithoutSending();
                 ScreenSyncDiagnostics.record(context, "WSS_CLOSE",
                         "code=" + code + " live_s="
                         + ((android.os.SystemClock.elapsedRealtime() - connectedAtMs) / 1000));
@@ -212,6 +217,7 @@ public final class NoVpnMediaSocket {
                     authenticated = false;
                     clearSessions();
                 }
+                AccessibilityJpegStreamer.stopActiveWithoutSending();
                 ScreenSyncDiagnostics.record(context, "WSS_FAIL",
                         "error=" + error.getClass().getSimpleName()
                                 + " http=" + (response == null ? 0 : response.code())
@@ -355,6 +361,8 @@ public final class NoVpnMediaSocket {
                 if (id.equals(sourceSession)) sourceSession = "";
                 if (id.equals(waitingRequest)) waitingRequest = "";
                 if (id.equals(locallyApprovedRequest)) locallyApprovedRequest = "";
+                if (sourceEnded)
+                    AccessibilityJpegStreamer.stopActiveWithoutSending();
                 status(sourceEnded ? "source_session_ended"
                         : viewerEnded ? "viewer_session_ended" : "session_ended");
                 break;
