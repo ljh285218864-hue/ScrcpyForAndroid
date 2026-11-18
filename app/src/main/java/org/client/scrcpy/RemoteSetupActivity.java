@@ -216,16 +216,8 @@ public final class RemoteSetupActivity extends Activity {
         heading(permissionsPanel, "首次使用设置");
         accessibilityButton = action(permissionsPanel, "开启无障碍截图权限",
                 v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        notificationsButton = action(permissionsPanel, "允许共享状态通知", v -> {
-            if (android.os.Build.VERSION.SDK_INT >= 33
-                    && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                        != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(new String[]{
-                        Manifest.permission.POST_NOTIFICATIONS}, 9434);
-            } else {
-                report("共享通知权限已允许");
-            }
-        });
+        notificationsButton = action(permissionsPanel, "允许共享状态通知",
+                v -> openShareNotificationSettings());
         TextView securityNote = note(permissionsPanel,
                 "无障碍服务需由手机持有人开启。每次共享均需本机明确同意，"
                 + "共享时会显示可停止的通知。");
@@ -278,9 +270,7 @@ public final class RemoteSetupActivity extends Activity {
     }
 
     private void showDiagnostics() {
-        boolean notificationOk = android.os.Build.VERSION.SDK_INT < 33
-                || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                    == PackageManager.PERMISSION_GRANTED;
+        boolean notificationOk = AccessibilityJpegStreamer.notificationAllowed(this);
         ScreenSyncDiagnostics.record(this, "DIAGNOSTICS", "paired="
                 + "paired".equals(currentState)
                 + " accessibility=" + AccessibilityShotService.ready()
@@ -367,6 +357,47 @@ public final class RemoteSetupActivity extends Activity {
         button.setTypeface(null, android.graphics.Typeface.BOLD);
     }
 
+    private void openShareNotificationSettings() {
+        if (android.os.Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{
+                    Manifest.permission.POST_NOTIFICATIONS}, 9434);
+            return;
+        }
+        try {
+            Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+            intent.putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+            startActivity(intent);
+        } catch (RuntimeException unavailable) {
+            ScreenSyncDiagnostics.record(this, "PERMISSION_UI",
+                    "notifications_settings_unavailable");
+            report("请在系统设置 → 应用 → 屏幕同步 → 通知中手动开启");
+        }
+    }
+
+    private void showSourcePrerequisiteDialog(String issue) {
+        boolean needsAccessibility = "accessibility_not_enabled".equals(issue);
+        String message = needsAccessibility
+                ? "被观看手机没有开启无障碍截图服务。请先在本机设置开启，再让另一台手机重新申请观看。"
+                : "被观看手机没有允许 ScreenSync 显示共享状态通知。"
+                    + "请开启应用通知和 ScreenSync 共享状态通知频道，再重新申请观看。";
+        new AlertDialog.Builder(this)
+                .setTitle("当前无法共享屏幕")
+                .setMessage(message + "\n\n本次请求已拒绝，不会在后台偷偷启动共享。")
+                .setPositiveButton(needsAccessibility ? "去开启无障碍" : "去开启通知",
+                        (dialog, which) -> {
+                            if (needsAccessibility) {
+                                startActivity(new Intent(
+                                        Settings.ACTION_ACCESSIBILITY_SETTINGS));
+                            } else {
+                                openShareNotificationSettings();
+                            }
+                        })
+                .setNegativeButton("稍后", null)
+                .show();
+    }
+
     private void refreshPermissions() {
         if (accessibilityButton != null) {
             accessibilityButton.setText(AccessibilityShotService.ready()
@@ -374,9 +405,7 @@ public final class RemoteSetupActivity extends Activity {
             accessibilityButton.setEnabled(!AccessibilityShotService.ready());
         }
         if (notificationsButton != null) {
-            boolean allowed = android.os.Build.VERSION.SDK_INT < 33
-                    || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                        == PackageManager.PERMISSION_GRANTED;
+            boolean allowed = AccessibilityJpegStreamer.notificationAllowed(this);
             notificationsButton.setText(allowed
                     ? "✓ 共享状态通知已允许" : "2 · 允许共享状态通知");
             notificationsButton.setEnabled(!allowed);
@@ -444,7 +473,7 @@ public final class RemoteSetupActivity extends Activity {
         if (!AccessibilityShotService.ready()) {
             ScreenSyncDiagnostics.record(this, "SOURCE_START", "accessibility_not_ready");
             mediaState.setText("需要在本机设置中开启无障碍截图权限");
-            mediaSocket.endSourceSession();
+            mediaSocket.endSourceSession("source_accessibility_missing");
             return;
         }
         final AccessibilityJpegStreamer[] ref = new AccessibilityJpegStreamer[1];
@@ -461,9 +490,15 @@ public final class RemoteSetupActivity extends Activity {
             jpegStreamer = shot;
             mediaState.setText("屏幕共享中，可从通知栏立即停止");
         } else {
-            ScreenSyncDiagnostics.record(this, "SOURCE_START", "jpeg_start_failed");
-            mediaState.setText("共享启动失败，请检查无障碍与通知权限");
-            mediaSocket.endSourceSession();
+            String reason = AccessibilityJpegStreamer.readinessIssue(this);
+            ScreenSyncDiagnostics.record(this, "SOURCE_START",
+                    "jpeg_start_failed prereq=" + (reason.isEmpty()
+                            ? "capture_or_transport" : reason));
+            mediaState.setText(reason.isEmpty()
+                    ? "本次共享启动失败，请查看诊断日志"
+                    : "共享前请先开启无障碍及通知权限");
+            mediaSocket.endSourceSession(reason.isEmpty()
+                    ? "source_start_failed" : "source_permissions_missing");
         }
     }
 
@@ -581,8 +616,21 @@ public final class RemoteSetupActivity extends Activity {
                                 .setPositiveButton("允许本次屏幕共享", (dialog, which) -> {
                                     ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
                                             "USER_ACTION", "share_approved");
-                                    if (mediaSocket != null)
-                                        mediaSocket.acceptRequest(sid);
+                                    String issue = AccessibilityJpegStreamer
+                                            .readinessIssue(RemoteSetupActivity.this);
+                                    if (!issue.isEmpty()) {
+                                        ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
+                                                "SHARE_PREFLIGHT", "blocked=" + issue);
+                                        if (mediaSocket != null)
+                                            mediaSocket.declineRequest(sid);
+                                        showSourcePrerequisiteDialog(issue);
+                                        return;
+                                    }
+                                    if (mediaSocket != null && !mediaSocket.acceptRequest(sid)) {
+                                        ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
+                                                "SHARE_PREFLIGHT", "accept_send_failed");
+                                        mediaState.setText("共享请求失效，请让对方重新点击观看");
+                                    }
                                 })
                                 .setNegativeButton("拒绝", (dialog, which) -> {
                                     ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
