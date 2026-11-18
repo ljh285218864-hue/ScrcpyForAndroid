@@ -180,6 +180,7 @@ public final class RemoteSetupActivity extends Activity {
         mediaState.setPadding(dp(2), dp(8), dp(2), 0);
 
         mediaRequestButton = action(content, "观看对方屏幕", v -> {
+            ScreenSyncDiagnostics.record(this, "USER_ACTION", "watch_requested");
             requestAfterConnect = true;
             if (mediaSocket == null) {
                 connectMediaTest();
@@ -193,6 +194,7 @@ public final class RemoteSetupActivity extends Activity {
         primary(mediaRequestButton);
 
         mediaEndButton = action(content, "停止观看 / 停止共享", v -> {
+            ScreenSyncDiagnostics.record(this, "USER_ACTION", "stop_pressed");
             requestAfterConnect = false;
             stopLocalStream();
             if (jpegRenderer != null) jpegRenderer.stopSession();
@@ -239,9 +241,53 @@ public final class RemoteSetupActivity extends Activity {
                         }, false))
                     .setNegativeButton("取消", null).show());
 
+        action(content, "诊断日志 · 排查黑屏", v -> showDiagnostics());
         setContentView(scroll);
+        ScreenSyncDiagnostics.environment(this);
+        ScreenSyncDiagnostics.record(this, "APP", "simple_ui_started");
         refreshButtons();
         refreshPermissions();
+    }
+
+    private void showDiagnostics() {
+        boolean notificationOk = android.os.Build.VERSION.SDK_INT < 33
+                || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                    == PackageManager.PERMISSION_GRANTED;
+        ScreenSyncDiagnostics.record(this, "DIAGNOSTICS", "paired="
+                + "paired".equals(currentState)
+                + " accessibility=" + AccessibilityShotService.ready()
+                + " notification=" + notificationOk
+                + " media_socket=" + (mediaSocket != null)
+                + " sharing=" + (jpegStreamer != null)
+                + " received=" + receivedVideoFrames);
+        TextView logText = new TextView(this);
+        logText.setTextSize(12);
+        logText.setTextIsSelectable(true);
+        logText.setPadding(dp(14), dp(10), dp(14), dp(10));
+        logText.setText(ScreenSyncDiagnostics.read(this));
+        ScrollView view = new ScrollView(this);
+        view.addView(logText);
+        new AlertDialog.Builder(this)
+                .setTitle("ScreenSync 诊断日志")
+                .setMessage("在两台手机分别尝试观看后，打开这里复制日志。"
+                        + "不会复制屏幕内容、密钥或完整设备ID。")
+                .setView(view)
+                .setPositiveButton("复制日志", (dialog, which) -> {
+                    String copyText = ScreenSyncDiagnostics.read(this);
+                    android.content.ClipboardManager manager =
+                            (android.content.ClipboardManager)
+                                    getSystemService(CLIPBOARD_SERVICE);
+                    manager.setPrimaryClip(android.content.ClipData.newPlainText(
+                            "ScreenSync 诊断日志", copyText));
+                    Toast.makeText(this, "日志已复制，可直接发给我排查",
+                            Toast.LENGTH_LONG).show();
+                })
+                .setNeutralButton("清空日志", (dialog, which) -> {
+                    ScreenSyncDiagnostics.clear(this);
+                    Toast.makeText(this, "日志已清空", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("关闭", null)
+                .show();
     }
 
     private LinearLayout panel(LinearLayout parent) {
@@ -311,6 +357,9 @@ public final class RemoteSetupActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        ScreenSyncDiagnostics.record(this, "APP_RESUME", "registered="
+                + NoVpnApi.isRegistered(this)
+                + " accessibility=" + AccessibilityShotService.ready());
         active = true;
         ui.removeCallbacks(refresh);
         if (!NoVpnApi.isRegistered(this)) refreshStatus();
@@ -327,6 +376,8 @@ public final class RemoteSetupActivity extends Activity {
         // An explicitly approved JPEG share can continue when the owner opens
         // another app; its visible notification offers an immediate STOP action.
         boolean jpegShareContinues = jpegStreamer != null;
+        ScreenSyncDiagnostics.record(this, "APP_PAUSE",
+                "sharing_continues=" + jpegShareContinues);
         if (!jpegShareContinues) stopLocalStream();
         if (renderer != null) renderer.stopSession();
         if (jpegRenderer != null) jpegRenderer.stopSession();
@@ -364,6 +415,7 @@ public final class RemoteSetupActivity extends Activity {
             return;
         if (useJpegCapture) {
             if (!AccessibilityShotService.ready()) {
+                ScreenSyncDiagnostics.record(this, "SOURCE_START", "accessibility_not_ready");
                 mediaState.setText("请先手动开启本机无障碍截图权限");
                 mediaSocket.endSourceSession();
                 return;
@@ -378,9 +430,11 @@ public final class RemoteSetupActivity extends Activity {
                     });
             ref[0] = shot;
             if (shot.start()) {
+                ScreenSyncDiagnostics.record(this, "SOURCE_START", "jpeg_stream_started");
                 jpegStreamer = shot;
                 mediaState.setText("JPEG 截图共享中；可从通知栏停止");
             } else {
+                ScreenSyncDiagnostics.record(this, "SOURCE_START", "jpeg_stream_start_failed");
                 mediaState.setText("启动失败：检查无障碍和通知权限");
                 mediaSocket.endSourceSession();
             }
@@ -505,7 +559,11 @@ public final class RemoteSetupActivity extends Activity {
             case "network_unavailable":
                 return "网络暂时断开，请重试";
             default:
-                return "连接状态已更新";
+                if (status.startsWith("server_error:"))
+                    return "服务器拒绝：" + status.substring("server_error:".length());
+                if ("protocol_error".equals(status))
+                    return "接收协议错误，请查看诊断日志并更新到修复版";
+                return "连接状态：" + status;
         }
     }
 
@@ -557,7 +615,13 @@ public final class RemoteSetupActivity extends Activity {
                         }
                     }
                     @Override public void onRequest(String sid, String viewerId) {
-                        if (!active || isFinishing()) return;
+                        if (!active || isFinishing()) {
+                            ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
+                                    "WATCH_INBOUND", "ignored_not_visible");
+                            return;
+                        }
+                        ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
+                                "WATCH_INBOUND", "request_received");
                         new AlertDialog.Builder(RemoteSetupActivity.this)
                                 .setTitle("已配对设备请求观看")
                                 .setMessage("对方设备 ID 尾号：" +
@@ -568,16 +632,22 @@ public final class RemoteSetupActivity extends Activity {
                                            : "\n将使用本机已授权的 ADB + scrcpy 发送视频。")
                                         + "\n可点击停止共享立即结束。")
                                 .setPositiveButton("允许本次屏幕共享", (dialog, which) -> {
+                                    ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
+                                            "USER_ACTION", "share_approved");
                                     if (mediaSocket != null)
                                         mediaSocket.acceptRequest(sid);
                                 })
                                 .setNegativeButton("拒绝", (dialog, which) -> {
+                                    ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
+                                            "USER_ACTION", "share_declined");
                                     if (mediaSocket != null)
                                         mediaSocket.declineRequest(sid);
                                 }).show();
                     }
                     @Override public void onVideoSetup(String sid, int[] dimensions,
                                                         String codec) {
+                        ScreenSyncDiagnostics.record(RemoteSetupActivity.this, "VIEW_SETUP",
+                                "codec=" + codec + " active=" + active);
                         if (active && "jpeg".equals(codec) && jpegRenderer != null) {
                             jpegRenderer.startSession(sid);
                             runOnUiThread(() -> {
@@ -621,6 +691,8 @@ public final class RemoteSetupActivity extends Activity {
             mediaSocket = socket;
             mediaState.setText("正在认证 WSS 中转连接……");
         } catch (Exception error) {
+            ScreenSyncDiagnostics.record(this, "WSS_CONNECT_FAIL",
+                    "error=" + error.getClass().getSimpleName());
             mediaState.setText(error.getMessage() == null
                     ? "WSS 中转连接配置无效"
                     : error.getMessage());
@@ -769,7 +841,10 @@ public final class RemoteSetupActivity extends Activity {
     }
 
     private void showStatus(JSONObject state) {
+        String previousState = currentState;
         currentState = state.optString("state", "");
+        if (!currentState.equals(previousState))
+            ScreenSyncDiagnostics.record(this, "PAIRING_STATE", currentState);
         pendingId = "";
         pendingCode = "";
         pendingExpired = false;
