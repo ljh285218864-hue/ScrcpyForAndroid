@@ -55,6 +55,19 @@ class RelayMediaUnitTests(unittest.TestCase):
         self.assertIsNone(media.parse_video_frame(frame[:-1]))
 
 
+    def test_jpeg_wire_is_strictly_bounded_and_distinct_from_video(self):
+        payload = bytes([2, 0]) + bytes(8) + b"\\xff\\xd8" + bytes(68) + b"\\xff\\xd9"
+        session = "a" * 32
+        self.assertTrue(media.legal_jpeg_packet(payload))
+        self.assertFalse(media.legal_video_packet(payload))
+        self.assertEqual(media.parse_video_frame(media.video_frame(session, payload)),
+                         (session, payload))
+        for wrong in (payload[:-2], payload[:11] + b"X" + payload[12:],
+                      bytes([2, 3]) + payload[2:], bytes([2, 0]) + bytes(8)):
+            self.assertFalse(media.legal_jpeg_packet(wrong))
+        self.assertFalse(media.legal_jpeg_packet(payload + bytes(1024 * 1024)))
+
+
 class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -218,6 +231,32 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
         await viewer.send(good)
         self.assertEqual((await self.read(viewer))["code"], "VIDEO_SESSION_NOT_ACTIVE")
         await viewer.send(json.dumps({"type": "watch_end", "session_id": sid}))
+        self.assertEqual((await self.read(viewer))["type"], "watch_end")
+        self.assertEqual((await self.read(source))["type"], "watch_end")
+
+    async def test_jpeg_requires_explicit_consent_and_matching_codec(self):
+        one, two = self.ids["a"]
+        viewer = await self.login(one)
+        source = await self.login(two)
+        sid = await self.open_session(viewer, source)
+        jpeg = bytes([2, 0]) + bytes(8) + b"\\xff\\xd8" + bytes(68) + b"\\xff\\xd9"
+        frame = media.video_frame(sid, jpeg)
+        await source.send(frame)
+        self.assertEqual((await self.read(source))["code"], "VIDEO_SESSION_NOT_ACTIVE")
+        await source.send(json.dumps({"type":"watch_accept","session_id":sid}))
+        self.assertEqual((await self.read(viewer))["type"], "watch_active")
+        self.assertEqual((await self.read(source))["type"], "stream_allowed")
+        await source.send(json.dumps({"type":"video_setup","session_id":sid,
+                                      "dimensions":[1080, 2400, 432, 960],
+                                      "codec":"jpeg"}))
+        self.assertEqual((await self.read(viewer))["codec"], "jpeg")
+        await source.send(frame)
+        self.assertEqual(await self.read(viewer), frame)
+        await source.send(media.video_frame(sid, video_packet()))
+        self.assertEqual((await self.read(source))["code"], "MEDIA_CODEC_MISMATCH")
+        await viewer.send(frame)
+        self.assertEqual((await self.read(viewer))["code"], "VIDEO_SESSION_NOT_ACTIVE")
+        await viewer.send(json.dumps({"type":"watch_end","session_id":sid}))
         self.assertEqual((await self.read(viewer))["type"], "watch_end")
         self.assertEqual((await self.read(source))["type"], "watch_end")
 
