@@ -28,6 +28,7 @@ jobs:
           bash -n remote/relay_v1/deploy/read-only-preflight.sh
           bash -n remote/relay_v1/deploy/diagnose-8443.sh
           bash -n remote/relay_v1/deploy/deploy-accessibility-jpeg.sh
+          bash -n remote/relay_v1/deploy/deploy-self-service-signaling.sh
       - name: Guard against abandoned VPN and WebRTC solutions
         run: |
           python3 - <<'PY'
@@ -148,7 +149,7 @@ jobs:
           app_start = (base / "App.java").read_text()
           assert "AdbHelper.startAdbServer()" not in app_start
           ui = (base / "RemoteSetupActivity.java").read_text()
-          assert "观看对方屏幕" in ui and "扫码连接手机" in ui
+          assert "观看对方屏幕" in ui and "扫描另一台手机二维码" in ui
           assert 'action(content, "连接 WSS' not in ui
           assert 'action(content, "本机 ADB' not in ui
           print("Minimal app launcher and no developer-facing controls verified")
