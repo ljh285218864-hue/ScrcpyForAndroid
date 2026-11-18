@@ -76,6 +76,7 @@ public final class AccessibilityJpegStreamer {
                     busy = false;
                     return;
                 }
+                try {
                 encoder.execute(() -> {
                     try {
                         if (running) {
@@ -98,6 +99,10 @@ public final class AccessibilityJpegStreamer {
                         });
                     }
                 });
+                } catch (java.util.concurrent.RejectedExecutionException stopped) {
+                    screenshot.recycle();
+                    busy = false;
+                }
             }
             @Override public void failure(int reason) {
                 busy = false;
