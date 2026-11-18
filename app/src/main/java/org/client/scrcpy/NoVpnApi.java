@@ -114,11 +114,39 @@ public final class NoVpnApi {
                         throw new IllegalStateException("服务器响应超过安全限额");
                     result.write(buffer, 0, n);
                 }
-                JSONObject parsed = new JSONObject(new String(result.toByteArray(),
-                        StandardCharsets.UTF_8));
-                if (status != 200)
-                    throw new IllegalStateException("服务端拒绝：" +
-                            parsed.optString("error", "HTTP_" + status));
+                String responseType = conn.getContentType();
+                if (!ApiResponsePolicy.isJsonResponse(responseType)) {
+                    ScreenSyncDiagnostics.record(context, "API_ROUTE",
+                            "unexpected_content_type http=" + status
+                            + " path=" + path);
+                    throw new IllegalStateException(
+                            "服务器接口配置错误（HTTP " + status + "）：返回的是网页"
+                            + "而不是 JSON。请检查 ScreenSync 的 Nginx 8443 转发路由"
+                            + ("/v1/self-register".equals(path)
+                                ? "，并升级自动配对接口" : ""));
+                }
+                JSONObject parsed;
+                try {
+                    parsed = new JSONObject(new String(result.toByteArray(),
+                            StandardCharsets.UTF_8));
+                } catch (org.json.JSONException malformed) {
+                    ScreenSyncDiagnostics.record(context, "API_JSON",
+                            "invalid_json http=" + status + " path=" + path);
+                    throw new IllegalStateException(
+                            "服务器响应内容异常（HTTP " + status
+                            + "），不是有效的 JSON，请查看接口日志");
+                }
+                if (status != 200) {
+                    String error = parsed.optString("error", "HTTP_" + status);
+                    ScreenSyncDiagnostics.record(context, "API_ERROR",
+                            "http=" + status + " path=" + path
+                            + " error=" + error);
+                    if ("SELF_REGISTER_DISABLED".equals(error))
+                        throw new IllegalStateException("服务器尚未开启自动配对注册功能，"
+                                + "请先部署新版 ScreenSync 信令服务");
+                    throw new IllegalStateException("服务器拒绝（HTTP " + status
+                            + "）：" + error);
+                }
                 return parsed;
             }
         } finally {
