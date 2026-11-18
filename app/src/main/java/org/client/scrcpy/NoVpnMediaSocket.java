@@ -45,7 +45,7 @@ public final class NoVpnMediaSocket {
             .build();
 
     private final Context context;
-    private final Listener listener;
+    private volatile Listener listener;
     private final Handler main = new Handler(Looper.getMainLooper());
 
     private volatile WebSocket socket;
@@ -75,6 +75,27 @@ public final class NoVpnMediaSocket {
     public NoVpnMediaSocket(Context context, Listener listener) {
         this.context = context.getApplicationContext();
         this.listener = listener;
+    }
+
+    /** Rebind UI callbacks after the Activity is recreated, without replacing
+     * the established transport or restarting an approved sharing session. */
+    public void setListener(Listener next) {
+        listener = next;
+    }
+
+    public String activeViewerSessionId() {
+        return authenticated ? viewerSession : "";
+    }
+
+    public void redispatchIncomingRequest() {
+        String pending = waitingRequest;
+        Listener target = listener;
+        if (target != null && !shutdown && ScrcpyRelayWire.validSessionId(pending))
+            main.post(() -> {
+                Listener current = listener;
+                if (current != null && !shutdown && pending.equals(waitingRequest))
+                    current.onRequest(pending, NoVpnApi.peerId(context));
+            });
     }
 
     private static void requireValidWss(String text) throws Exception {
@@ -158,7 +179,9 @@ public final class NoVpnMediaSocket {
                             ScreenSyncDiagnostics.record(context, "WSS_RX",
                                     "frames=" + receivedFrames + " bytes=" + data.size());
                         }
-                        listener.onVideoPacket(frame.sessionId, frame.videoPacket);
+                        Listener target = listener;
+                        if (target != null)
+                            target.onVideoPacket(frame.sessionId, frame.videoPacket);
                     }
                 } catch (IllegalArgumentException error) {
                     ws.close(1008, "unsafe_video");
@@ -248,7 +271,8 @@ public final class NoVpnMediaSocket {
                     throw new SecurityException("接收请求身份不一致");
                 waitingRequest = sid;
                 main.post(() -> {
-                    if (!shutdown) listener.onRequest(sid, from);
+                    Listener target = listener;
+                    if (!shutdown && target != null) target.onRequest(sid, from);
                 });
                 break;
             }
@@ -306,7 +330,9 @@ public final class NoVpnMediaSocket {
                 // Keep video_setup and binary frames in WSS receive order.
                 // Posting setup to the UI queue can lose the first CONFIG
                 // and keyframe when the decoder has not yet been initialized.
-                if (!shutdown) listener.onVideoSetup(sid, sizes, codec);
+                Listener target = listener;
+                if (!shutdown && target != null)
+                    target.onVideoSetup(sid, sizes, codec);
                 break;
             }
             case "watch_end":
@@ -344,7 +370,8 @@ public final class NoVpnMediaSocket {
     private void status(String value) {
         ScreenSyncDiagnostics.record(context, "WSS_STATUS", value);
         main.post(() -> {
-            if (!shutdown) listener.onStatus(value);
+            Listener target = listener;
+            if (!shutdown && target != null) target.onStatus(value);
         });
     }
 
