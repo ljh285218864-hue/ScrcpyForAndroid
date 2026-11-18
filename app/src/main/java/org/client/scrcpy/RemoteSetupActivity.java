@@ -49,6 +49,11 @@ public final class RemoteSetupActivity extends Activity {
     private TextView mediaState;
     private NoVpnMediaSocket mediaSocket;
     private LocalScrcpyStreamer localStreamer;
+    private AccessibilityJpegStreamer jpegStreamer;
+    private JpegFrameRenderer jpegRenderer;
+    private ImageView jpegImage;
+    private Button modeButton;
+    private boolean useJpegCapture = true;
     private RelayVideoRenderer renderer;
     private SurfaceView remoteVideoSurface;
     private int receivedVideoFrames;
@@ -95,7 +100,7 @@ public final class RemoteSetupActivity extends Activity {
                 + "通过 HTTPS/WSS 信令和中转连接，不使用系统 VPN。"
                 + "\n\n当前已接入本机 scrcpy 采集及视频解码代码，须部署中转服务并真机测试。"
                 + "视频仅在被观看手机持有人明确同意本次会话后传输；可随时停止。"
-                + "\n首次无线调试授权仍须由手机持有人按照系统要求完成。");
+                + "\nJPEG 模式不需要无线调试，但需要手动开启无障碍和通知权限。");
         intro.setTextSize(15);
         content.addView(intro);
 
@@ -156,9 +161,32 @@ public final class RemoteSetupActivity extends Activity {
         mediaState.setText("媒体连接：未连接；只在本页面可见时建立视频会话。");
         mediaState.setPadding(0, dp(12), 0, dp(8));
         content.addView(mediaState);
+        action(content, "开启无障碍截图权限（系统设置）", v ->
+                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        action(content, "允许共享状态通知（Android 13+）", v -> {
+            if (android.os.Build.VERSION.SDK_INT >= 33
+                    && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED)
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 9434);
+            else report("共享状态通知权限已允许");
+        });
+        modeButton = action(content, "当前：无障碍截图（点此切换）", v -> {
+            if (jpegStreamer != null || localStreamer != null) {
+                report("先停止正在共享的屏幕"); return;
+            }
+            useJpegCapture = !useJpegCapture;
+            modeButton.setText(useJpegCapture
+                    ? "当前：无障碍截图（点此切换）" : "当前：scrcpy（点此切换）");
+        });
         remoteVideoSurface = new SurfaceView(this);
         content.addView(remoteVideoSurface, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(320)));
+        jpegImage = new ImageView(this);
+        jpegImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        jpegImage.setVisibility(android.view.View.GONE);
+        content.addView(jpegImage, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(320)));
+        jpegRenderer = new JpegFrameRenderer(jpegImage);
         renderer = new RelayVideoRenderer(remoteVideoSurface,
                 message -> runOnUiThread(() -> {
                     if (active && !isFinishing()) mediaState.setText(message);
@@ -179,6 +207,7 @@ public final class RemoteSetupActivity extends Activity {
             requestAfterConnect = false;
             stopLocalStream();
             if (renderer != null) renderer.stopSession();
+            if (jpegRenderer != null) jpegRenderer.stopSession();
             if (mediaSocket != null) mediaSocket.endSession();
             mediaState.setText("已停止本次视频会话");
         });
@@ -239,10 +268,12 @@ public final class RemoteSetupActivity extends Activity {
         active = false;
         requestAfterConnect = false;
         ui.removeCallbacks(refresh);
-        // Leaving this visible screen stops local capture and remote video.
-        stopLocalStream();
+        // An explicitly approved JPEG share can continue when the owner opens
+        // another app; its visible notification offers an immediate STOP action.
+        boolean jpegShareContinues = jpegStreamer != null;
+        if (!jpegShareContinues) stopLocalStream();
         if (renderer != null) renderer.stopSession();
-        if (mediaSocket != null) {
+        if (mediaSocket != null && !jpegShareContinues) {
             mediaSocket.close();
             mediaSocket = null;
         }
@@ -250,7 +281,11 @@ public final class RemoteSetupActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
-        stopLocalStream();
+        if (jpegStreamer == null) stopLocalStream();
+        if (jpegRenderer != null) {
+            jpegRenderer.close();
+            jpegRenderer = null;
+        }
         if (renderer != null) {
             renderer.close();
             renderer = null;
@@ -259,13 +294,41 @@ public final class RemoteSetupActivity extends Activity {
     }
 
     private void stopLocalStream() {
+        AccessibilityJpegStreamer shot = jpegStreamer;
+        jpegStreamer = null;
+        if (shot != null) shot.stop();
         LocalScrcpyStreamer current = localStreamer;
         localStreamer = null;
         if (current != null) current.stop();
     }
 
     private void startLocalStream() {
-        if (!active || mediaSocket == null || localStreamer != null) return;
+        if (!active || mediaSocket == null || localStreamer != null || jpegStreamer != null)
+            return;
+        if (useJpegCapture) {
+            if (!AccessibilityShotService.ready()) {
+                mediaState.setText("请先手动开启本机无障碍截图权限");
+                mediaSocket.endSourceSession();
+                return;
+            }
+            final AccessibilityJpegStreamer[] ref = new AccessibilityJpegStreamer[1];
+            AccessibilityJpegStreamer shot = new AccessibilityJpegStreamer(this, mediaSocket,
+                    reason -> {
+                        if (jpegStreamer == ref[0]) {
+                            jpegStreamer = null;
+                            if (active) mediaState.setText(reason);
+                        }
+                    });
+            ref[0] = shot;
+            if (shot.start()) {
+                jpegStreamer = shot;
+                mediaState.setText("JPEG 截图共享中；可从通知栏停止");
+            } else {
+                mediaState.setText("启动失败：检查无障碍和通知权限");
+                mediaSocket.endSourceSession();
+            }
+            return;
+        }
         final LocalScrcpyStreamer[] ref = new LocalScrcpyStreamer[1];
         LocalScrcpyStreamer streamer = new LocalScrcpyStreamer(this, mediaSocket,
                 new LocalScrcpyStreamer.Listener() {
@@ -372,6 +435,14 @@ public final class RemoteSetupActivity extends Activity {
         NoVpnMediaSocket socket = new NoVpnMediaSocket(this,
                 new NoVpnMediaSocket.Listener() {
                     @Override public void onStatus(String value) {
+                        if ("source_session_ended".equals(value)
+                                || "source_session_stopped".equals(value)
+                                || "session_stopped_by_user".equals(value)
+                                || "disconnected".equals(value)
+                                || "network_unavailable".equals(value)) {
+                            // Must stop screenshots even after the Activity becomes hidden.
+                            stopLocalStream();
+                        }
                         if (!active || isFinishing()) return;
                         mediaState.setText("媒体中转：" + value);
                         if ("authenticated".equals(value) && requestAfterConnect) {
@@ -401,7 +472,9 @@ public final class RemoteSetupActivity extends Activity {
                                 .setMessage("对方设备 ID 尾号：" +
                                         viewerId.substring(Math.max(0, viewerId.length() - 6))
                                         + "\n是否允许对方观看你手机的当前屏幕？"
-                                        + "\n允许后将通过本机已授权的 ADB + scrcpy 发送实时画面。"
+                                        + (useJpegCapture
+                                           ? "\n将使用无障碍截图发送屏幕画面；通知栏显示正在共享。"
+                                           : "\n将使用本机已授权的 ADB + scrcpy 发送视频。")
                                         + "\n可点击停止共享立即结束。")
                                 .setPositiveButton("允许本次屏幕共享", (dialog, which) -> {
                                     if (mediaSocket != null)
@@ -414,7 +487,18 @@ public final class RemoteSetupActivity extends Activity {
                     }
                     @Override public void onVideoSetup(String sid, int[] dimensions,
                                                         String codec) {
-                        if (active && renderer != null) {
+                        if (active && "jpeg".equals(codec) && jpegRenderer != null) {
+                            jpegRenderer.startSession(sid);
+                            runOnUiThread(() -> {
+                                jpegImage.setVisibility(android.view.View.VISIBLE);
+                                remoteVideoSurface.setVisibility(android.view.View.GONE);
+                                mediaState.setText("正在等待 JPEG 截图");
+                            });
+                        } else if (active && renderer != null) {
+                            runOnUiThread(() -> {
+                                jpegImage.setVisibility(android.view.View.GONE);
+                                remoteVideoSurface.setVisibility(android.view.View.VISIBLE);
+                            });
                             renderer.startSession(sid, dimensions, codec);
                             runOnUiThread(() -> {
                                 if (active && !isFinishing())
@@ -425,8 +509,13 @@ public final class RemoteSetupActivity extends Activity {
                     @Override public void onVideoPacket(String sid, byte[] packet) {
                         // Off UI thread: renderer uses bounded decode queue.
                         if (!active) return;
-                        RelayVideoRenderer target = renderer;
-                        if (target != null) target.onPacket(sid, packet);
+                        if (packet != null && packet.length > 0 && packet[0] == 2) {
+                            JpegFrameRenderer target = jpegRenderer;
+                            if (target != null) target.onPacket(sid, packet);
+                        } else {
+                            RelayVideoRenderer target = renderer;
+                            if (target != null) target.onPacket(sid, packet);
+                        }
                     }
                 });
         try {
