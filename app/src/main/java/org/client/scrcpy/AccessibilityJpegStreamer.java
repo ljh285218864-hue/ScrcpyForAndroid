@@ -74,7 +74,8 @@ public final class AccessibilityJpegStreamer {
 
     public static boolean notificationAllowed(Context context) {
         String issue = readinessIssue(context);
-        return !issue.startsWith("notification_")
+        return !"notification_service_unavailable".equals(issue)
+                && !issue.startsWith("notification_")
                 && !"app_notifications_disabled".equals(issue)
                 && !"sharing_channel_blocked".equals(issue);
     }
@@ -93,20 +94,27 @@ public final class AccessibilityJpegStreamer {
         float scale = Math.min(1f, 960f / Math.max(metrics.widthPixels, metrics.heightPixels));
         outWidth = Math.max(16, Math.round(metrics.widthPixels * scale));
         outHeight = Math.max(16, Math.round(metrics.heightPixels * scale));
-        if (!socket.sendVideoSetup(new int[] {
-                metrics.widthPixels, metrics.heightPixels, outWidth, outHeight}, "jpeg")) {
-            ScreenSyncDiagnostics.record(app, "CAPTURE_START", "send_video_setup_failed");
-            return false;
-        }
         current = this;
         running = true;
         try {
+            // The source's user-visible notification must be posted BEFORE
+            // any video_setup is sent to the remote viewer.
             showNotice();
         } catch (RuntimeException failure) {
             running = false;
             current = null;
             ScreenSyncDiagnostics.record(app, "CAPTURE_START",
                     "notification_error=" + failure.getClass().getSimpleName());
+            return false;
+        }
+        if (!socket.sendVideoSetup(new int[] {
+                metrics.widthPixels, metrics.heightPixels, outWidth, outHeight}, "jpeg")) {
+            ScreenSyncDiagnostics.record(app, "CAPTURE_START", "send_video_setup_failed");
+            running = false;
+            current = null;
+            NotificationManager manager = (NotificationManager)
+                    app.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (manager != null) manager.cancel(NOTICE_ID);
             return false;
         }
         ScreenSyncDiagnostics.record(app, "CAPTURE_START", "success jpeg_width="
