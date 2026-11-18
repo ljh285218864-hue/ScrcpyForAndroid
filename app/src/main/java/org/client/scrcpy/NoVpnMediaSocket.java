@@ -278,7 +278,9 @@ public final class NoVpnMediaSocket {
                 waitingRequest = sid;
                 main.post(() -> {
                     Listener target = listener;
-                    if (!shutdown && target != null) target.onRequest(sid, from);
+                    if (shutdown) return;
+                    if (target != null) target.onRequest(sid, from);
+                    else ScreenSyncWatchNotice.show(context);
                 });
                 break;
             }
@@ -363,6 +365,8 @@ public final class NoVpnMediaSocket {
                 if (id.equals(locallyApprovedRequest)) locallyApprovedRequest = "";
                 if (sourceEnded)
                     AccessibilityJpegStreamer.stopActiveWithoutSending();
+                if (id.equals(waitingRequest) || id.equals(pendingViewerSession))
+                    ScreenSyncWatchNotice.clear(context);
                 status(sourceEnded ? "source_session_ended"
                         : viewerEnded ? "viewer_session_ended" : "session_ended");
                 break;
