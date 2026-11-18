@@ -22,6 +22,15 @@ def video_packet(type_byte=1, flag=1):
 
 
 class RelayMediaUnitTests(unittest.TestCase):
+    def test_android_python_shared_golden_binary_frame(self):
+        packet = bytes([1, 1]) + bytes(8) + bytes([1, 2, 3, 4])
+        session = "abcdef0123456789abcdef0123456789"
+        wire = media.video_frame(session, packet)
+        self.assertEqual(wire.hex(),
+            "abcdef0123456789abcdef0123456789"
+            "0000000e0101000000000000000001020304")
+        self.assertEqual(media.parse_video_frame(wire), (session, packet))
+
     def test_only_scrcpy_video_is_valid(self):
         self.assertTrue(media.legal_video_packet(video_packet()))
         self.assertTrue(media.legal_video_packet(bytes([1, 4]) + bytes(8)))
