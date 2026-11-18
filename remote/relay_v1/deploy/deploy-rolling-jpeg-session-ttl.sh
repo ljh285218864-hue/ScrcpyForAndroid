@@ -74,7 +74,10 @@ code="$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' \
     -H 'Sec-WebSocket-Version: 13' \
     -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
     'http://127.0.0.1:8767/media' || true)"
-[[ "$code" == 101 ]] || die "media WS handshake not 101 (got $code)"
+if [[ "$code" != 101 ]]; then
+    echo "ERROR: media WS handshake not 101 (got $code), restoring backup" >&2
+    false  # invoke ERR trap and rollback after the source has been swapped
+fi
 echo "SUCCESS: ScreenSync media rolling TTL installed (only media service restarted)"
 echo "Backup: $BACKUP"
 echo "UNCHANGED: nginx, signaling, database, x-ui, Xray/Reality, WireGuard"
