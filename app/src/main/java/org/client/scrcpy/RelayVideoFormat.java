@@ -21,6 +21,19 @@ public final class RelayVideoFormat {
         return dims;
     }
 
+    /** Return a new dimensions array for a 90/270 degree change only. */
+    public static int[] forRotation(int[] dimensions, int previous, int current) {
+        if (dimensions == null || dimensions.length != 4
+                || previous < 0 || previous > 3 || current < 0 || current > 3)
+            throw new IllegalArgumentException("Invalid display rotation");
+        int[] result = dimensions.clone();
+        if (((previous ^ current) & 1) != 0) {
+            int dev = result[0]; result[0] = result[1]; result[1] = dev;
+            int video = result[2]; result[2] = result[3]; result[3] = video;
+        }
+        return result;
+    }
+
     /** Each result includes its own Annex-B start code; [0] SPS, [1] PPS. */
     public static byte[][] h264ParameterSets(byte[] data) {
         if (data == null || data.length < 12 || data.length > 128 * 1024)
