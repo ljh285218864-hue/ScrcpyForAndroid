@@ -259,6 +259,86 @@ class RelayHTTPTests(unittest.TestCase):
         self.assertEqual(self.post("/v1/signal/poll", {"after": 0},
                                   b["token"])[1]["messages"], [])
 
+    def test_self_service_requires_explicit_server_enable(self):
+        previous = relay.SELF_SERVICE_ENABLED
+        self.addCleanup(setattr, relay, "SELF_SERVICE_ENABLED", previous)
+        relay.SELF_SERVICE_ENABLED = False
+        status, rejected = self.post("/v1/self-register", {"name": "Phone A"})
+        self.assertEqual(status, 403)
+        self.assertEqual(rejected["error"], "SELF_REGISTER_DISABLED")
+        with relay.db_connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM groups").fetchone()[0], 0)
+
+    def test_self_service_owner_qr_join_approval_and_revoke(self):
+        previous = relay.SELF_SERVICE_ENABLED
+        self.addCleanup(setattr, relay, "SELF_SERVICE_ENABLED", previous)
+        relay.SELF_SERVICE_ENABLED = True
+        status, owner = self.post("/v1/self-register", {"name": "Phone A"})
+        self.assertEqual(status, 200)
+        self.assertEqual(owner["state"], "ready")
+        self.assertEqual(len(owner["invite_code"]), 48)
+        self.assertEqual(owner["expires_in"], 300)
+        self.assertEqual(len(owner["token"]), 48)
+        with relay.db_connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM groups").fetchone()[0], 1)
+            # Never write the plaintext invite, authorization or QR to DB.
+            hashes = [row[0] for row in db.execute("SELECT hash FROM invites")]
+            self.assertEqual(hashes, [relay.sha(owner["invite_code"])])
+            self.assertNotEqual(hashes[0], owner["invite_code"])
+        status, guest = self.post("/v1/join", {
+            "name": "Phone B", "invite_code": owner["invite_code"]})
+        self.assertEqual(status, 200)
+        self.assertEqual(guest["state"], "pending")
+        self.assertEqual(owner["group_id"], guest["group_id"])
+        self.assertEqual(self.post("/v1/join", {
+            "name": "Phone C", "invite_code": owner["invite_code"]})[0], 403)
+        _, a = self.post("/v1/status", {}, owner["token"])
+        _, b = self.post("/v1/status", {}, guest["token"])
+        self.assertEqual(a["pending_verify_code"], b["pending_verify_code"])
+        self.assertNotIn("peer_device_id", a)
+        # Before owner approval, guest cannot signal or access video.
+        self.assertEqual(self.post("/v1/heartbeat", {}, guest["token"])[0], 403)
+        self.assertEqual(self.post("/v1/approve", {
+            "pending_id": guest["device_id"]}, owner["token"])[0], 200)
+        _, approved_a = self.post("/v1/status", {}, owner["token"])
+        _, approved_b = self.post("/v1/status", {}, guest["token"])
+        self.assertEqual(approved_a["peer_device_id"], guest["device_id"])
+        self.assertEqual(approved_b["peer_device_id"], owner["device_id"])
+        self.assertEqual(self.post("/v1/revoke", {}, owner["token"])[0], 200)
+        self.assertEqual(self.post("/v1/status", {}, guest["token"])[0], 401)
+
+    def test_self_service_global_hourly_capacity_and_expired_invitation(self):
+        previous = (relay.SELF_SERVICE_ENABLED, relay.MAX_SELF_REGISTER_HOUR,
+                    relay.MAX_SELF_REGISTER_DAY)
+        self.addCleanup(setattr, relay, "SELF_SERVICE_ENABLED", previous[0])
+        self.addCleanup(setattr, relay, "MAX_SELF_REGISTER_HOUR", previous[1])
+        self.addCleanup(setattr, relay, "MAX_SELF_REGISTER_DAY", previous[2])
+        relay.SELF_SERVICE_ENABLED = True
+        relay.MAX_SELF_REGISTER_HOUR = 2
+        relay.MAX_SELF_REGISTER_DAY = 3
+        _, first = self.post("/v1/self-register", {"name": "First"})
+        self.assertEqual(self.post("/v1/self-register", {"name": "Second"})[0], 200)
+        status, limited = self.post("/v1/self-register", {"name": "Third"})
+        self.assertEqual(status, 429)
+        self.assertEqual(limited["error"], "REGISTRATION_RATE_LIMIT")
+        with relay.db_connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM groups").fetchone()[0], 2)
+            db.execute("UPDATE invites SET expires=0 WHERE group_id=?",
+                       (first["group_id"],))
+        self.assertEqual(self.post("/v1/join", {
+            "name": "Late B", "invite_code": first["invite_code"]})[0], 403)
+        # Already registered owners can renew their QR without a new group.
+        self.assertEqual(self.post("/v1/invite", {}, first["token"])[0], 200)
+
+    def test_self_service_invalid_registration_rejected_without_group(self):
+        previous = relay.SELF_SERVICE_ENABLED
+        self.addCleanup(setattr, relay, "SELF_SERVICE_ENABLED", previous)
+        relay.SELF_SERVICE_ENABLED = True
+        for name in ("", "x" * 80, None):
+            self.assertEqual(self.post("/v1/self-register", {"name": name})[0], 400)
+        with relay.db_connect() as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM groups").fetchone()[0], 0)
+
     def test_health_never_claims_video_stream_ready(self):
         with urlopen(self.host + "/health", timeout=3) as resp:
             data = json.load(resp)
