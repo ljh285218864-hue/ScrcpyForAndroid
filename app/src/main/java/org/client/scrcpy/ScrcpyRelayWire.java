@@ -30,6 +30,26 @@ public final class ScrcpyRelayWire {
                 !ScrcpyRelayPacketPolicy.allowedVideoPayload(packet)) {
             throw new IllegalArgumentException("INVALID_VIDEO_PACKET");
         }
+        return pack(sessionId, packet);
+    }
+
+    public static byte[] encodeJpeg(String sessionId, byte[] jpeg) {
+        if (!validSessionId(sessionId) || jpeg == null
+                || jpeg.length < 64 || jpeg.length > 1024 * 1024
+                || (jpeg[0] & 255) != 0xff || (jpeg[1] & 255) != 0xd8
+                || (jpeg[jpeg.length - 2] & 255) != 0xff
+                || (jpeg[jpeg.length - 1] & 255) != 0xd9)
+            throw new IllegalArgumentException("INVALID_JPEG_PACKET");
+        byte[] payload = new byte[10 + jpeg.length];
+        payload[0] = 2; // JPEG-only, never ADB or scrcpy CONTROL
+        payload[1] = 0;
+        long stamp = System.currentTimeMillis();
+        for (int i = 0; i < 8; ++i) payload[i + 2] = (byte) (stamp >>> (56 - i * 8));
+        System.arraycopy(jpeg, 0, payload, 10, jpeg.length);
+        return pack(sessionId, payload);
+    }
+
+    private static byte[] pack(String sessionId, byte[] packet) {
         int length = packet.length;
         byte[] frame = new byte[HEADER_LENGTH + length];
         for (int i = 0; i < 16; i++) {
@@ -56,7 +76,7 @@ public final class ScrcpyRelayWire {
             throw new IllegalArgumentException("MISMATCHED_VIDEO_LENGTH");
         }
         byte[] packet = Arrays.copyOfRange(data, HEADER_LENGTH, data.length);
-        if (!ScrcpyRelayPacketPolicy.allowedVideoPayload(packet)) {
+        if (!ScrcpyRelayPacketPolicy.allowedMediaPayload(packet)) {
             throw new IllegalArgumentException("UNSAFE_VIDEO_PACKET");
         }
         char[] hex = "0123456789abcdef".toCharArray();
