@@ -145,6 +145,23 @@ public final class NoVpnApi {
         return name.length() > 48 ? name.substring(0, 48) : name;
     }
 
+    /** A phone can create its own private pair and QR without VPS shell access.
+     * Registration does NOT grant remote screenshot permission.
+     */
+    public static JSONObject registerOwner(Context context) throws Exception {
+        if (isRegistered(context))
+            throw new IllegalStateException("本机已经注册，请直接生成配对二维码");
+        JSONObject response = post(context, "/v1/self-register",
+                new JSONObject().put("name", ownName()), false);
+        // A single response includes an expiring guest invite; never print or
+        // log its value. The long-lived owner token stays in secure storage.
+        String invite = response.getString("invite_code");
+        if (!CODE.matcher(invite).matches())
+            throw new SecurityException("服务器返回无效的配对邀请码");
+        saveIdentity(context, response);
+        return response;
+    }
+
     public static JSONObject activate(Context context, String code) throws Exception {
         if (isRegistered(context)) throw new IllegalStateException("本机已开通");
         if (!CODE.matcher(code == null ? "" : code).matches())
