@@ -39,6 +39,7 @@ public final class AccessibilityJpegStreamer {
     private volatile boolean running;
     private volatile boolean busy;
     private int outWidth, outHeight;
+    private int screenshotCount, sendCount, sendFailCount, captureFailCount;
     private final Runnable tick = this::capture;
 
     public AccessibilityJpegStreamer(Context ctx, NoVpnMediaSocket media, Listener cb) {
@@ -48,20 +49,30 @@ public final class AccessibilityJpegStreamer {
     }
 
     public boolean start() {
-        if (!AccessibilityShotService.ready() || running || current != null) return false;
+        if (!AccessibilityShotService.ready() || running || current != null) {
+            ScreenSyncDiagnostics.record(app, "CAPTURE_START", "blocked_accessibility_or_active");
+            return false;
+        }
         if (Build.VERSION.SDK_INT >= 33
                 && app.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED) return false;
+                != PackageManager.PERMISSION_GRANTED) {
+            ScreenSyncDiagnostics.record(app, "CAPTURE_START", "notification_permission_missing");
+            return false;
+        }
         DisplayMetrics metrics = app.getResources().getDisplayMetrics();
         float scale = Math.min(1f, 960f / Math.max(metrics.widthPixels, metrics.heightPixels));
         outWidth = Math.max(16, Math.round(metrics.widthPixels * scale));
         outHeight = Math.max(16, Math.round(metrics.heightPixels * scale));
         if (!socket.sendVideoSetup(new int[] {
-                metrics.widthPixels, metrics.heightPixels, outWidth, outHeight}, "jpeg"))
+                metrics.widthPixels, metrics.heightPixels, outWidth, outHeight}, "jpeg")) {
+            ScreenSyncDiagnostics.record(app, "CAPTURE_START", "send_video_setup_failed");
             return false;
+        }
         current = this;
         running = true;
         showNotice();
+        ScreenSyncDiagnostics.record(app, "CAPTURE_START", "success jpeg_width="
+                + outWidth + " jpeg_height=" + outHeight);
         main.post(tick);
         return true;
     }
@@ -86,11 +97,24 @@ public final class AccessibilityJpegStreamer {
                             image.compress(Bitmap.CompressFormat.JPEG, 60, buffer);
                             if (image != screenshot) image.recycle();
                             byte[] data = buffer.toByteArray();
-                            if (running && data.length >= 64 && data.length <= 1024 * 1024)
-                                socket.sendJpegFrame(data);
+                            screenshotCount++;
+                            if (running && data.length >= 64 && data.length <= 1024 * 1024) {
+                                boolean sent = socket.sendJpegFrame(data);
+                                if (sent) sendCount++; else sendFailCount++;
+                                if (screenshotCount == 1 || screenshotCount % 20 == 0
+                                        || (sendFailCount == 1 && !sent)) {
+                                    ScreenSyncDiagnostics.record(app, "JPEG_SEND",
+                                            "captured=" + screenshotCount + " sent=" + sendCount
+                                            + " failed=" + sendFailCount + " bytes=" + data.length);
+                                }
+                            } else if (screenshotCount == 1) {
+                                ScreenSyncDiagnostics.record(app, "JPEG_SEND",
+                                        "rejected_size=" + data.length);
+                            }
                         }
-                    } catch (RuntimeException ignored) {
-                        // Device screenshots may fail or be blocked for secure content.
+                    } catch (RuntimeException error) {
+                        ScreenSyncDiagnostics.record(app, "JPEG_ENCODE_FAIL",
+                                "error=" + error.getClass().getSimpleName());
                     } finally {
                         screenshot.recycle();
                         main.post(() -> {
@@ -100,11 +124,17 @@ public final class AccessibilityJpegStreamer {
                     }
                 });
                 } catch (java.util.concurrent.RejectedExecutionException stopped) {
+                    ScreenSyncDiagnostics.record(app, "JPEG_ENCODE_FAIL", "executor_stopped");
                     screenshot.recycle();
                     busy = false;
                 }
             }
             @Override public void failure(int reason) {
+                captureFailCount++;
+                if (captureFailCount == 1 || captureFailCount % 5 == 0) {
+                    ScreenSyncDiagnostics.record(app, "CAPTURE_FAIL",
+                            "count=" + captureFailCount + " code=" + reason);
+                }
                 busy = false;
                 if (running) main.postDelayed(tick, 1000);
             }
@@ -114,6 +144,9 @@ public final class AccessibilityJpegStreamer {
     public void stop() {
         if (!running) return;
         running = false;
+        ScreenSyncDiagnostics.record(app, "CAPTURE_STOP",
+                "captured=" + screenshotCount + " sent=" + sendCount
+                + " send_failed=" + sendFailCount + " capture_failed=" + captureFailCount);
         main.removeCallbacks(tick);
         encoder.shutdownNow();
         if (current == this) current = null;
