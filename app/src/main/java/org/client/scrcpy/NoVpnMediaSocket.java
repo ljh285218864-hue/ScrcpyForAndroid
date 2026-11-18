@@ -52,6 +52,8 @@ public final class NoVpnMediaSocket {
     private volatile String pendingViewerSession = "";
     private volatile String sourceSession = "";
     private volatile String viewerSession = "";
+    private volatile boolean watchRequestInFlight;
+    private volatile boolean viewerHasVideoSetup;
     private int reconnectAttempts;
     private int receivedFrames;
     private final Runnable retryConnection = () -> {
@@ -234,6 +236,7 @@ public final class NoVpnMediaSocket {
                 if (!ScrcpyRelayWire.validSessionId(body.optString("session_id")))
                     throw new SecurityException("无效观看等待会话");
                 pendingViewerSession = body.optString("session_id");
+                watchRequestInFlight = true;
                 status("awaiting_peer_approval");
                 break;
             case "watch_active": {
@@ -243,7 +246,9 @@ public final class NoVpnMediaSocket {
                 if (!sid.equals(pendingViewerSession))
                     throw new SecurityException("不是本机发起的观看会话");
                 pendingViewerSession = "";
+                watchRequestInFlight = false;
                 viewerSession = sid;
+                viewerHasVideoSetup = false;
                 status("viewer_session_active");
                 break;
             }
@@ -275,6 +280,7 @@ public final class NoVpnMediaSocket {
                 String codec = body.optString("codec");
                 if (!MediaCodecPolicy.isAllowed(codec))
                     throw new SecurityException("视频编码格式不支持");
+                viewerHasVideoSetup = true;
                 ScreenSyncDiagnostics.record(context, "VIDEO_SETUP",
                         "codec=" + codec + " width=" + sizes[2] + " height=" + sizes[3]);
                 // Keep video_setup and binary frames in WSS receive order.
@@ -288,7 +294,11 @@ public final class NoVpnMediaSocket {
                 boolean sourceEnded = id.equals(sourceSession);
                 boolean viewerEnded = id.equals(viewerSession)
                         || id.equals(pendingViewerSession);
-                if (id.equals(viewerSession)) viewerSession = "";
+                if (id.equals(viewerSession)) {
+                    viewerSession = "";
+                    viewerHasVideoSetup = false;
+                }
+                if (id.equals(pendingViewerSession)) watchRequestInFlight = false;
                 if (id.equals(pendingViewerSession)) pendingViewerSession = "";
                 if (id.equals(sourceSession)) sourceSession = "";
                 if (id.equals(waitingRequest)) waitingRequest = "";
@@ -297,6 +307,7 @@ public final class NoVpnMediaSocket {
                         : viewerEnded ? "viewer_session_ended" : "session_ended");
                 break;
             case "error":
+                watchRequestInFlight = false;
                 status("server_error:" + body.optString("code", "UNKNOWN"));
                 break;
             default:
@@ -318,14 +329,35 @@ public final class NoVpnMediaSocket {
 
     public boolean requestWatch() {
         String peer = NoVpnApi.peerId(context);
-        if (peer.isEmpty()) return false;
+        if (peer.isEmpty() || !authenticated || shutdown || watchRequestInFlight
+                || !viewerSession.isEmpty() || !pendingViewerSession.isEmpty())
+            return false;
+        watchRequestInFlight = true;
         try {
             boolean sent = send(new JSONObject().put("type", "watch_request")
                     .put("to_device_id", peer));
+            if (!sent) watchRequestInFlight = false;
             ScreenSyncDiagnostics.record(context, "WATCH_REQUEST", "sent=" + sent);
             return sent;
-        } catch (JSONException error) { return false; }
+        } catch (JSONException error) {
+            watchRequestInFlight = false;
+            return false;
+        }
     }
+
+    /** The viewer may reopen its picture without issuing another request. */
+    public boolean hasActiveViewerSession() {
+        return authenticated && ScrcpyRelayWire.validSessionId(viewerSession);
+    }
+
+    public boolean hasViewerRequestOutstanding() {
+        return watchRequestInFlight || !pendingViewerSession.isEmpty();
+    }
+
+    public boolean hasConfiguredVideo() {
+        return hasActiveViewerSession() && viewerHasVideoSetup;
+    }
+
 
     /** Call only from a real acceptance in the local user interface. */
     public boolean acceptRequest(String sid) {
@@ -400,6 +432,8 @@ public final class NoVpnMediaSocket {
 
     private void clearSessions() {
         receivedFrames = 0;
+        watchRequestInFlight = false;
+        viewerHasVideoSetup = false;
         viewerSession = "";
         pendingViewerSession = "";
         sourceSession = "";
