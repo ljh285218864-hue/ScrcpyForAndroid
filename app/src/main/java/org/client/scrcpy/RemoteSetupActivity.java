@@ -547,7 +547,8 @@ public final class RemoteSetupActivity extends Activity {
                             jpegRenderer.startSession(sid);
                             runOnUiThread(() -> {
                                 jpegImage.setVisibility(android.view.View.VISIBLE);
-                                remoteVideoSurface.setVisibility(android.view.View.GONE);
+                                if (remoteVideoSurface != null)
+                                    remoteVideoSurface.setVisibility(android.view.View.GONE);
                                 mediaState.setText("正在等待 JPEG 截图");
                             });
                         } else if (active && renderer != null) {
