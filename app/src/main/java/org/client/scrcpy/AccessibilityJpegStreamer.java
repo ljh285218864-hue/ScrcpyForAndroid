@@ -38,6 +38,7 @@ public final class AccessibilityJpegStreamer {
     private final ExecutorService encoder = Executors.newSingleThreadExecutor();
     private volatile boolean running;
     private volatile boolean busy;
+    private int captureSerial;
     private int outWidth, outHeight;
     private int screenshotCount, sendCount, sendFailCount, captureFailCount;
     private final Runnable tick = this::capture;
@@ -53,10 +54,18 @@ public final class AccessibilityJpegStreamer {
             ScreenSyncDiagnostics.record(app, "CAPTURE_START", "blocked_accessibility_or_active");
             return false;
         }
-        if (Build.VERSION.SDK_INT >= 33
+        NotificationManager manager = (NotificationManager)
+                app.getSystemService(Context.NOTIFICATION_SERVICE);
+        if ((Build.VERSION.SDK_INT >= 33
                 && app.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED) {
-            ScreenSyncDiagnostics.record(app, "CAPTURE_START", "notification_permission_missing");
+                != PackageManager.PERMISSION_GRANTED)
+                || (Build.VERSION.SDK_INT >= 24 && !manager.areNotificationsEnabled())
+                || (Build.VERSION.SDK_INT >= 26
+                    && manager.getNotificationChannel(CHANNEL_ID) != null
+                    && manager.getNotificationChannel(CHANNEL_ID).getImportance()
+                            == NotificationManager.IMPORTANCE_NONE)) {
+            ScreenSyncDiagnostics.record(app, "CAPTURE_START",
+                    "sharing_notification_not_permitted");
             return false;
         }
         DisplayMetrics metrics = app.getResources().getDisplayMetrics();
@@ -70,7 +79,15 @@ public final class AccessibilityJpegStreamer {
         }
         current = this;
         running = true;
-        showNotice();
+        try {
+            showNotice();
+        } catch (RuntimeException failure) {
+            running = false;
+            current = null;
+            ScreenSyncDiagnostics.record(app, "CAPTURE_START",
+                    "notification_error=" + failure.getClass().getSimpleName());
+            return false;
+        }
         ScreenSyncDiagnostics.record(app, "CAPTURE_START", "success jpeg_width="
                 + outWidth + " jpeg_height=" + outHeight);
         main.post(tick);
@@ -80,11 +97,23 @@ public final class AccessibilityJpegStreamer {
     private void capture() {
         if (!running || busy) return;
         busy = true;
+        final int serial = ++captureSerial;
+        // Some OEMs can leave takeScreenshot without a callback. Recover
+        // rather than displaying a permanent black waiting screen.
+        final Runnable watchdog = () -> {
+            if (!running || !busy || serial != captureSerial) return;
+            captureSerial++;
+            busy = false;
+            ScreenSyncDiagnostics.record(app, "CAPTURE_TIMEOUT",
+                    "callback_timeout_ms=6000");
+            main.postDelayed(tick, 850);
+        };
+        main.postDelayed(watchdog, 6000);
         AccessibilityShotService.capture(main::post, new AccessibilityShotService.Callback() {
             @Override public void success(Bitmap screenshot) {
-                if (!running) {
+                main.removeCallbacks(watchdog);
+                if (!running || serial != captureSerial) {
                     screenshot.recycle();
-                    busy = false;
                     return;
                 }
                 try {
@@ -118,6 +147,7 @@ public final class AccessibilityJpegStreamer {
                     } finally {
                         screenshot.recycle();
                         main.post(() -> {
+                            if (serial != captureSerial) return;
                             busy = false;
                             if (running) main.postDelayed(tick, DELAY_MS);
                         });
@@ -126,10 +156,12 @@ public final class AccessibilityJpegStreamer {
                 } catch (java.util.concurrent.RejectedExecutionException stopped) {
                     ScreenSyncDiagnostics.record(app, "JPEG_ENCODE_FAIL", "executor_stopped");
                     screenshot.recycle();
-                    busy = false;
+                    if (serial == captureSerial) busy = false;
                 }
             }
             @Override public void failure(int reason) {
+                main.removeCallbacks(watchdog);
+                if (!running || serial != captureSerial) return;
                 captureFailCount++;
                 if (captureFailCount == 1 || captureFailCount % 5 == 0) {
                     ScreenSyncDiagnostics.record(app, "CAPTURE_FAIL",
@@ -144,6 +176,7 @@ public final class AccessibilityJpegStreamer {
     public void stop() {
         if (!running) return;
         running = false;
+        captureSerial++;
         ScreenSyncDiagnostics.record(app, "CAPTURE_STOP",
                 "captured=" + screenshotCount + " sent=" + sendCount
                 + " send_failed=" + sendFailCount + " capture_failed=" + captureFailCount);
