@@ -365,8 +365,7 @@ public final class NoVpnMediaSocket {
                 if (id.equals(locallyApprovedRequest)) locallyApprovedRequest = "";
                 if (sourceEnded)
                     AccessibilityJpegStreamer.stopActiveWithoutSending();
-                if (id.equals(waitingRequest) || id.equals(pendingViewerSession))
-                    ScreenSyncWatchNotice.clear(context);
+                ScreenSyncWatchNotice.clear(context);
                 status(sourceEnded ? "source_session_ended"
                         : viewerEnded ? "viewer_session_ended" : "session_ended");
                 break;
