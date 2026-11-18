@@ -49,23 +49,44 @@ public final class AccessibilityJpegStreamer {
         listener = cb;
     }
 
+    /** Use the SAME prerequisite logic in the UI and the capture source.
+     * A viewer's notification permission is not proof that the SOURCE is ready.
+     */
+    public static String readinessIssue(Context context) {
+        if (!AccessibilityShotService.ready()) return "accessibility_not_enabled";
+        NotificationManager manager = (NotificationManager)
+                context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager == null) return "notification_service_unavailable";
+        if (Build.VERSION.SDK_INT >= 33
+                && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED)
+            return "notification_permission_missing";
+        if (Build.VERSION.SDK_INT >= 24 && !manager.areNotificationsEnabled())
+            return "app_notifications_disabled";
+        if (Build.VERSION.SDK_INT >= 26) {
+            NotificationChannel channel = manager.getNotificationChannel(CHANNEL_ID);
+            if (channel != null
+                    && channel.getImportance() == NotificationManager.IMPORTANCE_NONE)
+                return "sharing_channel_blocked";
+        }
+        return "";
+    }
+
+    public static boolean notificationAllowed(Context context) {
+        String issue = readinessIssue(context);
+        return !issue.startsWith("notification_")
+                && !"app_notifications_disabled".equals(issue)
+                && !"sharing_channel_blocked".equals(issue);
+    }
+
     public boolean start() {
-        if (!AccessibilityShotService.ready() || running || current != null) {
-            ScreenSyncDiagnostics.record(app, "CAPTURE_START", "blocked_accessibility_or_active");
+        String blocked = readinessIssue(app);
+        if (!blocked.isEmpty()) {
+            ScreenSyncDiagnostics.record(app, "CAPTURE_START", "not_ready=" + blocked);
             return false;
         }
-        NotificationManager manager = (NotificationManager)
-                app.getSystemService(Context.NOTIFICATION_SERVICE);
-        if ((Build.VERSION.SDK_INT >= 33
-                && app.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                != PackageManager.PERMISSION_GRANTED)
-                || (Build.VERSION.SDK_INT >= 24 && !manager.areNotificationsEnabled())
-                || (Build.VERSION.SDK_INT >= 26
-                    && manager.getNotificationChannel(CHANNEL_ID) != null
-                    && manager.getNotificationChannel(CHANNEL_ID).getImportance()
-                            == NotificationManager.IMPORTANCE_NONE)) {
-            ScreenSyncDiagnostics.record(app, "CAPTURE_START",
-                    "sharing_notification_not_permitted");
+        if (running || current != null) {
+            ScreenSyncDiagnostics.record(app, "CAPTURE_START", "already_active");
             return false;
         }
         DisplayMetrics metrics = app.getResources().getDisplayMetrics();
