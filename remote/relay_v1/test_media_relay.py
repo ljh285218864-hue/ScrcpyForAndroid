@@ -272,7 +272,7 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
                                       "dimensions": [1080, 2400, 648, 1440],
                                       "codec": "jpeg"}))
         self.assertEqual((await self.read(viewer))["codec"], "jpeg")
-        packet = bytes([2, 0]) + bytes(8) + b"\\xff\\xd8" + bytes(68) + b"\\xff\\xd9"
+        packet = bytes([2, 0]) + bytes(8) + bytes.fromhex("ffd8") + bytes(68) + bytes.fromhex("ffd9")
         frame = media.video_frame(sid, packet)
         self.relay.sessions[sid].expires = media.time.monotonic() + 1
         with patch.object(media, "SESSION_TTL_SECONDS", 7):
