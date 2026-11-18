@@ -29,6 +29,8 @@ public final class AccessibilityShotService extends AccessibilityService {
     public static void capture(Executor callbackExecutor, Callback callback) {
         AccessibilityShotService service = connected;
         if (service == null || Build.VERSION.SDK_INT < 30) {
+            if (service != null) ScreenSyncDiagnostics.record(service,
+                    "CAPTURE_DENIED", "android_api_below_30");
             callbackExecutor.execute(() -> callback.failure(-1));
             return;
         }
@@ -47,14 +49,20 @@ public final class AccessibilityShotService extends AccessibilityService {
                         if (software == null) throw new IllegalStateException("copy failed");
                         callback.success(software);
                     } catch (RuntimeException error) {
+                        ScreenSyncDiagnostics.record(service, "CAPTURE_COPY_FAIL",
+                                "error=" + error.getClass().getSimpleName());
                         callback.failure(-2);
                     }
                 }
                 @Override public void onFailure(int reason) {
+                    ScreenSyncDiagnostics.record(service, "CAPTURE_OS_FAIL",
+                            "code=" + reason);
                     callback.failure(reason);
                 }
             });
         } catch (SecurityException | IllegalStateException error) {
+            ScreenSyncDiagnostics.record(service, "CAPTURE_START_FAIL",
+                    "error=" + error.getClass().getSimpleName());
             callbackExecutor.execute(() -> callback.failure(-3));
         }
     }
@@ -62,11 +70,13 @@ public final class AccessibilityShotService extends AccessibilityService {
     @Override protected void onServiceConnected() {
         super.onServiceConnected();
         connected = this;
+        ScreenSyncDiagnostics.record(this, "ACCESSIBILITY", "service_connected");
     }
     @Override public void onAccessibilityEvent(AccessibilityEvent event) { }
     @Override public void onInterrupt() { }
     @Override public boolean onUnbind(android.content.Intent intent) {
         if (connected == this) connected = null;
+        ScreenSyncDiagnostics.record(this, "ACCESSIBILITY", "service_unbound");
         return super.onUnbind(intent);
     }
     @Override public void onDestroy() {
