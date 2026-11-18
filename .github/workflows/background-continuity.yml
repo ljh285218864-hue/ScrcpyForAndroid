@@ -29,6 +29,7 @@ jobs:
           bash -n remote/relay_v1/deploy/diagnose-8443.sh
           bash -n remote/relay_v1/deploy/deploy-accessibility-jpeg.sh
           bash -n remote/relay_v1/deploy/deploy-self-service-signaling.sh
+          bash -n remote/relay_v1/deploy/deploy-rolling-jpeg-session-ttl.sh
       - name: Guard against abandoned VPN and WebRTC solutions
         run: |
           python3 - <<'PY'
@@ -259,6 +260,11 @@ jobs:
           assert 'startForeground' not in notice
           assert 'BOOT_COMPLETED' not in notice
           print("Process-lifetime WSS retention, no background auto-capture and user approval guard verified")
+          relay = Path("remote/relay_v1/media_relay.py").read_text()
+          assert 'session.expires = time.monotonic() + SESSION_TTL_SECONDS' in relay
+          assert 'await self.discard(session_id, "stopped_by_device")' in relay
+          print("Rolling expiry applies only to live, approved media delivery; stop and revoke still work")
+
 
 
 
