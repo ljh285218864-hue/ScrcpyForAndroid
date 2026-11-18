@@ -21,6 +21,9 @@ rollback() {
     echo "ROLLBACK: reverting only ScreenSync signaling changes" >&2
     if [[ "$MOVED_TARGET" == 1 && -f "$BACKUP/server.py" ]]; then
         cp -p -- "$BACKUP/server.py" "$TARGET"
+        # Keep the service recoverable even if the prior file was root:root 0600.
+        chown screensync:screensync "$TARGET"
+        chmod 0600 "$TARGET"
     fi
     if [[ "$WRITTEN_DROPIN" == 1 ]]; then
         rm -f -- "$DROPIN"
@@ -52,8 +55,11 @@ systemctl show -p ExecStart --value "$SERVICE" |
 systemctl show -p ExecStart --value "$SERVICE" | grep -Fq "server.py serve" ||
     die "unexpected signaling command"
 [[ ! -e "$DROPIN" ]] || die "self-service unit override already exists; inspect manually"
-[[ "$(stat -c %U "$TARGET")" == screensync ]] ||
-    die "server.py not owned by screensync; correct ownership manually first"
+# Existing source may be root:root 0600 from an earlier deployment.
+# New source is installed screensync:screensync 0600 so restart is possible.
+if ! runuser -u screensync -- test -r "$TARGET"; then
+    echo "NOTICE: old signaling source unreadable to screensync; new source will fix its ownership" >&2
+fi
 if command -v nginx >/dev/null; then
     nginx -t >/dev/null 2>&1 || die "nginx baseline invalid; no changes made"
 fi
@@ -79,10 +85,10 @@ printf 'Backup %s\n' "$BACKUP"
 # Atomic replacement with rights that actually allow the service to import.
 chown screensync:screensync "$TEMP"
 chmod 0600 "$TEMP"
+mkdir -p "$DROPIN_DIR"
 mv -- "$TEMP" "$TARGET"
 TEMP=""
 MOVED_TARGET=1
-mkdir -p "$DROPIN_DIR"
 TEMP="$(mktemp "$DROPIN_DIR/.selfservice.XXXXXXXX")"
 printf '[Service]\nEnvironment=SS_ALLOW_SELF_SERVICE=1\nEnvironment=SS_SELF_REGISTER_HOUR=12\nEnvironment=SS_SELF_REGISTER_DAY=30\n' > "$TEMP"
 chmod 0644 "$TEMP"
