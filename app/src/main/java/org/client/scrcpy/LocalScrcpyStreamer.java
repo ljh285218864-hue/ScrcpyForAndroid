@@ -3,6 +3,7 @@ package org.client.scrcpy;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.WindowManager;
 
 import org.client.scrcpy.utils.AdbHelper;
 import org.client.scrcpy.utils.ExecUtil;
@@ -55,6 +56,11 @@ public final class LocalScrcpyStreamer {
 
     private void status(String message) {
         main.post(() -> listener.onState(message));
+    }
+
+    private int screenRotation() {
+        WindowManager manager = (WindowManager) app.getSystemService(Context.WINDOW_SERVICE);
+        return manager == null ? -1 : manager.getDefaultDisplay().getRotation();
     }
 
     private void run() {
@@ -117,6 +123,8 @@ public final class LocalScrcpyStreamer {
             try (DataInputStream in = new DataInputStream(socket.getInputStream())) {
                 ScrcpyLocalFrameReader frames = new ScrcpyLocalFrameReader(in);
                 int[] dims = frames.readDimensions();
+                int lastRotation = screenRotation();
+                boolean sawVideoFrame = false;
                 if (!relay.sendVideoSetup(dims, Options.CODEC_H264))
                     throw new IllegalStateException("观看会话已经结束或 WSS 不可用");
                 status("本机视频正在向已授权的观看端发送");
@@ -124,9 +132,22 @@ public final class LocalScrcpyStreamer {
                 while (running.get()) {
                     byte[] packet = frames.readPacket();
                     if (packet == null) continue; // never forward non-video
+                    if ((packet[1] & 255) == 2 && sawVideoFrame) {
+                        int nextRotation = screenRotation();
+                        if (lastRotation >= 0 && nextRotation >= 0
+                                && nextRotation != lastRotation) {
+                            dims = RelayVideoFormat.forRotation(
+                                    dims, lastRotation, nextRotation);
+                            if (!relay.sendVideoSetup(dims, Options.CODEC_H264))
+                                throw new IllegalStateException("旋转时远端视频会话已结束");
+                            lastRotation = nextRotation;
+                        }
+                    }
                     if (!relay.sendVideoPacket(packet))
                         throw new IllegalStateException("已停止发送：WSS 拥塞或观看会话终止");
                     if (packet[1] == 4) break; // scrcpy END
+                    if (packet[1] == 0 || packet[1] == 1)
+                        sawVideoFrame = true;
                     count++;
                     if (count % 120 == 0)
                         status("已发送 " + count + " 个只读视频包");
