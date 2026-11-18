@@ -142,6 +142,7 @@ jobs:
           assert 'new java.net.InetSocketAddress("127.0.0.1", 7007)' in receiver
           print("Activity-scoped, local-ADB, read-only scrcpy constraints verified")
           print("No-VPN background sync has no app-initiated foreground receiver")
+          base = Path("app/src/main/java/org/client/scrcpy")
           screenshot = (base / "AccessibilityShotService.java").read_text()
           assert "takeScreenshot(" in screenshot
           assert "MediaProjection" not in screenshot
