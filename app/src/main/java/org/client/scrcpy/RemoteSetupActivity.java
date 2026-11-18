@@ -329,6 +329,7 @@ public final class RemoteSetupActivity extends Activity {
         boolean jpegShareContinues = jpegStreamer != null;
         if (!jpegShareContinues) stopLocalStream();
         if (renderer != null) renderer.stopSession();
+        if (jpegRenderer != null) jpegRenderer.stopSession();
         if (mediaSocket != null && !jpegShareContinues) {
             mediaSocket.close();
             mediaSocket = null;
@@ -478,13 +479,43 @@ public final class RemoteSetupActivity extends Activity {
         }, result -> report("已确认本机 ADB 连接授权有效"), false);
     }
 
+    private String friendlyMediaStatus(String status) {
+        switch (status) {
+            case "connecting":
+            case "authenticating":
+                return "正在安全连接服务器…";
+            case "authenticated":
+                return "已连接，等待观看";
+            case "peer_online":
+                return "配对手机已连接";
+            case "peer_offline":
+                return "对方暂时未打开软件";
+            case "awaiting_peer_approval":
+                return "等待另一台手机确认共享";
+            case "viewer_session_active":
+                return "连接成功，等待对方画面";
+            case "video_source_permitted":
+                return "正在向另一台手机共享画面";
+            case "source_session_ended":
+            case "viewer_session_ended":
+            case "session_stopped_by_user":
+            case "source_session_stopped":
+                return "共享已结束";
+            case "disconnected":
+            case "network_unavailable":
+                return "网络暂时断开，请重试";
+            default:
+                return "连接状态已更新";
+        }
+    }
+
     private void connectMediaTest() {
         if (!NoVpnApi.isRegistered(this) || !"paired".equals(currentState)) {
-            report("先完成两台手机的配对确认，再测试 WSS 中转");
+            report("请先完成两台手机的扫码配对");
             return;
         }
         if (mediaSocket != null) {
-            mediaState.setText("已有中转连接，请先结束后再重新连接");
+            mediaState.setText("正在连接对方，请稍候");
             return;
         }
         receivedVideoFrames = 0;
@@ -500,7 +531,7 @@ public final class RemoteSetupActivity extends Activity {
                             stopLocalStream();
                         }
                         if (!active || isFinishing()) return;
-                        mediaState.setText("媒体中转：" + value);
+                        mediaState.setText(friendlyMediaStatus(value));
                         if ("authenticated".equals(value) && requestAfterConnect) {
                             if (mediaSocket != null && mediaSocket.requestWatch()) {
                                 requestAfterConnect = false;
@@ -514,11 +545,15 @@ public final class RemoteSetupActivity extends Activity {
                             stopLocalStream();
                         } else if ("viewer_session_ended".equals(value)) {
                             if (renderer != null) renderer.stopSession();
+                            if (jpegRenderer != null) jpegRenderer.stopSession();
+                            receivedVideoFrames = 0;
                         } else if ("session_stopped_by_user".equals(value)
                                 || "disconnected".equals(value)
                                 || "network_unavailable".equals(value)) {
                             stopLocalStream();
                             if (renderer != null) renderer.stopSession();
+                            if (jpegRenderer != null) jpegRenderer.stopSession();
+                            receivedVideoFrames = 0;
                         }
                     }
                     @Override public void onRequest(String sid, String viewerId) {
@@ -549,7 +584,7 @@ public final class RemoteSetupActivity extends Activity {
                                 jpegImage.setVisibility(android.view.View.VISIBLE);
                                 if (remoteVideoSurface != null)
                                     remoteVideoSurface.setVisibility(android.view.View.GONE);
-                                mediaState.setText("正在等待 JPEG 截图");
+                                mediaState.setText("等待对方手机发送画面…");
                             });
                         } else if (active && renderer != null) {
                             runOnUiThread(() -> {
@@ -568,7 +603,13 @@ public final class RemoteSetupActivity extends Activity {
                         if (!active) return;
                         if (packet != null && packet.length > 0 && packet[0] == 2) {
                             JpegFrameRenderer target = jpegRenderer;
-                            if (target != null) target.onPacket(sid, packet);
+                            if (target != null) {
+                                target.onPacket(sid, packet);
+                                if (receivedVideoFrames++ == 0)
+                                    runOnUiThread(() -> {
+                                        if (active) mediaState.setText("正在观看对方屏幕");
+                                    });
+                            }
                         } else {
                             RelayVideoRenderer target = renderer;
                             if (target != null) target.onPacket(sid, packet);
@@ -720,9 +761,7 @@ public final class RemoteSetupActivity extends Activity {
     private void refreshStatus() {
         if (!NoVpnApi.isRegistered(this)) {
             currentState = "";
-            status.setText("尚未开通。由管理员提供一次性开通二维码，"
-                    + "再生成邀请供另一台手机扫码。"
-                    + "\n不启用 VPN；目前不提供视频。");
+            status.setText("尚未配对 · 点击扫码连接");
             refreshButtons();
             return;
         }
