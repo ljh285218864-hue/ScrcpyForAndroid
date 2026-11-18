@@ -253,6 +253,11 @@ public final class RemoteSetupActivity extends Activity {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT));
         viewerLayer = new FullscreenViewer(this);
+        viewerLayer.setOnClosedListener(() -> {
+            // Closing a picture does not close WSS, but a request that has
+            // not yet been transmitted must not auto-start while hidden.
+            requestAfterConnect = false;
+        });
         root.addView(viewerLayer, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT));
@@ -520,6 +525,11 @@ public final class RemoteSetupActivity extends Activity {
                                 viewerLayer.showWaiting("正在等待对方确认共享…");
                             else if ("viewer_session_active".equals(value))
                                 viewerLayer.showWaiting("对方已同意，等待画面…");
+                            else if ("viewer_session_ended".equals(value)
+                                    || "session_stopped_by_user".equals(value))
+                                viewerLayer.showWaiting("本次共享已结束，点击右上角关闭");
+                            else if ("peer_offline".equals(value))
+                                viewerLayer.showWaiting("配对手机暂未连接，请在对方手机打开软件");
                             else if ("disconnected".equals(value)
                                     || "network_unavailable".equals(value))
                                 viewerLayer.showWaiting("网络连接中断，请关闭后重试");
