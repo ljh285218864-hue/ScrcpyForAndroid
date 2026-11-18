@@ -10,6 +10,7 @@ import org.client.scrcpy.decoder.VideoDecoder;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
@@ -28,11 +29,29 @@ public final class RelayVideoRenderer {
     private final Listener listener;
     private final SurfaceHolder.Callback surfaceCallback;
     private volatile boolean closed;
+    private volatile long generation;
+    private final Object pendingLock = new Object();
+
+    private final class FrameTask implements Runnable {
+        final String sourceSession;
+        final long version;
+        final byte[] data;
+        FrameTask(String sid, long gen, byte[] packet) {
+            sourceSession = sid;
+            version = gen;
+            data = packet;
+        }
+        @Override public void run() {
+            if (!closed && version == generation && sourceSession.equals(session))
+                process(data);
+        }
+    }
+
     private final ThreadPoolExecutor decoderThread =
             new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
                     new ArrayBlockingQueue<>(8),
                     runnable -> new Thread(runnable, "screensync-remote-decoder"),
-                    new ThreadPoolExecutor.DiscardOldestPolicy());
+                    new ThreadPoolExecutor.AbortPolicy());
 
     private volatile String session = "";
     private String codec = "h264";
@@ -78,9 +97,13 @@ public final class RelayVideoRenderer {
             listener.onState("收到无效的远程视频编码设置");
             return;
         }
-        session = sid;
-        decoderThread.getQueue().clear();
-        decoderThread.execute(() -> {
+        synchronized (pendingLock) {
+            generation++;
+            final long version = generation;
+            session = sid;
+            decoderThread.getQueue().removeIf(task -> task instanceof FrameTask);
+            decoderThread.execute(() -> {
+            if (version != generation || closed) return;
             releaseDecoder();
             videoW = dims[2];
             videoH = dims[3];
@@ -89,21 +112,32 @@ public final class RelayVideoRenderer {
             frameCount = 0;
             waitingForKeyframe = true;
             listener.onState("视频接收准备完成：" + videoW + "x" + videoH);
-        });
+            });
+        }
     }
 
     public void onPacket(String sid, byte[] packet) {
         if (closed || !sid.equals(session)
                 || !ScrcpyRelayPacketPolicy.allowedVideoPayload(packet))
             return;
-        if (packet[1] == 2) {
-            // Never let an avalanche of stale P-frames evict CONFIG.
-            decoderThread.getQueue().clear();
-            decoderThread.execute(() -> process(packet));
-        } else if (decoderThread.getQueue().size() < 6) {
-            decoderThread.execute(() -> process(packet));
-        } else {
-            waitingForKeyframe = true;
+        synchronized (pendingLock) {
+            if (closed || !sid.equals(session)) return;
+            // Setup/stop tasks must NEVER be evicted by CONFIG or frames.
+            // Removing queued FRAME tasks is safe; removing the setup task
+            // caused a persistent black screen on the first CONFIG packet.
+            if ((packet[1] & 255) == 2) {
+                decoderThread.getQueue().removeIf(task -> task instanceof FrameTask);
+            } else if (decoderThread.getQueue().size() >= 6) {
+                // Bounded buffering: skip stale frames until next keyframe.
+                // Keep decoder configure and close tasks intact.
+                waitingForKeyframe = true;
+                return;
+            }
+            try {
+                decoderThread.execute(new FrameTask(sid, generation, packet));
+            } catch (RejectedExecutionException discarded) {
+                waitingForKeyframe = true;
+            }
         }
     }
 
@@ -182,13 +216,16 @@ public final class RelayVideoRenderer {
     }
 
     public void stopSession() {
-        session = "";
-        if (closed) return;
-        decoderThread.getQueue().clear();
-        decoderThread.execute(() -> {
-            releaseDecoder();
-            lastConfiguration = null;
-        });
+        synchronized (pendingLock) {
+            generation++;
+            session = "";
+            if (closed) return;
+            decoderThread.getQueue().removeIf(task -> task instanceof FrameTask);
+            decoderThread.execute(() -> {
+                releaseDecoder();
+                lastConfiguration = null;
+            });
+        }
     }
 
     public void close() {
