@@ -21,10 +21,19 @@ public final class JpegFrameRenderer {
             new ThreadPoolExecutor.DiscardOldestPolicy());
     private volatile String session = "";
     private int incoming, decoded, dropped;
+    private Runnable firstFrameCallback;
 
     public JpegFrameRenderer(ImageView imageView) {
         this.imageView = imageView;
     }
+
+    /** Invoked on the main thread only after a JPEG has actually rendered. */
+    public void setFirstFrameCallback(Runnable onFirstFrame) {
+        firstFrameCallback = onFirstFrame;
+    }
+
+    /** Called on the main thread when reopening the fullscreen viewer. */
+    public boolean hasDisplayedFrame() { return decoded > 0; }
 
     public void startSession(String sessionId) {
         session = sessionId;
@@ -72,6 +81,8 @@ public final class JpegFrameRenderer {
                 if (version == generation.get() && sessionId.equals(session)) {
                     imageView.setImageBitmap(bitmap);
                     decoded++;
+                    if (decoded == 1 && firstFrameCallback != null)
+                        firstFrameCallback.run();
                     if (decoded == 1 || decoded % 25 == 0)
                         ScreenSyncDiagnostics.record(imageView.getContext(), "JPEG_DISPLAY",
                                 "frames=" + decoded);
@@ -88,6 +99,7 @@ public final class JpegFrameRenderer {
             ScreenSyncDiagnostics.record(imageView.getContext(), "JPEG_VIEW",
                     "stopped received=" + incoming + " displayed=" + decoded);
         session = "";
+        decoded = 0;
         generation.incrementAndGet();
         decoder.getQueue().clear();
         ui.post(() -> imageView.setImageDrawable(null));
