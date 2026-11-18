@@ -23,8 +23,10 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Syntax-check non-mutating VPS preflight
-        run: bash -n remote/relay_v1/deploy/read-only-preflight.sh
+      - name: Syntax-check non-mutating VPS preflight and 8443 diagnostics
+        run: |
+          bash -n remote/relay_v1/deploy/read-only-preflight.sh
+          bash -n remote/relay_v1/deploy/diagnose-8443.sh
       - name: Guard against abandoned VPN and WebRTC solutions
         run: |
           python3 - <<'PY'
