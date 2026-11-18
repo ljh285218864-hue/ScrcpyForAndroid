@@ -39,6 +39,31 @@ public final class ScrcpyRelayWireTest {
         assertArrayEquals(p, decoded.videoPacket);
     }
 
+
+    @Test public void jpegModeUsesIndependentValidatedWireType() {
+        byte[] jpeg = new byte[80];
+        jpeg[0] = (byte) 0xff; jpeg[1] = (byte) 0xd8;
+        jpeg[jpeg.length - 2] = (byte) 0xff;
+        jpeg[jpeg.length - 1] = (byte) 0xd9;
+        byte[] encoded = ScrcpyRelayWire.encodeJpeg(SESSION, jpeg);
+        ScrcpyRelayWire.Frame decoded = ScrcpyRelayWire.decode(encoded);
+        assertEquals(SESSION, decoded.sessionId);
+        assertEquals(2, decoded.videoPacket[0]);
+        assertEquals(0, decoded.videoPacket[1]);
+        assertArrayEquals(jpeg, Arrays.copyOfRange(
+                decoded.videoPacket, 10, decoded.videoPacket.length));
+        assertTrue(ScrcpyRelayPacketPolicy.allowedJpegPayload(decoded.videoPacket));
+        try {
+            ScrcpyRelayWire.encode(SESSION, decoded.videoPacket);
+            fail("scrcpy video sender must not accept JPEG");
+        } catch (IllegalArgumentException expected) { }
+        encoded[encoded.length - 1] = 0;
+        try {
+            ScrcpyRelayWire.decode(encoded);
+            fail("JPEG without end marker must be rejected");
+        } catch (IllegalArgumentException expected) { }
+    }
+
     @Test public void cannotRelayCommandControlAudioOrMalformedFrames() {
         for (int type : new int[]{0, 2, 3, 255}) {
             try {
