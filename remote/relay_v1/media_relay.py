@@ -327,11 +327,22 @@ class MediaRelay:
                 return
             client = Device(socket, *identity)
             old = self.online.get(client.device_id)
-            if old:
-                # Reconnect after Wi-Fi/cellular switch: old sessions are
-                # terminated, never blindly resumed or auto-approved.
-                await old.socket.close(code=4005, reason="DEVICE_RECONNECTED")
+            # Claim the generation before awaiting I/O. An older handler must
+            # never clean up sessions belonging to this replacement socket.
             self.online[client.device_id] = client
+            if old:
+                affected = [sid for sid, s in self.sessions.items()
+                            if client.device_id in (s.viewer, s.source)]
+                ended = [self.sessions.pop(sid) for sid in affected]
+                for session in ended:
+                    other = (session.source if session.viewer == client.device_id
+                             else session.viewer)
+                    await self.tell(other, {"type": "watch_end",
+                                           "session_id": session.session_id,
+                                           "reason": "device_reconnected"})
+                await old.socket.close(code=4005, reason="DEVICE_RECONNECTED")
+            if self.online.get(client.device_id) is not client:
+                return
             await self.tell(client.device_id, {"type": "authenticated",
                                               "device_id": client.device_id,
                                               "group_id": client.group_id})
@@ -347,7 +358,6 @@ class MediaRelay:
         finally:
             if client and self.online.get(client.device_id) is client:
                 self.online.pop(client.device_id, None)
-            if client:
                 affected = [sid for sid, s in self.sessions.items()
                             if client.device_id in (s.viewer, s.source)]
                 for sid in affected:
@@ -373,3 +383,4 @@ async def run():
 
 if __name__ == "__main__":
     asyncio.run(run())
+
