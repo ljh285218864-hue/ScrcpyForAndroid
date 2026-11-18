@@ -2078,9 +2078,11 @@ public class MainActivity extends Activity implements Scrcpy.ServiceCallbacks, S
         if (oneTapConnecting || isFinishing() || isDestroyed())
             return;
         if (NoVpnApi.isRegistered(this)) {
-            // Real source/viewer protocol is implemented in the dedicated
-            // Activity. Never fall back to LAN IP or raw remote ADB.
-            openAutoRemoteSetup();
+            // One tap: open the viewer and queue exactly one WATCH request
+            // after the HTTPS identity/approved-peer checks complete.
+            // The source still decides whether to allow this session.
+            startActivity(new Intent(this, RemoteSetupActivity.class)
+                    .putExtra(RemoteSetupActivity.EXTRA_REQUEST_WATCH_ONCE, true));
             return;
         }
         PairedDeviceStore.Peer peer = PairedDeviceStore.load(this);
