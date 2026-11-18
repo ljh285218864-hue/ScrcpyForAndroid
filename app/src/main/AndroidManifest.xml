@@ -40,7 +40,7 @@
             android:theme="@style/zxing_CaptureTheme"
             android:windowSoftInputMode="stateAlwaysHidden" />
 
-        <activity android:name=".RemoteSetupActivity" android:exported="false" />
+        <activity android:name=".RemoteSetupActivity" android:exported="true" />
 
         <activity
             android:name=".SettingActivity"
