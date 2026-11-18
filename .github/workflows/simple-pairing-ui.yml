@@ -144,6 +144,9 @@ jobs:
           flavor_manifest = Path("app/src/scrcpy/AndroidManifest.xml").read_text()
           assert 'android:name=".RemoteSetupActivity"' in flavor_manifest
           assert 'android:name=".MainActivity"' not in flavor_manifest
+          base = Path("app/src/main/java/org/client/scrcpy")
+          app_start = (base / "App.java").read_text()
+          assert "AdbHelper.startAdbServer()" not in app_start
           ui = (base / "RemoteSetupActivity.java").read_text()
           assert "观看对方屏幕" in ui and "扫码连接手机" in ui
           assert 'action(content, "连接 WSS' not in ui
