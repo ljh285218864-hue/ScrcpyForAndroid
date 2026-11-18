@@ -116,6 +116,21 @@ jobs:
               assert "startForeground(" not in code
               assert "MediaProjectionManager" not in code
               assert "VpnService" not in code
+          # Regression guards for actual Android video connection path:
+          # never drop decoder setup while discarding stale P-frames.
+          renderer = (Path("app/src/main/java/org/client/scrcpy")
+                      / "RelayVideoRenderer.java").read_text()
+          assert "decoderThread.getQueue().clear()" not in renderer
+          assert "task instanceof FrameTask" in renderer
+          assert "sourceSession.equals(session)" in renderer
+          media = (Path("app/src/main/java/org/client/scrcpy")
+                   / "NoVpnMediaSocket.java").read_text()
+          assert "locallyApprovedRequest" in media
+          assert "socket != ws" in media
+          source = (Path("app/src/main/java/org/client/scrcpy")
+                    / "LocalScrcpyStreamer.java").read_text()
+          assert "private static final int FORWARD_PORT = 7018" in source
+          assert "RelayVideoFormat.forRotation" in source
           scrcpy_server = Path("server/src/main/java/org/server/scrcpy/Server.java").read_text()
           assert "startEventController(device, connection" not in scrcpy_server
           receiver = Path("server/src/main/java/org/server/scrcpy/DroidConnection.java").read_text()
