@@ -7,7 +7,7 @@ on:
     paths:
       - 'remote/relay_v1/**'
       - 'app/**'
-      - '.github/workflows/beta4-novpn.yml'
+      - '.github/workflows/accessibility-jpeg-poc.yml'
   pull_request:
     branches: [main]
     paths:
