@@ -202,6 +202,7 @@ public final class NoVpnMediaSocket {
                 scheduleReconnect();
             }
         };
+        connectedAtMs = android.os.SystemClock.elapsedRealtime();
         socket = CLIENT.newWebSocket(
                 new Request.Builder().url(BuildConfig.SCREENSYNC_MEDIA_URL).build(),
                 callbacks);
