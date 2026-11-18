@@ -247,6 +247,28 @@ public final class AccessibilityJpegStreamer {
         nm.cancel(NOTICE_ID);
     }
 
+    /**
+     * Finish starting the SAME screen-share session the device owner explicitly
+     * approved before their Activity was removed. No new remote request can
+     * grant permission here; the WSS source session must already be approved.
+     * Android may still stop the process at any time.
+     */
+    public static void startPreviouslyApprovedWithoutUi(
+            Context appContext, NoVpnMediaSocket media) {
+        if (sharingActive() || !media.hasApprovedSourceSession()) return;
+        AccessibilityJpegStreamer stream = new AccessibilityJpegStreamer(
+                appContext, media, reason ->
+                    ScreenSyncDiagnostics.record(appContext, "BACKGROUND_SHARE", reason));
+        if (stream.start()) {
+            ScreenSyncDiagnostics.record(appContext, "BACKGROUND_SHARE",
+                    "previously_approved_started_visible_notice");
+        } else {
+            ScreenSyncDiagnostics.record(appContext, "BACKGROUND_SHARE",
+                    "previously_approved_start_failed");
+            media.endSourceSession("background_start_failed");
+        }
+    }
+
     public static boolean sharingActive() {
         AccessibilityJpegStreamer stream = current;
         return stream != null && stream.running;
