@@ -98,6 +98,10 @@ public final class NoVpnMediaSocket {
 
         WebSocketListener callbacks = new WebSocketListener() {
             @Override public void onOpen(WebSocket ws, Response response) {
+                if (shutdown || socket != ws) {
+                    ws.close(1000, "stale_connection");
+                    return;
+                }
                 try {
                     JSONObject auth = new JSONObject();
                     auth.put("type", "auth");
@@ -110,7 +114,8 @@ public final class NoVpnMediaSocket {
                 }
             }
             @Override public void onMessage(WebSocket ws, String value) {
-                if (shutdown || value.length() > 1024) {
+                if (shutdown || socket != ws) return;
+                if (value.length() > 1024) {
                     ws.close(1008, "unexpected_message");
                     return;
                 }
@@ -122,7 +127,7 @@ public final class NoVpnMediaSocket {
                 }
             }
             @Override public void onMessage(WebSocket ws, ByteString data) {
-                if (shutdown || !authenticated) return;
+                if (shutdown || socket != ws || !authenticated) return;
                 try {
                     ScrcpyRelayWire.Frame frame =
                             ScrcpyRelayWire.decode(data.toByteArray());
@@ -141,23 +146,25 @@ public final class NoVpnMediaSocket {
                 }
             }
             @Override public void onClosing(WebSocket ws, int code, String reason) {
-                ws.close(1000, "closed");
+                if (socket == ws) ws.close(1000, "closed");
             }
             @Override public void onClosed(WebSocket ws, int code, String reason) {
-                authenticated = false;
-                clearSessions();
                 synchronized (NoVpnMediaSocket.this) {
-                    if (socket == ws) socket = null;
+                    if (socket != ws) return; // stale failed attempt cannot reset newer session
+                    socket = null;
+                    authenticated = false;
+                    clearSessions();
                 }
                 status("disconnected");
                 scheduleReconnect();
             }
             @Override public void onFailure(WebSocket ws, Throwable error,
                                             Response response) {
-                authenticated = false;
-                clearSessions();
                 synchronized (NoVpnMediaSocket.this) {
-                    if (socket == ws) socket = null;
+                    if (socket != ws) return;
+                    socket = null;
+                    authenticated = false;
+                    clearSessions();
                 }
                 status("network_unavailable");
                 scheduleReconnect();
