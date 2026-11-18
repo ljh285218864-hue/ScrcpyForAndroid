@@ -18,6 +18,19 @@ public final class ScrcpyRelayPacketPolicy {
 
     private ScrcpyRelayPacketPolicy() { }
 
+    // Separate, bounded picture mode. Never decode control/ADB payloads.
+    public static boolean allowedJpegPayload(byte[] packet) {
+        int n = packet == null ? 0 : packet.length;
+        return n >= 74 && n <= 1024 * 1024 + 10
+                && (packet[0] & 255) == 2 && packet[1] == 0
+                && (packet[10] & 255) == 0xff && (packet[11] & 255) == 0xd8
+                && (packet[n - 2] & 255) == 0xff && (packet[n - 1] & 255) == 0xd9;
+    }
+
+    public static boolean allowedMediaPayload(byte[] packet) {
+        return allowedVideoPayload(packet) || allowedJpegPayload(packet);
+    }
+
     /** Validate the payload AFTER the scrcpy 4-byte length prefix. */
     public static boolean allowedVideoPayload(byte[] packet) {
         if (packet == null || packet.length < HEADER_BYTES
