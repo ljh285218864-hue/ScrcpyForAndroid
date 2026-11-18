@@ -87,6 +87,10 @@ public final class NoVpnMediaSocket {
         if (listener == previous) listener = null;
     }
 
+    public boolean hasApprovedSourceSession() {
+        return authenticated && ScrcpyRelayWire.validSessionId(sourceSession);
+    }
+
     public String activeViewerSessionId() {
         return authenticated ? viewerSession : "";
     }
@@ -314,6 +318,15 @@ public final class NoVpnMediaSocket {
                 waitingRequest = "";
                 locallyApprovedRequest = "";
                 status("video_source_permitted");
+                main.post(() -> {
+                    // The UI callback may have been detached after the user
+                    // explicitly accepted this exact session. Do not lose the
+                    // approval merely due to task removal; never auto-resume
+                    // an unapproved or expired session.
+                    if (listener == null && !shutdown && hasApprovedSourceSession())
+                        AccessibilityJpegStreamer.startPreviouslyApprovedWithoutUi(
+                                context, NoVpnMediaSocket.this);
+                });
                 break;
             }
             case "video_setup": {
