@@ -539,14 +539,12 @@ public final class RemoteSetupActivity extends Activity {
                                 || "source_session_stopped".equals(value)) {
                             stopLocalStream();
                         } else if ("viewer_session_ended".equals(value)) {
-                            if (renderer != null) renderer.stopSession();
                             if (jpegRenderer != null) jpegRenderer.stopSession();
                             receivedVideoFrames = 0;
                         } else if ("session_stopped_by_user".equals(value)
                                 || "disconnected".equals(value)
                                 || "network_unavailable".equals(value)) {
                             stopLocalStream();
-                            if (renderer != null) renderer.stopSession();
                             if (jpegRenderer != null) jpegRenderer.stopSession();
                             receivedVideoFrames = 0;
                         }
