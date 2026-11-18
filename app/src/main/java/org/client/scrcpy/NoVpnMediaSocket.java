@@ -53,6 +53,7 @@ public final class NoVpnMediaSocket {
     private volatile String sourceSession = "";
     private volatile String viewerSession = "";
     private int reconnectAttempts;
+    private int receivedFrames;
     private final Runnable retryConnection = () -> {
         if (shutdown || socket != null) return;
         try {
@@ -122,6 +123,8 @@ public final class NoVpnMediaSocket {
                 try {
                     handleMessage(value);
                 } catch (Exception error) {
+                    ScreenSyncDiagnostics.record(context, "WSS_PARSE",
+                            "reason=" + error.getClass().getSimpleName());
                     ws.close(1008, "invalid_message");
                     status("protocol_error");
                 }
@@ -138,8 +141,13 @@ public final class NoVpnMediaSocket {
                     }
                     // Deliver on OkHttp's reader thread, not Android's UI
                     // thread. Viewer queues decoding on its bounded worker.
-                    if (!shutdown) listener.onVideoPacket(
-                            frame.sessionId, frame.videoPacket);
+                    if (!shutdown) {
+                        if (++receivedFrames == 1 || receivedFrames % 25 == 0) {
+                            ScreenSyncDiagnostics.record(context, "WSS_RX",
+                                    "frames=" + receivedFrames + " bytes=" + data.size());
+                        }
+                        listener.onVideoPacket(frame.sessionId, frame.videoPacket);
+                    }
                 } catch (IllegalArgumentException error) {
                     ws.close(1008, "unsafe_video");
                     status("unsafe_video_rejected");
@@ -155,6 +163,8 @@ public final class NoVpnMediaSocket {
                     authenticated = false;
                     clearSessions();
                 }
+                ScreenSyncDiagnostics.record(context, "WSS_CLOSE",
+                        "code=" + code);
                 status("disconnected");
                 scheduleReconnect();
             }
@@ -166,6 +176,9 @@ public final class NoVpnMediaSocket {
                     authenticated = false;
                     clearSessions();
                 }
+                ScreenSyncDiagnostics.record(context, "WSS_FAIL",
+                        "error=" + error.getClass().getSimpleName()
+                                + " http=" + (response == null ? 0 : response.code()));
                 status("network_unavailable");
                 scheduleReconnect();
             }
@@ -197,6 +210,7 @@ public final class NoVpnMediaSocket {
                     throw new SecurityException("服务器返回的设备身份不一致");
                 }
                 authenticated = true;
+                receivedFrames = 0;
                 reconnectAttempts = 0;
                 main.removeCallbacks(retryConnection);
                 status("authenticated");
@@ -259,8 +273,10 @@ public final class NoVpnMediaSocket {
                 if (sizes[2] > sizes[0] * 2L || sizes[3] > sizes[1] * 2L)
                     throw new SecurityException("画面尺寸不匹配");
                 String codec = body.optString("codec");
-                if (!("h264".equals(codec) || "h265".equals(codec)))
+                if (!MediaCodecPolicy.isAllowed(codec))
                     throw new SecurityException("视频编码格式不支持");
+                ScreenSyncDiagnostics.record(context, "VIDEO_SETUP",
+                        "codec=" + codec + " width=" + sizes[2] + " height=" + sizes[3]);
                 // Keep video_setup and binary frames in WSS receive order.
                 // Posting setup to the UI queue can lose the first CONFIG
                 // and keyframe when the decoder has not yet been initialized.
@@ -289,6 +305,7 @@ public final class NoVpnMediaSocket {
     }
 
     private void status(String value) {
+        ScreenSyncDiagnostics.record(context, "WSS_STATUS", value);
         main.post(() -> {
             if (!shutdown) listener.onStatus(value);
         });
@@ -303,8 +320,10 @@ public final class NoVpnMediaSocket {
         String peer = NoVpnApi.peerId(context);
         if (peer.isEmpty()) return false;
         try {
-            return send(new JSONObject().put("type", "watch_request")
+            boolean sent = send(new JSONObject().put("type", "watch_request")
                     .put("to_device_id", peer));
+            ScreenSyncDiagnostics.record(context, "WATCH_REQUEST", "sent=" + sent);
+            return sent;
         } catch (JSONException error) { return false; }
     }
 
@@ -319,6 +338,7 @@ public final class NoVpnMediaSocket {
             boolean sent = send(new JSONObject().put("type", "watch_accept")
                     .put("session_id", sid));
             if (!sent) locallyApprovedRequest = "";
+            ScreenSyncDiagnostics.record(context, "WATCH_APPROVE", "sent=" + sent);
             return sent;
         } catch (JSONException error) {
             locallyApprovedRequest = "";
@@ -340,13 +360,15 @@ public final class NoVpnMediaSocket {
     /** Used by a separately user-approved scrcpy capture bridge, not by UI. */
     public boolean sendVideoSetup(int[] dims, String codec) {
         if (dims == null || dims.length != 4 || sourceSession.isEmpty()
-                || !("h264".equals(codec) || "h265".equals(codec)
-                        || "jpeg".equals(codec))) return false;
+                || !MediaCodecPolicy.isAllowed(codec)) return false;
         for (int value : dims) if (value < 16 || value > 8192) return false;
         try {
-            return send(new JSONObject().put("type", "video_setup")
+            boolean sent = send(new JSONObject().put("type", "video_setup")
                     .put("session_id", sourceSession)
                     .put("dimensions", new JSONArray(dims)).put("codec", codec));
+            ScreenSyncDiagnostics.record(context, "SOURCE_SETUP",
+                    "codec=" + codec + " sent=" + sent);
+            return sent;
         } catch (JSONException error) { return false; }
     }
 
@@ -377,6 +399,7 @@ public final class NoVpnMediaSocket {
     }
 
     private void clearSessions() {
+        receivedFrames = 0;
         viewerSession = "";
         pendingViewerSession = "";
         sourceSession = "";
