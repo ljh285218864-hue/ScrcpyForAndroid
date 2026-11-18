@@ -294,6 +294,12 @@ public final class NoVpnMediaSocket {
                 boolean sourceEnded = id.equals(sourceSession);
                 boolean viewerEnded = id.equals(viewerSession)
                         || id.equals(pendingViewerSession);
+                String reason = body.optString("reason", "unspecified");
+                ScreenSyncDiagnostics.record(context, "WATCH_END_REMOTE",
+                        "role=" + (sourceEnded ? "source" : viewerEnded ? "viewer" : "other")
+                        + " reason=" + reason
+                        + " configured=" + viewerHasVideoSetup
+                        + " frames=" + receivedFrames);
                 if (id.equals(viewerSession)) {
                     viewerSession = "";
                     viewerHasVideoSetup = false;
@@ -442,8 +448,14 @@ public final class NoVpnMediaSocket {
     }
 
     public void endSourceSession() {
+        endSourceSession("user_stopped");
+    }
+
+    public void endSourceSession(String reason) {
         String source = sourceSession;
         sourceSession = "";
+        ScreenSyncDiagnostics.record(context, "SOURCE_END_LOCAL", "reason=" + reason
+                + " had_session=" + ScrcpyRelayWire.validSessionId(source));
         if (!ScrcpyRelayWire.validSessionId(source)) return;
         try {
             send(new JSONObject().put("type", "watch_end").put("session_id", source));
