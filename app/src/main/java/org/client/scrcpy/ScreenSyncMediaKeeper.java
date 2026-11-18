@@ -29,6 +29,7 @@ public final class ScreenSyncMediaKeeper {
         if (transport == null) return;
         NoVpnMediaSocket old = transport;
         transport = null;
+        AccessibilityJpegStreamer.stopActiveWithoutSending();
         old.close();
     }
 }
