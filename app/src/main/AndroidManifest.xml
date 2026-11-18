@@ -2,25 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
-
-    <uses-feature
-        android:name="android.hardware.usb.host"
-        android:required="false" />
-
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.SEND" />
-            <data android:mimeType="text/plain" />
-        </intent>
-    </queries>
 
     <application
         android:name=".App"
@@ -42,10 +28,6 @@
 
         <activity android:name=".RemoteSetupActivity" android:exported="true" />
 
-        <activity
-            android:name=".SettingActivity"
-            android:exported="false" />
-
         <!-- Legacy LAN receiver uses a foreground-service notification.
              Disabled only in this no-VPN experimental product variant;
              the original LAN branch stays untouched. -->
@@ -53,12 +35,6 @@
             android:name=".WakeLanService"
             android:enabled="false"
             android:exported="false" />
-
-        <!-- Internal wake-request test receiver. No public entry point or automatic screen sharing. -->
-        <service
-            android:name=".WakeRequestService"
-            android:exported="false"
-            android:enabled="true" />
 
         <service
             android:name=".AccessibilityShotService"
@@ -76,17 +52,6 @@
         <receiver android:name=".AccessibilityShareStopReceiver"
             android:exported="false" />
 
-        <service
-            android:name=".Scrcpy"
-            android:enabled="true"
-            android:exported="false" />
-        <service android:name=".FloatService" />
-
-        <provider
-            android:name=".LogFileProvider"
-            android:authorities="${applicationId}.log"
-            android:exported="false"
-            android:grantUriPermissions="true" />
     </application>
 
 </manifest>
