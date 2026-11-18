@@ -54,9 +54,9 @@ def legal_video_packet(packet: bytes) -> bool:
 def legal_jpeg_packet(packet: bytes) -> bool:
     """Bounded JPEG with a 10-byte header: type=2, flag=0, timestamp=8 bytes."""
     return (74 <= len(packet) <= 1024 * 1024 + 10
-            and packet[:2] == b"\\x02\\x00"
-            and packet[10:12] == b"\\xff\\xd8"
-            and packet[-2:] == b"\\xff\\xd9")
+            and packet[:2] == b"\x02\x00"
+            and packet[10:12] == b"\xff\xd8"
+            and packet[-2:] == b"\xff\xd9")
 
 
 def legal_media_packet(packet: bytes) -> bool:
