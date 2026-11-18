@@ -86,173 +86,227 @@ public final class RemoteSetupActivity extends Activity {
         }
     };
 
+    // Minimal everyday screen: no ADB, USB, Wi-Fi IP, VPN, ports or test controls.
+    // Admin-issued activation QR is still required by the existing secured backend
+    // for the FIRST phone; the second phone joins using a single pairing QR.
+    private Button scanButton, accessibilityButton, notificationsButton;
+    private TextView hint;
+    private LinearLayout previewPanel;
+
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         requestAfterConnect = getIntent().getBooleanExtra(
                 EXTRA_REQUEST_WATCH_ONCE, false);
-        setTitle("ScreenSync 无 VPN 配对");
+        setTitle("屏幕同步");
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(Color.rgb(247, 249, 252));
+
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(16), dp(20), dp(16), dp(22));
+        content.setPadding(dp(20), dp(26), dp(20), dp(28));
+        scroll.addView(content);
 
-        TextView intro = new TextView(this);
-        intro.setText("无 VPN 异地连接实验版：两台手机扫码、核对6位码并同意配对。"
-                + "通过 HTTPS/WSS 信令和中转连接，不使用系统 VPN。"
-                + "\n\n当前已接入本机 scrcpy 采集及视频解码代码，须部署中转服务并真机测试。"
-                + "视频仅在被观看手机持有人明确同意本次会话后传输；可随时停止。"
-                + "\nJPEG 模式不需要无线调试，但需要手动开启无障碍和通知权限。");
-        intro.setTextSize(15);
-        content.addView(intro);
+        TextView title = new TextView(this);
+        title.setText("屏幕同步");
+        title.setTextSize(28);
+        title.setTextColor(Color.rgb(24, 35, 53));
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        content.addView(title);
 
-        status = new TextView(this);
-        status.setTextColor(Color.rgb(23, 71, 110));
-        status.setTextSize(16);
-        status.setPadding(0, dp(18), 0, dp(15));
-        status.setText("正在准备…");
-        content.addView(status);
+        TextView subtitle = new TextView(this);
+        subtitle.setText("两台手机 · 扫码配对 · 异地观看");
+        subtitle.setTextSize(14);
+        subtitle.setTextColor(Color.rgb(105, 115, 131));
+        subtitle.setPadding(0, dp(5), 0, dp(20));
+        content.addView(subtitle);
 
-        action(content, "扫码开通 / 扫码加入", v -> startScanner());
-        invite = action(content, "主手机：生成5分钟配对二维码", v ->
-                runNetwork(() -> NoVpnApi.invite(this), r -> {
+        LinearLayout statusPanel = panel(content);
+        TextView statusTitle = heading(statusPanel, "连接状态");
+        status = note(statusPanel, "正在检查配对状态…");
+        status.setTextColor(Color.rgb(48, 63, 83));
+        status.setPadding(0, dp(5), 0, dp(3));
+
+        hint = note(content, "首次开通请扫描管理员提供的开通码；另一台手机直接扫描配对二维码即可。");
+        hint.setPadding(dp(4), dp(12), dp(4), dp(12));
+
+        scanButton = action(content, "扫码连接手机", v -> startScanner());
+        primary(scanButton);
+
+        invite = action(content, "显示我的配对二维码", v ->
+                runNetwork(() -> NoVpnApi.invite(this), result -> {
                     try {
-                        showQr("screensync://remote?code=" + r.getString("invite_code"));
-                        status.setText("扫码后还需主手机确认，两台设备核对码必须一致。");
+                        showQr("screensync://remote?code=" + result.getString("invite_code"));
+                        status.setText("让另一台手机扫描二维码，随后核对相同的六位码。");
                     } catch (Exception error) {
-                        report("二维码显示失败");
+                        report("二维码生成失败，请重试");
                     }
                 }, false));
-        approve = action(content, "核对无误：同意另一台手机", v -> {
-            final String id = pendingId, code = pendingCode;
+        primary(invite);
+
+        approve = action(content, "确认配对", v -> {
+            String id = pendingId;
+            String code = pendingCode;
             if (id.isEmpty() || code.length() != 6 || pendingExpired) return;
-            new AlertDialog.Builder(this).setTitle("确认对方身份")
-                    .setMessage("双方都应显示同一个六位配对码：\n" + code
-                            + "\n请与对方本人核对。通过后只开放信令；"
-                            + "不会立即启动录屏或远程控制。")
-                    .setPositiveButton("确认配对", (d, w) ->
+            new AlertDialog.Builder(this)
+                    .setTitle("核对配对码")
+                    .setMessage("请与另一台手机核对这六位数字是否一致：\n\n"
+                            + code + "\n\n确认后两台手机建立长期配对关系。"
+                            + "以后观看屏幕仍需被观看方同意本次共享。")
+                    .setPositiveButton("数字一致，确认配对", (d, w) ->
                             runNetwork(() -> NoVpnApi.approve(this, id),
-                                    result -> refreshStatus(), false))
+                                    done -> refreshStatus(), false))
                     .setNegativeButton("取消", null).show();
         });
-        decline = action(content, "拒绝配对申请", v -> {
-            final String id = pendingId;
+        primary(approve);
+        decline = action(content, "拒绝配对", v -> {
+            String id = pendingId;
             if (id.isEmpty()) return;
-            runNetwork(() -> NoVpnApi.decline(this, id), result -> refreshStatus(), false);
+            runNetwork(() -> NoVpnApi.decline(this, id),
+                    done -> refreshStatus(), false);
         });
-        test = action(content, "测试双方信令连接（不录屏）", v ->
-                runNetwork(() -> {
-                    NoVpnApi.status(this);
-                    NoVpnApi.heartbeat(this);
-                    return NoVpnApi.send(this, "hello",
-                            new JSONObject().put("request_id", UUID.randomUUID().toString()));
-                }, result -> report("连接测试消息已发送。对方打开本页面会看到消息。"),
-                        false));
-        action(content, "首次授权：打开本机无线调试设置", v -> {
-            try {
-                startActivity(new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS));
-            } catch (Exception unsupported) {
-                startActivity(new Intent(Settings.ACTION_SETTINGS));
-            }
-        });
-        action(content, "本机 ADB 配对码授权（只需系统要求时执行）",
-                v -> showLocalAdbPairDialog());
-        action(content, "检查本机无线调试是否已授权", v -> checkLocalAdbStatus());
 
-        mediaState = new TextView(this);
-        mediaState.setText("媒体连接：未连接；只在本页面可见时建立视频会话。");
-        mediaState.setPadding(0, dp(12), 0, dp(8));
-        content.addView(mediaState);
-        action(content, "开启无障碍截图权限（系统设置）", v ->
-                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        action(content, "允许共享状态通知（Android 13+）", v -> {
-            if (android.os.Build.VERSION.SDK_INT >= 33
-                    && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                        != PackageManager.PERMISSION_GRANTED)
-                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 9434);
-            else report("共享状态通知权限已允许");
-        });
-        modeButton = action(content, "当前：无障碍截图（点此切换）", v -> {
-            if (jpegStreamer != null || localStreamer != null) {
-                report("先停止正在共享的屏幕"); return;
-            }
-            useJpegCapture = !useJpegCapture;
-            modeButton.setText(useJpegCapture
-                    ? "当前：无障碍截图（点此切换）" : "当前：scrcpy（点此切换）");
-        });
-        remoteVideoSurface = new SurfaceView(this);
-        content.addView(remoteVideoSurface, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(320)));
+        previewPanel = panel(content);
+        heading(previewPanel, "对方屏幕");
         jpegImage = new ImageView(this);
         jpegImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        jpegImage.setVisibility(android.view.View.GONE);
-        content.addView(jpegImage, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(320)));
+        jpegImage.setBackgroundColor(Color.rgb(30, 37, 50));
+        jpegImage.setContentDescription("配对手机分享的当前屏幕画面");
+        previewPanel.addView(jpegImage, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(285)));
         jpegRenderer = new JpegFrameRenderer(jpegImage);
-        renderer = new RelayVideoRenderer(remoteVideoSurface,
-                message -> runOnUiThread(() -> {
-                    if (active && !isFinishing()) mediaState.setText(message);
-                }));
-        mediaConnectButton = action(content, "连接 WSS 视频中转",
-                v -> connectMediaTest());
-        mediaRequestButton = action(content, "一键请求观看配对手机", v -> {
+        mediaState = note(previewPanel, "等待对方允许屏幕共享");
+        mediaState.setPadding(dp(2), dp(8), dp(2), 0);
+
+        mediaRequestButton = action(content, "观看对方屏幕", v -> {
             requestAfterConnect = true;
-            if (mediaSocket == null) connectMediaTest();
-            else if (mediaSocket.requestWatch()) {
+            if (mediaSocket == null) {
+                connectMediaTest();
+            } else if (mediaSocket.requestWatch()) {
                 requestAfterConnect = false;
-                mediaState.setText("已发送观看请求；等待对方在自己手机上确认");
+                mediaState.setText("请求已发送，等待对方手机同意");
             } else {
-                mediaState.setText("等待 WSS 身份认证后自动发送本次观看请求");
+                mediaState.setText("连接服务器中，正在准备观看请求…");
             }
         });
+        primary(mediaRequestButton);
+
         mediaEndButton = action(content, "停止观看 / 停止共享", v -> {
             requestAfterConnect = false;
             stopLocalStream();
-            if (renderer != null) renderer.stopSession();
             if (jpegRenderer != null) jpegRenderer.stopSession();
             if (mediaSocket != null) mediaSocket.endSession();
-            mediaState.setText("已停止本次视频会话");
+            mediaState.setText("已停止共享");
         });
 
-        backgroundToggle = action(content, "启用后台定期检查（不显示常驻通知）", v -> {
-            if (!NoVpnApi.isRegistered(this) || !"paired".equals(currentState)) {
-                report("两台手机完成双方确认后，才能启用后台恢复检查");
-                return;
-            }
-            boolean enabled = !NoVpnBackgroundSync.isEnabled(this);
-            try {
-                NoVpnBackgroundSync.setEnabled(this, enabled);
-                report(enabled
-                        ? "已启用：系统尽力在联网和重启后检查配对状态。"
-                        + "不保证实时；最短周期15分钟且可能延迟。"
-                        : "后台自动检查已关闭，双方配对关系仍保留。");
-            } catch (RuntimeException error) {
-                report("后台检查设置失败，请检查系统限制");
+        LinearLayout permissionsPanel = panel(content);
+        heading(permissionsPanel, "首次使用设置");
+        accessibilityButton = action(permissionsPanel, "开启无障碍截图权限",
+                v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        notificationsButton = action(permissionsPanel, "允许共享状态通知", v -> {
+            if (android.os.Build.VERSION.SDK_INT >= 33
+                    && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{
+                        Manifest.permission.POST_NOTIFICATIONS}, 9434);
+            } else {
+                report("共享通知权限已允许");
             }
         });
-        action(content, "刷新状态", v -> refreshStatus());
-        revoke = action(content, "双方解绑并注销所有旧凭证", v ->
-                new AlertDialog.Builder(this).setTitle("双方撤销")
-                        .setMessage("撤销将使两台设备的旧配对令牌立即失效，"
-                                + "之后必须重新扫描并经双方批准。")
-                        .setPositiveButton("确定撤销", (d, w) ->
-                                runNetwork(() -> NoVpnApi.revoke(this), result -> {
-                                    stopLocalStream();
-                                    if (renderer != null) renderer.stopSession();
-                                    if (mediaSocket != null) {
-                                        mediaSocket.close();
-                                        mediaSocket = null;
-                                    }
-                                    NoVpnBackgroundSync.setEnabled(this, false);
-                                    pendingId = "";
-                                    currentState = "";
-                                    report("配对已撤销。两端旧凭证全部失效。");
-                                    refreshButtons();
-                                }, false))
-                        .setNegativeButton("取消", null).show());
-        action(content, "返回", v -> finish());
-        ScrollView root = new ScrollView(this);
-        root.addView(content);
-        setContentView(root);
+        TextView securityNote = note(permissionsPanel,
+                "无障碍服务需由手机持有人开启。每次共享均需本机明确同意，"
+                + "共享时会显示可停止的通知。");
+        securityNote.setPadding(dp(4), dp(6), dp(4), 0);
+
+        revoke = action(content, "解除配对", v ->
+                new AlertDialog.Builder(this)
+                    .setTitle("确定解除配对？")
+                    .setMessage("双方的配对身份将被撤销。解除后要重新扫码才能连接。")
+                    .setPositiveButton("解除配对", (d, w) ->
+                        runNetwork(() -> NoVpnApi.revoke(this), done -> {
+                            stopLocalStream();
+                            if (jpegRenderer != null) jpegRenderer.stopSession();
+                            if (mediaSocket != null) {
+                                mediaSocket.close();
+                                mediaSocket = null;
+                            }
+                            NoVpnBackgroundSync.setEnabled(this, false);
+                            pendingId = "";
+                            currentState = "";
+                            report("配对已解除");
+                            refreshStatus();
+                        }, false))
+                    .setNegativeButton("取消", null).show());
+
+        setContentView(scroll);
         refreshButtons();
+        refreshPermissions();
+    }
+
+    private LinearLayout panel(LinearLayout parent) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(15), dp(14), dp(15), dp(14));
+        android.graphics.drawable.GradientDrawable bg =
+                new android.graphics.drawable.GradientDrawable();
+        bg.setColor(Color.WHITE);
+        bg.setCornerRadius(dp(16));
+        bg.setStroke(dp(1), Color.rgb(232, 236, 243));
+        card.setBackground(bg);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        p.bottomMargin = dp(12);
+        parent.addView(card, p);
+        return card;
+    }
+
+    private TextView heading(LinearLayout parent, String value) {
+        TextView label = new TextView(this);
+        label.setText(value);
+        label.setTextSize(15);
+        label.setTypeface(null, android.graphics.Typeface.BOLD);
+        label.setTextColor(Color.rgb(30, 41, 59));
+        parent.addView(label);
+        return label;
+    }
+
+    private TextView note(LinearLayout parent, String value) {
+        TextView label = new TextView(this);
+        label.setText(value);
+        label.setTextSize(13);
+        label.setTextColor(Color.rgb(111, 120, 136));
+        label.setLineSpacing(dp(3), 1f);
+        parent.addView(label);
+        return label;
+    }
+
+    private void primary(Button button) {
+        if (button == null) return;
+        android.graphics.drawable.GradientDrawable bg =
+                new android.graphics.drawable.GradientDrawable();
+        bg.setColor(Color.rgb(37, 99, 235));
+        bg.setCornerRadius(dp(12));
+        button.setBackground(bg);
+        button.setTextColor(Color.WHITE);
+        button.setTypeface(null, android.graphics.Typeface.BOLD);
+    }
+
+    private void refreshPermissions() {
+        if (accessibilityButton != null) {
+            accessibilityButton.setText(AccessibilityShotService.ready()
+                    ? "✓ 无障碍截图已授权" : "1 · 开启无障碍截图权限");
+            accessibilityButton.setEnabled(!AccessibilityShotService.ready());
+        }
+        if (notificationsButton != null) {
+            boolean allowed = android.os.Build.VERSION.SDK_INT < 33
+                    || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        == PackageManager.PERMISSION_GRANTED;
+            notificationsButton.setText(allowed
+                    ? "✓ 共享状态通知已允许" : "2 · 允许共享状态通知");
+            notificationsButton.setEnabled(!allowed);
+        }
     }
 
     @Override protected void onResume() {
