@@ -42,7 +42,7 @@ public final class AccessibilityJpegStreamer {
     private int outWidth, outHeight;
     private int screenshotCount, sendCount, sendFailCount, captureFailCount;
     private int congestionSkips;
-    private int compressionQuality = JpegStreamTuning.JPEG_QUALITY;
+    private volatile int compressionQuality = JpegStreamTuning.JPEG_QUALITY;
     private final Runnable tick = this::capture;
 
     public AccessibilityJpegStreamer(Context ctx, NoVpnMediaSocket media, Listener cb) {
@@ -133,9 +133,12 @@ public final class AccessibilityJpegStreamer {
         // would arrive late. Drop a frame rather than delay subsequent frames.
         if (socket.isSourceBackpressured()) {
             congestionSkips++;
+            if (congestionSkips % 3 == 0)
+                compressionQuality = Math.max(58, compressionQuality - 2);
             if (congestionSkips == 1 || congestionSkips % 10 == 0)
                 ScreenSyncDiagnostics.record(app, "JPEG_BACKPRESSURE",
-                        "skipped=" + congestionSkips);
+                        "skipped=" + congestionSkips
+                        + " quality=" + compressionQuality);
             main.postDelayed(tick, JpegStreamTuning.CONGESTION_RETRY_MS);
             return;
         }
