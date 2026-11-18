@@ -56,7 +56,7 @@ class RelayMediaUnitTests(unittest.TestCase):
 
 
     def test_jpeg_wire_is_strictly_bounded_and_distinct_from_video(self):
-        payload = bytes([2, 0]) + bytes(8) + b"\\xff\\xd8" + bytes(68) + b"\\xff\\xd9"
+        payload = bytes([2, 0]) + bytes(8) + b"\xff\xd8" + bytes(68) + b"\xff\xd9"
         session = "a" * 32
         self.assertTrue(media.legal_jpeg_packet(payload))
         self.assertFalse(media.legal_video_packet(payload))
@@ -239,7 +239,7 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
         viewer = await self.login(one)
         source = await self.login(two)
         sid = await self.open_session(viewer, source)
-        jpeg = bytes([2, 0]) + bytes(8) + b"\\xff\\xd8" + bytes(68) + b"\\xff\\xd9"
+        jpeg = bytes([2, 0]) + bytes(8) + b"\xff\xd8" + bytes(68) + b"\xff\xd9"
         frame = media.video_frame(sid, jpeg)
         await source.send(frame)
         self.assertEqual((await self.read(source))["code"], "VIDEO_SESSION_NOT_ACTIVE")
