@@ -21,6 +21,7 @@ public final class FullscreenViewer extends FrameLayout {
     private final TextView waitMessage;
     private final Button close;
     private boolean visible;
+    private Runnable onClosed;
     private int previousUiFlags;
 
     public FullscreenViewer(Activity activity) {
@@ -84,6 +85,7 @@ public final class FullscreenViewer extends FrameLayout {
         close.bringToFront();
     }
 
+    public void setOnClosedListener(Runnable callback) { onClosed = callback; }
     public ImageView image() { return picture; }
     public boolean isShowing() { return visible; }
 
@@ -120,6 +122,7 @@ public final class FullscreenViewer extends FrameLayout {
         visible = false;
         setVisibility(GONE);
         activity.getWindow().getDecorView().setSystemUiVisibility(previousUiFlags);
+        if (onClosed != null) onClosed.run();
         ScreenSyncDiagnostics.record(activity, "VIEW_UI",
                 "viewer_hidden_pair_and_socket_unchanged");
     }
