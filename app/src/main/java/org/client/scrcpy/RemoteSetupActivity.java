@@ -46,6 +46,7 @@ public final class RemoteSetupActivity extends Activity {
     private TextView status;
     private Button invite, approve, decline, test, revoke, backgroundToggle;
     private Button mediaConnectButton, mediaRequestButton, mediaEndButton;
+    private Button sharingNotificationToggle;
     private TextView mediaState;
     private NoVpnMediaSocket mediaSocket;
     private LocalScrcpyStreamer localStreamer;
@@ -182,6 +183,16 @@ public final class RemoteSetupActivity extends Activity {
             if (mediaSocket != null) mediaSocket.endSession();
             mediaState.setText("已停止本次视频会话");
         });
+        // Notification is optional. Never make the media session depend on it.
+        sharingNotificationToggle = action(content, "", v -> {
+            boolean enabled = !SharingStatusNotifier.isEnabled(this);
+            SharingStatusNotifier.setEnabled(this, enabled);
+            if (enabled && localStreamer != null) {
+                SharingStatusNotifier.showIfEnabled(this);
+            }
+            refreshSharingNotificationButton();
+        });
+        refreshSharingNotificationButton();
 
         backgroundToggle = action(content, "启用后台定期检查（不显示常驻通知）", v -> {
             if (!NoVpnApi.isRegistered(this) || !"paired".equals(currentState)) {
@@ -261,6 +272,8 @@ public final class RemoteSetupActivity extends Activity {
     private void stopLocalStream() {
         LocalScrcpyStreamer current = localStreamer;
         localStreamer = null;
+        // The notification is never the owner of the session lifecycle.
+        SharingStatusNotifier.cancel(this);
         if (current != null) current.stop();
     }
 
@@ -276,6 +289,7 @@ public final class RemoteSetupActivity extends Activity {
                     @Override public void onStopped(String reason) {
                         if (localStreamer != ref[0]) return;
                         localStreamer = null;
+                        SharingStatusNotifier.cancel(RemoteSetupActivity.this);
                         if (active && mediaSocket != null) {
                             mediaState.setText("本机视频结束：" + reason);
                             mediaSocket.endSourceSession();
@@ -284,7 +298,21 @@ public final class RemoteSetupActivity extends Activity {
                 });
         ref[0] = streamer;
         localStreamer = streamer;
-        if (!streamer.startAfterLocalApproval()) localStreamer = null;
+        if (!streamer.startAfterLocalApproval()) {
+            localStreamer = null;
+        } else {
+            // Best-effort display only. A blocked notification must not
+            // prevent or terminate the locally approved media session.
+            SharingStatusNotifier.showIfEnabled(this);
+        }
+    }
+
+    private void refreshSharingNotificationButton() {
+        if (sharingNotificationToggle == null) return;
+        sharingNotificationToggle.setText(
+                SharingStatusNotifier.isEnabled(this)
+                ? "共享状态通知：已开启（可关闭，不影响已授权共享）"
+                : "共享状态通知：已关闭（不影响已授权共享）");
     }
 
     private void showLocalAdbPairDialog() {
