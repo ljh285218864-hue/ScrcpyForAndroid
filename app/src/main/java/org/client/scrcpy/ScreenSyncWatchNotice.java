@@ -23,6 +23,13 @@ public final class ScreenSyncWatchNotice {
 
     public static void show(Context context) {
         Context app = context.getApplicationContext();
+        // Only one visible notice during an active, owner-approved share.
+        // Incoming requests must not create a second notification on top of
+        // the ongoing sharing-status / STOP control.
+        if (AccessibilityJpegStreamer.sharingActive()) {
+            ScreenSyncDiagnostics.record(app, "WATCH_NOTICE", "suppressed_during_sharing");
+            return;
+        }
         if (Build.VERSION.SDK_INT >= 33
                 && app.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                         != PackageManager.PERMISSION_GRANTED) {

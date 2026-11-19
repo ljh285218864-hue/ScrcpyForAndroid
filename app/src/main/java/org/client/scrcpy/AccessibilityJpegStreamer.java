@@ -26,8 +26,10 @@ import java.util.concurrent.Executors;
 public final class AccessibilityJpegStreamer {
     public interface Listener { void onStopped(String reason); }
 
+    // Single, quiet sharing-status notification; never bypass app/channel settings.
     private static final int NOTICE_ID = 8413;
     private static final String CHANNEL_ID = "screensync_active_share";
+    private static final long NOTIFICATION_CHECK_INTERVAL_MS = 5000L;
     private static final long DELAY_MS = JpegStreamTuning.CAPTURE_GAP_MS;
     private static volatile AccessibilityJpegStreamer current;
 
@@ -38,6 +40,7 @@ public final class AccessibilityJpegStreamer {
     private final ExecutorService encoder = Executors.newSingleThreadExecutor();
     private volatile boolean running;
     private volatile boolean busy;
+    private long lastNotificationCheckMs;
     private int captureSerial;
     private int outWidth, outHeight;
     private int screenshotCount, sendCount, sendFailCount, captureFailCount;
@@ -129,6 +132,17 @@ public final class AccessibilityJpegStreamer {
 
     private void capture() {
         if (!running || busy) return;
+        // The device owner controls Android notification permissions. If they
+        // disable this app's shared-screen status while streaming, end capture
+        // rather than secretly continuing with no visible STOP control.
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (now - lastNotificationCheckMs >= NOTIFICATION_CHECK_INTERVAL_MS) {
+            lastNotificationCheckMs = now;
+            if (!notificationAllowed(app)) {
+                stopDueToNotificationSettings();
+                return;
+            }
+        }
         // Limit queueing before we spend CPU and data on a screenshot that
         // would arrive late. Drop a frame rather than delay subsequent frames.
         if (socket.isSourceBackpressured()) {
@@ -244,7 +258,7 @@ public final class AccessibilityJpegStreamer {
         if (current == this) current = null;
         NotificationManager nm = (NotificationManager)
                 app.getSystemService(Context.NOTIFICATION_SERVICE);
-        nm.cancel(NOTICE_ID);
+        if (nm != null) nm.cancel(NOTICE_ID);
     }
 
     /**
@@ -289,12 +303,31 @@ public final class AccessibilityJpegStreamer {
         stream.main.post(() -> stream.listener.onStopped("共享已从通知栏停止"));
     }
 
+    private void stopDueToNotificationSettings() {
+        ScreenSyncDiagnostics.record(app, "CAPTURE_STOP", "sharing_notification_disabled");
+        stop();
+        socket.endSourceSession();
+        main.post(() -> listener.onStopped("系统已关闭共享通知，屏幕共享已停止"));
+    }
+
     private void showNotice() {
+        // Fail closed: no forced alert, no workaround for blocked app/channel.
+        if (!notificationAllowed(app))
+            throw new IllegalStateException("sharing_notifications_disabled");
         NotificationManager nm = (NotificationManager)
                 app.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) throw new IllegalStateException("notification_manager_missing");
         if (Build.VERSION.SDK_INT >= 26) {
-            nm.createNotificationChannel(new NotificationChannel(CHANNEL_ID,
-                    "ScreenSync 共享状态", NotificationManager.IMPORTANCE_LOW));
+            NotificationChannel existing = nm.getNotificationChannel(CHANNEL_ID);
+            if (existing == null) {
+                NotificationChannel channel = new NotificationChannel(CHANNEL_ID,
+                        "ScreenSync 共享状态", NotificationManager.IMPORTANCE_LOW);
+                channel.setShowBadge(false);
+                nm.createNotificationChannel(channel);
+            }
+            // Importance chosen by the owner is never overwritten.
+            if (!notificationAllowed(app))
+                throw new IllegalStateException("sharing_channel_disabled");
         }
         Intent intent = new Intent(app, AccessibilityShareStopReceiver.class)
                 .setAction(AccessibilityShareStopReceiver.ACTION_STOP);
@@ -307,6 +340,7 @@ public final class AccessibilityJpegStreamer {
                 .setContentTitle("ScreenSync 正在共享屏幕")
                 .setContentText("屏幕截图正在传输，点击停止可立即结束共享")
                 .setOngoing(true).setOnlyAlertOnce(true)
+                .setDefaults(0)
                 .addAction(new Notification.Action.Builder(
                         android.R.drawable.ic_menu_close_clear_cancel,
                         "停止共享", stopAction).build());
