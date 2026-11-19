@@ -1,9 +1,9 @@
-name: ScreenSync Background Process-Lifetime Continuity APK
+name: ScreenSync Notification Respect APK
 
 on:
   workflow_dispatch:
   push:
-    branches: [fix/screensync-lifecycle-keep-socket]
+    branches: [fix/screensync-lifecycle-keep-socket, feature/screensync-dismissible-start-alert]
     paths:
       - 'remote/relay_v1/**'
       - 'app/**'
@@ -222,6 +222,14 @@ jobs:
           assert "WATCH_END_REMOTE" in socket
           assert 'endSourceSession(String reason)' in socket
           print("Share prerequisites, explicit consent, zero-frame diagnostics and visible notification guard verified")
+          assert "NOTIFICATION_CHECK_INTERVAL_MS = 5000L" in streamer
+          assert "stopDueToNotificationSettings();" in streamer
+          assert "showDismissibleStartAlert" not in streamer
+          assert 'NotificationManager.IMPORTANCE_LOW' in streamer
+          assert 'setShowBadge(false)' in streamer
+          assert '"sharing_channel_blocked"' in streamer
+          print("Single low-importance notification respects Android notification opt-out")
+
           tuning = (base / "JpegStreamTuning.java").read_text()
           assert "MAX_LONG_EDGE = 1440" in tuning
           assert "JPEG_QUALITY = 74" in tuning
@@ -324,14 +332,14 @@ jobs:
               assert forbidden not in payload, "Invalid placeholder endpoint found inside compiled DEX"
           print("PASS: invalid placeholder URLs absent from compiled DEX")
           PY
-          cp "$apk" ScreenSync-Background-Continuity-Osaka8443-arm64.apk
-          sha256sum ScreenSync-Background-Continuity-Osaka8443-arm64.apk \
-            > ScreenSync-Background-Continuity-Osaka8443-arm64.sha256
+          cp "$apk" ScreenSync-Notification-Respect-Osaka8443-arm64.apk
+          sha256sum ScreenSync-Notification-Respect-Osaka8443-arm64.apk \
+            > ScreenSync-Notification-Respect-Osaka8443-arm64.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: ScreenSync-Background-Continuity-Osaka8443
+          name: ScreenSync-Notification-Respect-Osaka8443
           path: |
-            ScreenSync-Background-Continuity-Osaka8443-arm64.apk
-            ScreenSync-Background-Continuity-Osaka8443-arm64.sha256
+            ScreenSync-Notification-Respect-Osaka8443-arm64.apk
+            ScreenSync-Notification-Respect-Osaka8443-arm64.sha256
           retention-days: 14
           if-no-files-found: error
