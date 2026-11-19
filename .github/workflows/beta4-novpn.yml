@@ -130,7 +130,7 @@ jobs:
           assert "android.permission.RECEIVE_BOOT_COMPLETED" in permissions
           # PiP allows only explicitly started, visible source sharing,
           # and never adds a foreground service or hidden capture loop.
-          setup = (base / "RemoteSetupActivity.java").read_text()
+          setup = (Path("app/src/main/java/org/client/scrcpy") / "RemoteSetupActivity.java").read_text()
           assert "enterPictureInPictureMode(params)" in setup
           assert "if (!isKeepingVisiblePip()) endMediaAndCloseSocket();" in setup
           assert "ACTION_STOP_PIP_SHARING" in setup
