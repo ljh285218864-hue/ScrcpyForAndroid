@@ -47,6 +47,7 @@ public final class RemoteSetupActivity extends Activity {
     private Button invite, approve, decline, test, revoke, backgroundToggle;
     private Button mediaConnectButton, mediaRequestButton, mediaEndButton;
     private Button sharingNotificationToggle;
+    private TextView backgroundState;
     private TextView mediaState;
     private NoVpnMediaSocket mediaSocket;
     private LocalScrcpyStreamer localStreamer;
@@ -194,7 +195,7 @@ public final class RemoteSetupActivity extends Activity {
         });
         refreshSharingNotificationButton();
 
-        backgroundToggle = action(content, "启用后台定期检查（不显示常驻通知）", v -> {
+        backgroundToggle = action(content, "后台待机：开启 / 关闭（仅维持配对状态）", v -> {
             if (!NoVpnApi.isRegistered(this) || !"paired".equals(currentState)) {
                 report("两台手机完成双方确认后，才能启用后台恢复检查");
                 return;
@@ -203,14 +204,23 @@ public final class RemoteSetupActivity extends Activity {
             try {
                 NoVpnBackgroundSync.setEnabled(this, enabled);
                 report(enabled
-                        ? "已启用：系统尽力在联网和重启后检查配对状态。"
-                        + "不保证实时；最短周期15分钟且可能延迟。"
-                        : "后台自动检查已关闭，双方配对关系仍保留。");
+                        ? "后台待机已启用：联网、重启、更新后尽力恢复配对心跳；"
+                        + "不传输屏幕。至少15分钟的周期可能被系统延迟。"
+                        : "后台待机已关闭，双方配对关系仍保留。");
+                refreshBackgroundState();
             } catch (RuntimeException error) {
                 report("后台检查设置失败，请检查系统限制");
             }
         });
-        action(content, "刷新状态", v -> refreshStatus());
+        backgroundState = new TextView(this);
+        backgroundState.setTextSize(13);
+        backgroundState.setPadding(0, dp(4), 0, dp(8));
+        content.addView(backgroundState);
+        refreshBackgroundState();
+        action(content, "刷新状态", v -> {
+            refreshBackgroundState();
+            refreshStatus();
+        });
         revoke = action(content, "双方解绑并注销所有旧凭证", v ->
                 new AlertDialog.Builder(this).setTitle("双方撤销")
                         .setMessage("撤销将使两台设备的旧配对令牌立即失效，"
@@ -244,6 +254,10 @@ public final class RemoteSetupActivity extends Activity {
         if (!NoVpnApi.isRegistered(this)) refreshStatus();
         refresh.run();
         refreshButtons();
+        // User returning to the app may request a short presence refresh.
+        // This does NOT restart capture or an incoming watch session.
+        NoVpnBackgroundSync.requestOnce(this, "owner_opened");
+        refreshBackgroundState();
     }
 
     @Override protected void onPause() {
@@ -313,6 +327,20 @@ public final class RemoteSetupActivity extends Activity {
                 SharingStatusNotifier.isEnabled(this)
                 ? "共享状态通知：已开启（可关闭，不影响已授权共享）"
                 : "共享状态通知：已关闭（不影响已授权共享）");
+    }
+
+    private void refreshBackgroundState() {
+        if (backgroundState == null) return;
+        if (!NoVpnBackgroundSync.isEnabled(this)) {
+            backgroundState.setText("后台配对待机：关闭；无需通知权限。");
+            return;
+        }
+        long at = NoVpnBackgroundSync.lastSuccess(this);
+        String seen = at <= 0 ? "尚无成功心跳"
+                : android.text.format.DateFormat.format("MM-dd HH:mm", at).toString();
+        backgroundState.setText("后台配对待机：已启用；最近成功：" + seen
+                + "；状态：" + NoVpnBackgroundSync.state(this)
+                + "。后台待机不代表正在共享屏幕。");
     }
 
     private void showLocalAdbPairDialog() {

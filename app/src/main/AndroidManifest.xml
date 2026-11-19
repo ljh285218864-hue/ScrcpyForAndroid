@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Only restores the explicitly opted-in signaling/presence schedule. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
@@ -41,6 +43,18 @@
             android:windowSoftInputMode="stateAlwaysHidden" />
 
         <activity android:name=".RemoteSetupActivity" android:exported="false" />
+
+        <!-- Short, non-capturing reboot/app-upgrade signal reconciliation.
+             No foreground service, screen access, ADB, or activity launch. -->
+        <receiver
+            android:name=".NoVpnStandbyRestoreReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <activity
             android:name=".SettingActivity"

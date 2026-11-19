@@ -112,6 +112,22 @@ jobs:
                       continue
                   assert not t.startswith(("startForeground(", "setForeground(",
                                                   "setForegroundAsync(")), f"{name}: foreground worker forbidden"
+          # Background standby may restore identity/heartbeat, never capture.
+          boot = (Path("app/src/main/java/org/client/scrcpy")
+                  / "NoVpnStandbyRestoreReceiver.java").read_text()
+          for forbidden in ("startForeground(", "startService(",
+                            "startAfterLocalApproval(", "takeScreenshot(",
+                            "MediaProjectionManager", "AdbHelper."):
+              assert forbidden not in boot, f"boot path must not start capture: {forbidden}"
+          assert "NoVpnBackgroundSync.requestOnce(" in boot
+          assert "NoVpnBackgroundSync.schedule(" in boot
+          assert "NoVpnBackgroundSync.isEnabled(context)" in boot
+          assert "NoVpnApi.isRegistered(context)" in boot
+          receivers = [s for s in manifest.findall(".//receiver")
+                       if s.attrib.get(android + "name") == ".NoVpnStandbyRestoreReceiver"]
+          assert len(receivers) == 1
+          assert receivers[0].attrib.get(android + "exported") == "false"
+          assert "android.permission.RECEIVE_BOOT_COMPLETED" in permissions
           # All new media components are Activity-scoped, and the ADB
           # scrcpy socket is bound only to the source phone's loopback.
           for name in ("LocalScrcpyStreamer.java", "RelayVideoRenderer.java",
