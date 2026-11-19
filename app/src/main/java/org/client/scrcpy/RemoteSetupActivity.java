@@ -3,15 +3,23 @@ package org.client.scrcpy;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.PendingIntent;
+import android.app.PictureInPictureParams;
+import android.app.RemoteAction;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.graphics.drawable.Icon;
+import android.content.res.Configuration;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.text.InputType;
+import android.util.Rational;
+import android.view.View;
 import android.widget.EditText;
 import android.view.SurfaceView;
 import android.widget.Button;
@@ -29,6 +37,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.UUID;
+import java.util.Collections;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 
@@ -42,10 +51,16 @@ public final class RemoteSetupActivity extends Activity {
             "org.client.scrcpy.EXTRA_REQUEST_WATCH_ONCE";
     private static final int SCAN = 9371;
     private static final int CAMERA = 9372;
+    private static final String ACTION_STOP_PIP_SHARING =
+            "org.client.scrcpy.action.STOP_PIP_SHARING";
     private final Handler ui = new Handler(Looper.getMainLooper());
     private TextView status;
     private Button invite, approve, decline, test, revoke, backgroundToggle;
     private Button mediaConnectButton, mediaRequestButton, mediaEndButton;
+    private Button pipShareButton;
+    private TextView pipVisibleStatus;
+    private ScrollView setupScrollView;
+    private volatile boolean pipTransitionPending;
     private Button sharingNotificationToggle;
     private TextView backgroundState;
     private TextView mediaState;
@@ -91,6 +106,14 @@ public final class RemoteSetupActivity extends Activity {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(16), dp(20), dp(16), dp(22));
+        // Never hide the source's sharing state while in picture-in-picture.
+        pipVisibleStatus = new TextView(this);
+        pipVisibleStatus.setText("屏幕正在共享\n点击小窗可返回停止");
+        pipVisibleStatus.setTextSize(26);
+        pipVisibleStatus.setTextColor(Color.rgb(180, 34, 34));
+        pipVisibleStatus.setPadding(dp(8), dp(12), dp(8), dp(14));
+        pipVisibleStatus.setVisibility(View.GONE);
+        content.addView(pipVisibleStatus);
 
         TextView intro = new TextView(this);
         intro.setText("无 VPN 异地连接实验版：两台手机扫码、核对6位码并同意配对。"
@@ -177,13 +200,10 @@ public final class RemoteSetupActivity extends Activity {
                 mediaState.setText("等待 WSS 身份认证后自动发送本次观看请求");
             }
         });
-        mediaEndButton = action(content, "停止观看 / 停止共享", v -> {
-            requestAfterConnect = false;
-            stopLocalStream();
-            if (renderer != null) renderer.stopSession();
-            if (mediaSocket != null) mediaSocket.endSession();
-            mediaState.setText("已停止本次视频会话");
-        });
+        mediaEndButton = action(content, "停止观看 / 停止共享", v -> stopCurrentVideoSession());
+        pipShareButton = action(content, "继续共享（可见小窗，无前台服务）",
+                v -> enterVisibleSharePip());
+        pipShareButton.setEnabled(false);
         // Notification is optional. Never make the media session depend on it.
         sharingNotificationToggle = action(content, "", v -> {
             boolean enabled = !SharingStatusNotifier.isEnabled(this);
@@ -241,9 +261,9 @@ public final class RemoteSetupActivity extends Activity {
                                 }, false))
                         .setNegativeButton("取消", null).show());
         action(content, "返回", v -> finish());
-        ScrollView root = new ScrollView(this);
-        root.addView(content);
-        setContentView(root);
+        setupScrollView = new ScrollView(this);
+        setupScrollView.addView(content);
+        setContentView(setupScrollView);
         refreshButtons();
     }
 
@@ -260,27 +280,129 @@ public final class RemoteSetupActivity extends Activity {
         refreshBackgroundState();
     }
 
+    /**
+     * Only an explicitly entered, VISIBLE PiP session survives onPause.
+     * If the user just leaves the activity normally, terminate capture.
+     * Never attempt hidden background video capture.
+     */
     @Override protected void onPause() {
         active = false;
         requestAfterConnect = false;
         ui.removeCallbacks(refresh);
-        // Leaving this visible screen stops local capture and remote video.
+        if (!isKeepingVisiblePip()) endMediaAndCloseSocket();
+        super.onPause();
+    }
+
+    @Override protected void onStop() {
+        // Closing the PiP tile or leaving the app without PiP ends capture.
+        if (!isKeepingVisiblePip()) endMediaAndCloseSocket();
+        super.onStop();
+    }
+
+    @Override protected void onDestroy() {
+        endMediaAndCloseSocket();
+        if (renderer != null) {
+            renderer.close();
+            renderer = null;
+        }
+        super.onDestroy();
+    }
+
+    @Override public void onPictureInPictureModeChanged(
+            boolean isInPictureInPictureMode, Configuration newConfig) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+        pipTransitionPending = false;
+        if (pipVisibleStatus != null) {
+            pipVisibleStatus.setVisibility(isInPictureInPictureMode
+                    ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        if (intent != null && ACTION_STOP_PIP_SHARING.equals(intent.getAction())) {
+            stopCurrentVideoSession();
+        }
+    }
+
+    private boolean isKeepingVisiblePip() {
+        return pipTransitionPending || (Build.VERSION.SDK_INT >= 26
+                && isInPictureInPictureMode());
+    }
+
+    private boolean canHandleMedia() {
+        return active || isKeepingVisiblePip();
+    }
+
+    private void endMediaAndCloseSocket() {
         stopLocalStream();
         if (renderer != null) renderer.stopSession();
         if (mediaSocket != null) {
             mediaSocket.close();
             mediaSocket = null;
         }
-        super.onPause();
     }
 
-    @Override protected void onDestroy() {
+    private void stopCurrentVideoSession() {
+        requestAfterConnect = false;
         stopLocalStream();
-        if (renderer != null) {
-            renderer.close();
-            renderer = null;
+        if (renderer != null) renderer.stopSession();
+        if (mediaSocket != null) mediaSocket.endSession();
+        if (mediaState != null) mediaState.setText("已停止本次视频会话");
+        if (pipVisibleStatus != null)
+            pipVisibleStatus.setText("共享已停止\n点击小窗返回软件");
+        refreshPipButton();
+    }
+
+    private void refreshPipButton() {
+        if (pipShareButton == null) return;
+        // Source can only enter the visible mini-window after device-owner
+        // approval and relay permission have started a local stream.
+        pipShareButton.setEnabled(localStreamer != null);
+    }
+
+    private void enterVisibleSharePip() {
+        if (Build.VERSION.SDK_INT < 26
+                || !getPackageManager().hasSystemFeature(
+                        PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
+            report("这台设备不支持安卓画中画；无法在没有前台服务时继续可见共享");
+            return;
         }
-        super.onDestroy();
+        if (localStreamer == null || mediaSocket == null) {
+            report("请先在本机同意本次共享，再切换小窗");
+            return;
+        }
+        Intent stop = new Intent(this, RemoteSetupActivity.class);
+        stop.setAction(ACTION_STOP_PIP_SHARING);
+        stop.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP
+                | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        PendingIntent action = PendingIntent.getActivity(
+                this, 8811, stop,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        RemoteAction stopAction = new RemoteAction(
+                Icon.createWithResource(this, android.R.drawable.ic_media_pause),
+                "停止共享", "立即结束当前屏幕共享", action);
+        PictureInPictureParams params = new PictureInPictureParams.Builder()
+                .setAspectRatio(new Rational(4, 3))
+                .setActions(Collections.singletonList(stopAction))
+                .build();
+        // Show the status *before* the transition, so the small window
+        // never appears as an invisible background capture.
+        pipVisibleStatus.setText("屏幕正在共享\n点击小窗可返回停止");
+        pipVisibleStatus.setVisibility(View.VISIBLE);
+        if (setupScrollView != null) setupScrollView.scrollTo(0, 0);
+        pipTransitionPending = true;
+        try {
+            if (!enterPictureInPictureMode(params)) {
+                pipTransitionPending = false;
+                pipVisibleStatus.setVisibility(View.GONE);
+                report("系统未允许进入画中画，共享仍在当前页面内");
+            }
+        } catch (RuntimeException error) {
+            pipTransitionPending = false;
+            pipVisibleStatus.setVisibility(View.GONE);
+            report("此设备无法进入画中画，请保持页面打开");
+        }
     }
 
     private void stopLocalStream() {
@@ -289,6 +411,7 @@ public final class RemoteSetupActivity extends Activity {
         // The notification is never the owner of the session lifecycle.
         SharingStatusNotifier.cancel(this);
         if (current != null) current.stop();
+        refreshPipButton();
     }
 
     private void startLocalStream() {
@@ -297,14 +420,15 @@ public final class RemoteSetupActivity extends Activity {
         LocalScrcpyStreamer streamer = new LocalScrcpyStreamer(this, mediaSocket,
                 new LocalScrcpyStreamer.Listener() {
                     @Override public void onState(String message) {
-                        if (active && localStreamer == ref[0])
+                        if (canHandleMedia() && localStreamer == ref[0])
                             mediaState.setText(message);
                     }
                     @Override public void onStopped(String reason) {
                         if (localStreamer != ref[0]) return;
                         localStreamer = null;
                         SharingStatusNotifier.cancel(RemoteSetupActivity.this);
-                        if (active && mediaSocket != null) {
+                        refreshPipButton();
+                        if (canHandleMedia() && mediaSocket != null) {
                             mediaState.setText("本机视频结束：" + reason);
                             mediaSocket.endSourceSession();
                         }
@@ -315,6 +439,7 @@ public final class RemoteSetupActivity extends Activity {
         if (!streamer.startAfterLocalApproval()) {
             localStreamer = null;
         } else {
+            refreshPipButton();
             // Best-effort display only. A blocked notification must not
             // prevent or terminate the locally approved media session.
             SharingStatusNotifier.showIfEnabled(this);
@@ -428,7 +553,7 @@ public final class RemoteSetupActivity extends Activity {
         NoVpnMediaSocket socket = new NoVpnMediaSocket(this,
                 new NoVpnMediaSocket.Listener() {
                     @Override public void onStatus(String value) {
-                        if (!active || isFinishing()) return;
+                        if (!canHandleMedia() || isFinishing()) return;
                         mediaState.setText("媒体中转：" + value);
                         if ("authenticated".equals(value) && requestAfterConnect) {
                             if (mediaSocket != null && mediaSocket.requestWatch()) {
@@ -451,7 +576,9 @@ public final class RemoteSetupActivity extends Activity {
                         }
                     }
                     @Override public void onRequest(String sid, String viewerId) {
-                        if (!active || isFinishing()) return;
+                        // Never permit a new viewer to authorize sharing in
+                        // the small window without the owner seeing the dialog.
+                        if (!active || isInPictureInPictureMode() || isFinishing()) return;
                         new AlertDialog.Builder(RemoteSetupActivity.this)
                                 .setTitle("已配对设备请求观看")
                                 .setMessage("对方设备 ID 尾号：" +

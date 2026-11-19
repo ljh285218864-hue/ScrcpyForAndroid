@@ -42,7 +42,12 @@
             android:theme="@style/zxing_CaptureTheme"
             android:windowSoftInputMode="stateAlwaysHidden" />
 
-        <activity android:name=".RemoteSetupActivity" android:exported="false" />
+        <activity
+            android:name=".RemoteSetupActivity"
+            android:exported="false"
+            android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation" />
 
         <!-- Short, non-capturing reboot/app-upgrade signal reconciliation.
              No foreground service, screen access, ADB, or activity launch. -->
