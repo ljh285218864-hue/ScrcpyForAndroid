@@ -9,7 +9,7 @@ on:
       - 'app/**'
       - '.github/workflows/background-continuity.yml'
   pull_request:
-    branches: [main]
+    branches: [main, fix/screensync-lifecycle-keep-socket]
     paths:
       - 'remote/relay_v1/**'
       - 'app/**'
@@ -228,6 +228,9 @@ jobs:
           assert 'NotificationManager.IMPORTANCE_LOW' in streamer
           assert 'setShowBadge(false)' in streamer
           assert '"sharing_channel_blocked"' in streamer
+          incoming = (base / "ScreenSyncWatchNotice.java").read_text()
+          assert "AccessibilityJpegStreamer.sharingActive()" in incoming
+          assert "suppressed_during_sharing" in incoming
           print("Single low-importance notification respects Android notification opt-out")
 
           tuning = (base / "JpegStreamTuning.java").read_text()
