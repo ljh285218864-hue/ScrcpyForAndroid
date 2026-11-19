@@ -26,8 +26,13 @@ import java.util.concurrent.Executors;
 public final class AccessibilityJpegStreamer {
     public interface Listener { void onStopped(String reason); }
 
+    // NOTICE_ID is the persistent, essential status/STOP control during capture.
+    // START_ALERT_ID is a separate optional reminder: swiping it away does NOT
+    // cancel the media session or remove the essential status/STOP control.
     private static final int NOTICE_ID = 8413;
+    private static final int START_ALERT_ID = 8414;
     private static final String CHANNEL_ID = "screensync_active_share";
+    private static final String START_ALERT_CHANNEL = "screensync_share_started";
     private static final long DELAY_MS = JpegStreamTuning.CAPTURE_GAP_MS;
     private static volatile AccessibilityJpegStreamer current;
 
@@ -117,8 +122,19 @@ public final class AccessibilityJpegStreamer {
             current = null;
             NotificationManager manager = (NotificationManager)
                     app.getSystemService(Context.NOTIFICATION_SERVICE);
-            if (manager != null) manager.cancel(NOTICE_ID);
+            if (manager != null) {
+                manager.cancel(NOTICE_ID);
+                manager.cancel(START_ALERT_ID);
+            }
             return false;
+        }
+        // The separate "sharing started" reminder is dismissible and never
+        // controls media. Keep the visible sharing-state/STOP control intact.
+        try {
+            showDismissibleStartAlert();
+        } catch (RuntimeException notificationFailure) {
+            ScreenSyncDiagnostics.record(app, "START_ALERT",
+                    "optional_alert_failed=" + notificationFailure.getClass().getSimpleName());
         }
         ScreenSyncDiagnostics.record(app, "CAPTURE_START", "success jpeg_width="
                 + outWidth + " jpeg_height=" + outHeight + " quality=" + compressionQuality
@@ -244,7 +260,10 @@ public final class AccessibilityJpegStreamer {
         if (current == this) current = null;
         NotificationManager nm = (NotificationManager)
                 app.getSystemService(Context.NOTIFICATION_SERVICE);
-        nm.cancel(NOTICE_ID);
+        if (nm != null) {
+            nm.cancel(NOTICE_ID);
+            nm.cancel(START_ALERT_ID);
+        }
     }
 
     /**
@@ -287,6 +306,39 @@ public final class AccessibilityJpegStreamer {
         stream.stop();
         stream.socket.endSourceSession();
         stream.main.post(() -> stream.listener.onStopped("共享已从通知栏停止"));
+    }
+
+    /**
+     * Transient reminder that users can dismiss by swiping. The shared screen
+     * continues ONLY while the explicit user-approved session stays active,
+     * and the separate ongoing sharing-status notification remains visible.
+     */
+    private void showDismissibleStartAlert() {
+        NotificationManager nm = (NotificationManager)
+                app.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) return;
+        if (Build.VERSION.SDK_INT >= 26) {
+            nm.createNotificationChannel(new NotificationChannel(
+                    START_ALERT_CHANNEL, "ScreenSync 共享开始提醒",
+                    NotificationManager.IMPORTANCE_DEFAULT));
+        }
+        Intent open = new Intent(app, RemoteSetupActivity.class);
+        open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        PendingIntent tap = PendingIntent.getActivity(app, START_ALERT_ID, open,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification.Builder reminder = Build.VERSION.SDK_INT >= 26
+                ? new Notification.Builder(app, START_ALERT_CHANNEL)
+                : new Notification.Builder(app);
+        reminder.setSmallIcon(android.R.drawable.ic_menu_view)
+                .setContentTitle("ScreenSync 屏幕共享已开始")
+                .setContentText("可滑走这条提醒；共享仍进行中，可从共享状态通知停止")
+                .setContentIntent(tap)
+                .setAutoCancel(true)
+                .setOngoing(false)
+                .setOnlyAlertOnce(true);
+        nm.notify(START_ALERT_ID, reminder.build());
+        ScreenSyncDiagnostics.record(app, "START_ALERT", "dismissible_posted");
     }
 
     private void showNotice() {
