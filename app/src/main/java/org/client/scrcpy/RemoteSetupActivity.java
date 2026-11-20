@@ -483,6 +483,16 @@ public final class RemoteSetupActivity extends Activity {
         active = false;
         requestAfterConnect = false;
         ui.removeCallbacks(refresh);
+        // If the owner disabled background online maintenance, leave no
+        // unattended WSS connection when returning to the home screen.
+        // An explicitly approved source stream with its visible STOP overlay
+        // may continue for this current session only.
+        if (!NoVpnBackgroundSync.isEnabled(this)
+                && !AccessibilityJpegStreamer.sharingActive()
+                && mediaSocket != null) {
+            ScreenSyncMediaKeeper.stop();
+            mediaSocket = null;
+        }
         // Do not terminate a user-approved share or an authenticated WSS
         // connection merely because this Activity is covered or swiped away.
         // This is process-lifetime best effort, NOT a guarantee after
