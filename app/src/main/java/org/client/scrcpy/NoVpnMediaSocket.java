@@ -314,6 +314,11 @@ public final class NoVpnMediaSocket {
         // or bypasses the source's per-session approval.
         int number = Math.min(++reconnectAttempts, 5);
         long delayMs = Math.min(30000L, 1000L << (number - 1));
+        // Rejoin a still-approved session promptly before its 60s grace
+        // deadline. No new session or permission is created on retry.
+        if (hasRecoverableSession()) delayMs = Math.min(delayMs, 4000L);
+        ScreenSyncDiagnostics.record(context, "WSS_RETRY",
+                "delay_ms=" + delayMs + " same_session=" + hasRecoverableSession());
         main.postDelayed(retryConnection, delayMs);
     }
 
