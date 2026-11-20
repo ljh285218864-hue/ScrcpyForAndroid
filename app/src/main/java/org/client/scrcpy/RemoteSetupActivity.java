@@ -229,8 +229,9 @@ public final class RemoteSetupActivity extends Activity {
                 v -> openShareNotificationSettings());
         TextView securityNote = note(permissionsPanel,
                 "无障碍截图需由手机持有人明确开启。配对、联网和心跳无需通知权限。"
-                + "每次共享仍需同意；关闭通知时仅在软件页面可见期间共享，"
-                + "退出页面会停止截图。");
+                + "每次共享仍需同意。共享期间会在其他应用上方显示"
+                + "「正在共享 / 停止」浮条；退出 ScreenSync 或关闭普通通知"
+                + "不会仅因此停止本次已授权截图。");
         securityNote.setPadding(dp(4), dp(6), dp(4), 0);
 
         backgroundToggle = action(content, "后台在线维护：开启 / 关闭", v -> {
@@ -497,7 +498,8 @@ public final class RemoteSetupActivity extends Activity {
         if (mediaSocket != null && mediaListener != null)
             mediaSocket.clearListenerIf(mediaListener);
         // The transport is retained by ScreenSyncMediaKeeper in this process.
-        // Capture cannot continue invisibly without a visible stop control.
+        // The visible accessibility STOP overlay, not notifications,
+        // controls screenshot safety outside this Activity.
         if (jpegRenderer != null) {
             jpegRenderer.close();
             jpegRenderer = null;
@@ -519,7 +521,7 @@ public final class RemoteSetupActivity extends Activity {
     private void refreshSharingStatus() {
         if (shareVisibleStatus == null) return;
         shareVisibleStatus.setText(AccessibilityJpegStreamer.sharingActive()
-                ? "本机正在共享屏幕 · 点击下方「结束本次观看 / 共享」随时停止"
+                ? "本机正在共享屏幕 · 可在其他应用上点击悬浮条「停止共享」"
                 : "本机未共享屏幕。配对在线不代表正在共享。");
     }
 
@@ -558,7 +560,7 @@ public final class RemoteSetupActivity extends Activity {
         if (shot.start()) {
             ScreenSyncDiagnostics.record(this, "SOURCE_START", "jpeg_stream_started");
             jpegStreamer = shot;
-            mediaState.setText("本机屏幕正在共享，随时可在软件内停止");
+            mediaState.setText("本机正在共享；切换其他应用仍可点击悬浮条停止");
             refreshSharingStatus();
         } else {
             String reason = AccessibilityJpegStreamer.readinessIssue(this);
@@ -567,7 +569,7 @@ public final class RemoteSetupActivity extends Activity {
                             ? "capture_or_transport" : reason));
             mediaState.setText(reason.isEmpty()
                     ? "本次共享启动失败，请查看诊断日志"
-                    : "共享前请先在设备上开启无障碍截图服务");
+                    : "请检查无障碍截图服务和跨应用共享停止浮条");
             mediaSocket.endSourceSession(reason.isEmpty()
                     ? "source_start_failed" : "source_permissions_missing");
         }
@@ -699,8 +701,9 @@ public final class RemoteSetupActivity extends Activity {
                                         viewerId.substring(Math.max(0, viewerId.length() - 6))
                                         + "\n是否允许对方观看你手机的当前屏幕？"
                                         + "\n将通过无障碍截图发送 JPEG 画面。"
-                                        + "\n共享期间软件会显示状态和停止按钮；"
-                                        + "若关闭普通通知，离开软件页面即结束截图。")
+                                        + "\n共享期间会在其他应用上方显示"
+                                        + "「正在共享 / 停止共享」浮条，"
+                                        + "普通通知开关不控制已授权的截图。")
                                 .setPositiveButton("允许本次屏幕共享", (dialog, which) -> {
                                     ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
                                             "USER_ACTION", "share_approved");
