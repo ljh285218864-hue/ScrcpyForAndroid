@@ -180,22 +180,10 @@ public final class WakeLanService extends Service {
     private void handleClient(Socket client, String code) {
         try (Socket socket = client) {
             socket.setSoTimeout(2400);
-            // A registered Beta4 receiver only accepts traffic from the
-            // exact peer IP last verified via HTTPS and the owner's approval.
-            // Do not let LAN/DHCP changes silently switch device identities.
+            // Compatibility receiver only; disabled in the no-VPN manifest.
+            // Never bind to a public address or handle old VPN overlay peers.
             String callerIp = socket.getInetAddress().getHostAddress();
-            if (AutoRemoteProvisioner.isRegistered(this)) {
-                String allowed = AutoRemoteProvisioner.approvedPeerIp(this);
-                String assigned = AutoRemoteProvisioner.approvedLocalIp(this);
-                if (!TrustedPairEndpoint.isBeta4ClientIp(allowed)
-                        || !allowed.equals(callerIp)
-                        || !assigned.equals(RemoteOverlayNetwork.localVpnIp(this))) {
-                    return;
-                }
-            } else if (!RemoteOverlayNetwork.isAllowedPeerIp(
-                    socket.getInetAddress())) {
-                return;
-            }
+            if (!PairQrCode.isPrivateIpv4(callerIp)) return;
             BufferedReader in = new BufferedReader(new InputStreamReader(
                     socket.getInputStream(), StandardCharsets.US_ASCII));
             BufferedWriter out = new BufferedWriter(new OutputStreamWriter(
@@ -208,8 +196,7 @@ public final class WakeLanService extends Service {
             String[] parts = hello == null ? new String[0] : hello.split(" ");
             boolean isInfo = parts.length == 3 && "INFO".equals(parts[0])
                     && WakeAuth.isHex(parts[1], 16)
-                    && ("-".equals(parts[2])
-                            || RemoteOverlayNetwork.isOverlayAddress(parts[2]));
+                    && "-".equals(parts[2]);
             boolean isWake = parts.length == 2 && "HELLO".equals(parts[0])
                     && WakeAuth.isHex(parts[1], 16);
             if (!isInfo && !isWake) {
@@ -231,7 +218,6 @@ public final class WakeLanService extends Service {
                                 ? response.substring(5) : null,
                             WakeAuth.mac(peer.secret, nonce, challenge));
             if (acceptedByPeer && peer != null
-                    && !AutoRemoteProvisioner.isRegistered(this)
                     && !callerIp.equals(peer.host)) {
                 // LAN compatibility only: a fresh authenticated sender can
                 // update DHCP address, not a Beta4 device's bound VPN IP.
@@ -239,8 +225,7 @@ public final class WakeLanService extends Service {
             }
             // After a persistent pairing exists, disable the old temporary
             // test token. Only the saved peer's random long token may wake us.
-            boolean legacyAccepted = !AutoRemoteProvisioner.isRegistered(this)
-                    && peer == null && response != null
+            boolean legacyAccepted = peer == null && response != null
                     && response.startsWith("AUTH ")
                     && WakeAuth.verify(response.substring(5), expected);
             if (response == null || response.length() != 69
@@ -255,19 +240,11 @@ public final class WakeLanService extends Service {
             if (isInfo && peer != null && acceptedByPeer) {
                 // Authenticated, read-only metadata exchange. Never starts the
                 // remote screen and never disables system privacy indicators.
-                if (RemoteOverlayNetwork.isOverlayAddress(parts[2])
-                        && !AutoRemoteProvisioner.isRegistered(this)) {
-                    // Metadata supplied by a LAN peer cannot override a
-                    // server-assigned, device-ID-bound Beta4 endpoint.
-                    PairedDeviceStore.updateOverlayAddress(this, parts[2]);
-                }
                 String serverProof = WakeAuth.mac(peer.secret, challenge, nonce);
                 out.write("OK " + nonce + " " + serverProof + "\n");
                 out.flush();
-                String overlay = RemoteOverlayNetwork.localVpnIp(this);
                 int currentPort = localWirelessDebuggingPort();
-                out.write("META " + (overlay == null ? "-" : overlay)
-                        + " " + currentPort + "\n");
+                out.write("META - " + currentPort + "\n");
                 out.flush();
             } else {
                 out.write("OK " + nonce + "\n");
@@ -286,7 +263,7 @@ public final class WakeLanService extends Service {
      * system restarts. No fixed port, root, or external ADB exposure.
      */
     private int localWirelessDebuggingPort() {
-        String wifi = RemoteOverlayNetwork.localWifiIp(this);
+        String wifi = PairQrCode.localWifiIp(this);
         if (wifi == null) return 0;
         try {
             org.client.scrcpy.utils.ExecUtil.AdbCommandResult mdns =

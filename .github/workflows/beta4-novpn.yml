@@ -1,0 +1,237 @@
+name: ScreenSync Beta4 NO-VPN scrcpy predeploy integration
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/screensync-beta4-novpn]
+    paths:
+      - 'remote/relay_v1/**'
+      - 'app/**'
+      - '.github/workflows/beta4-novpn.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'remote/relay_v1/**'
+      - 'app/**'
+
+permissions:
+  contents: read
+
+jobs:
+  signaling-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax-check non-mutating VPS preflight and 8443 diagnostics
+        run: |
+          bash -n remote/relay_v1/deploy/read-only-preflight.sh
+          bash -n remote/relay_v1/deploy/diagnose-8443.sh
+      - name: Guard against abandoned VPN and WebRTC solutions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          base = Path("app/src/main/java/org/client/scrcpy")
+          for old in ("AutoRemoteProvisioner.java", "EmbeddedRemoteTunnel.java",
+                      "RemoteOverlayNetwork.java", "NoVpnTransportPolicy.java"):
+              assert not (base / old).exists(), f"retired class restored: {old}"
+          assert "com.wireguard.android:tunnel" not in Path("app/build.gradle").read_text()
+          assert not Path("remote/control").exists()
+          assert not Path("remote/control_v2").exists()
+          assert not Path("remote/setup_wg_vps_ubuntu.sh").exists()
+          code = Path("remote/relay_v1/server.py").read_text()
+          declared = code.split("ALLOWED_EVENTS = ", 1)[1].split("}",1)[0]
+          for disallowed in ('"offer"', '"answer"', '"ice_candidate"'):
+              assert disallowed not in declared, f"discarded signaling: {disallowed}"
+          main = (base / "MainActivity.java").read_text()
+          assert "VpnService.prepare(" not in main
+          assert "EmbeddedRemoteTunnel" not in main
+          layout = Path("app/src/main/res/layout/activity_main.xml").read_text()
+          assert "remote_vpn_toggle_button" not in layout
+          assert "remote_vpn_setup_button" not in layout
+          print("Retired VPN and WebRTC routes absent from no-VPN branch")
+          PY
+      - name: Test HTTPS signaling and real localhost video relay
+        run: |
+          python3 -m venv "$RUNNER_TEMP/screensync-media-venv"
+          . "$RUNNER_TEMP/screensync-media-venv/bin/activate"
+          python3 -m pip install -r remote/relay_v1/requirements-media.txt
+          python3 -m compileall -q remote/relay_v1
+          python3 -m unittest discover -s remote/relay_v1 -p 'test_*.py' -v
+
+  android-novpn:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: 'false'
+      - name: Install Android 36 platform
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+      - name: Restore previously verified arm64 ADB binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/old-apk" app/src/main/jniLibs/arm64-v8a
+          gh release download screensync-qr-20261115 \
+            --pattern 'ScreenSync-QR-arm64.apk' \
+            --dir "$RUNNER_TEMP/old-apk"
+          unzip -p "$RUNNER_TEMP/old-apk/ScreenSync-QR-arm64.apk" \
+            'lib/arm64-v8a/libadb.so' > app/src/main/jniLibs/arm64-v8a/libadb.so
+          test "$(stat -c '%s' app/src/main/jniLibs/arm64-v8a/libadb.so)" -gt 3000000
+      - name: Verify no foreground LAN receiver in no-VPN variant
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          manifest = ET.parse("app/src/main/AndroidManifest.xml").getroot()
+          android = "{http://schemas.android.com/apk/res/android}"
+          service = next((s for s in manifest.findall(".//service")
+                          if s.attrib.get(android + "name") == ".WakeLanService"), None)
+          assert service is not None, "Legacy LAN receiver must be explicitly disabled"
+          assert service.attrib.get(android + "enabled") == "false", "No FGS receiver allowed"
+          app = manifest.find("application")
+          assert app is not None and app.attrib.get(android + "usesCleartextTraffic") == "false", \
+              "HTTPS/WSS-only experimental APK must not permit cleartext HTTP"
+          permissions = {p.attrib.get(android + "name") for p in manifest.findall("uses-permission")}
+          assert "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" not in permissions
+          for name in ("NoVpnBackgroundSync.java", "NoVpnPresenceWorker.java"):
+              source = Path("app/src/main/java/org/client/scrcpy") / name
+              for line in source.read_text().splitlines():
+                  t = line.strip()
+                  if t.startswith("//") or t.startswith("*") or t.startswith("/*"):
+                      continue
+                  assert not t.startswith(("startForeground(", "setForeground(",
+                                                  "setForegroundAsync(")), f"{name}: foreground worker forbidden"
+          # Background standby may restore identity/heartbeat, never capture.
+          boot = (Path("app/src/main/java/org/client/scrcpy")
+                  / "NoVpnStandbyRestoreReceiver.java").read_text()
+          for forbidden in ("startForeground(", "startService(",
+                            "startAfterLocalApproval(", "takeScreenshot(",
+                            "MediaProjectionManager", "AdbHelper."):
+              assert forbidden not in boot, f"boot path must not start capture: {forbidden}"
+          assert "NoVpnBackgroundSync.requestOnce(" in boot
+          assert "NoVpnBackgroundSync.schedule(" in boot
+          assert "NoVpnBackgroundSync.isEnabled(context)" in boot
+          assert "NoVpnApi.isRegistered(context)" in boot
+          receivers = [s for s in manifest.findall(".//receiver")
+                       if s.attrib.get(android + "name") == ".NoVpnStandbyRestoreReceiver"]
+          assert len(receivers) == 1
+          assert receivers[0].attrib.get(android + "exported") == "false"
+          assert "android.permission.RECEIVE_BOOT_COMPLETED" in permissions
+          # Optional owner-enabled heartbeat loop; no foreground service,
+          # capture, ADB, or automatic viewing on reconnect.
+          presence = (Path("app/src/main/java/org/client/scrcpy")
+                      / "NoVpnPresenceLoop.java").read_text()
+          for forbidden in ("startForeground(", "startService(",
+                            "takeScreenshot(", "MediaProjectionManager",
+                            "startAfterLocalApproval(", "AdbHelper.",
+                            "watch_accept", "watch_request"):
+              assert forbidden not in presence, f"presence loop must not capture: {forbidden}"
+          assert "NoVpnApi.heartbeat(app)" in presence
+          assert "NoVpnPresencePolicy.nextDelayMs" in presence
+          assert "NoVpnBackgroundSync.isEnabled(app)" in presence
+          # PiP allows only explicitly started, visible source sharing,
+          # and never adds a foreground service or hidden capture loop.
+          setup = (Path("app/src/main/java/org/client/scrcpy") / "RemoteSetupActivity.java").read_text()
+          assert "enterPictureInPictureMode(params)" in setup
+          assert "if (!isKeepingVisiblePip()) endMediaAndCloseSocket();" in setup
+          assert "ACTION_STOP_PIP_SHARING" in setup
+          assert "localStreamer == null || mediaSocket == null" in setup
+          assert "startForeground(" not in setup
+          activity = next(s for s in manifest.findall(".//activity")
+                          if s.attrib.get(android + "name") == ".RemoteSetupActivity")
+          assert activity.attrib.get(android + "supportsPictureInPicture") == "true"
+          # All new media components are Activity-scoped, and the ADB
+          # scrcpy socket is bound only to the source phone's loopback.
+          for name in ("LocalScrcpyStreamer.java", "RelayVideoRenderer.java",
+                       "NoVpnMediaSocket.java"):
+              code = (Path("app/src/main/java/org/client/scrcpy") / name).read_text()
+              assert "startForeground(" not in code
+              assert "MediaProjectionManager" not in code
+              assert "VpnService" not in code
+          # Regression guards for actual Android video connection path:
+          # never drop decoder setup while discarding stale P-frames.
+          renderer = (Path("app/src/main/java/org/client/scrcpy")
+                      / "RelayVideoRenderer.java").read_text()
+          assert "decoderThread.getQueue().clear()" not in renderer
+          assert "task instanceof FrameTask" in renderer
+          assert "sourceSession.equals(session)" in renderer
+          media = (Path("app/src/main/java/org/client/scrcpy")
+                   / "NoVpnMediaSocket.java").read_text()
+          assert "locallyApprovedRequest" in media
+          assert "socket != ws" in media
+          source = (Path("app/src/main/java/org/client/scrcpy")
+                    / "LocalScrcpyStreamer.java").read_text()
+          assert "private static final int FORWARD_PORT = 7018" in source
+          assert "RelayVideoFormat.forRotation" in source
+          scrcpy_server = Path("server/src/main/java/org/server/scrcpy/Server.java").read_text()
+          assert "startEventController(device, connection" not in scrcpy_server
+          receiver = Path("server/src/main/java/org/server/scrcpy/DroidConnection.java").read_text()
+          assert 'new java.net.InetSocketAddress("127.0.0.1", 7007)' in receiver
+          print("Activity-scoped, local-ADB, read-only scrcpy constraints verified")
+          print("No-VPN background sync has no app-initiated foreground receiver")
+          PY
+      - name: Verify no Android VPN component then unit tests and APK
+        env:
+          # Dedicated Osaka Beta4 test server. Do not use old/unset repo variables.
+          # Gradle's fail-closed invalid defaults remain unchanged for other builds.
+          SCREENSYNC_NOVPN_URL: https://relay.privyluxe.com:8443
+          SCREENSYNC_MEDIA_URL: wss://relay.privyluxe.com:8443/media
+        run: |
+          set -euo pipefail
+          if grep -E 'android.net.VpnService|BIND_VPN_SERVICE' app/src/main/AndroidManifest.xml; then
+            echo 'No-VPN build must not declare Android VpnService' >&2
+            exit 1
+          fi
+          chmod +x gradlew
+          ./gradlew :app:testScrcpyDebugUnitTest :app:assembleScrcpyDebug \
+            -PskipLibadb -PlibadbAbis=arm64-v8a --no-daemon --stacktrace
+          apk="$(find app/build/outputs/apk/scrcpy/debug -maxdepth 1 -name '*.apk' -print -quit)"
+          test -n "$apk"
+          unzip -t "$apk" | tail -2
+          echo "Verify merged APK declares no Android VPN service:"
+          if "$ANDROID_HOME/build-tools/36.0.0/aapt" dump xmltree "$apk" AndroidManifest.xml \
+              | grep -E 'android.net.VpnService|BIND_VPN_SERVICE|GoBackend\\$VpnService'; then
+            echo "VPN service unexpectedly present in final APK" >&2
+            exit 1
+          fi
+          echo "Verify the assembled APK DEX includes the Osaka HTTPS/WSS endpoints:"
+          python3 - "$apk" <<'PY'
+          import sys, zipfile
+          apk = sys.argv[1]
+          with zipfile.ZipFile(apk) as zf:
+              dex_files = [n for n in zf.namelist() if n.startswith("classes") and n.endswith(".dex")]
+              assert dex_files, "APK does not contain classes DEX"
+              payload = b"".join(zf.read(n) for n in dex_files)
+          required = [
+              b"https://relay.privyluxe.com:8443",
+              b"wss://relay.privyluxe.com:8443/media",
+          ]
+          for endpoint in required:
+              assert endpoint in payload, "Missing compiled BuildConfig endpoint: " + endpoint.decode()
+              print("PASS embedded:", endpoint.decode())
+          for forbidden in (b"https://relay.invalid", b"wss://relay.invalid/media"):
+              assert forbidden not in payload, "Invalid placeholder endpoint found inside compiled DEX"
+          print("PASS: invalid placeholder URLs absent from compiled DEX")
+          PY
+          cp "$apk" ScreenSync-Beta4-NoVPN-Osaka8443-Test-arm64.apk
+          sha256sum ScreenSync-Beta4-NoVPN-Osaka8443-Test-arm64.apk \
+            > ScreenSync-Beta4-NoVPN-Osaka8443-Test-arm64.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScreenSync-Beta4-NoVPN-Osaka8443-Test
+          path: |
+            ScreenSync-Beta4-NoVPN-Osaka8443-Test-arm64.apk
+            ScreenSync-Beta4-NoVPN-Osaka8443-Test-arm64.sha256
+          retention-days: 14
+          if-no-files-found: error

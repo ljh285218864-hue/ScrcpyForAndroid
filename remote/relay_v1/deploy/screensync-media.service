@@ -1,0 +1,30 @@
+# TEMPLATE ONLY. Separate loopback media port; never expose raw WS to internet.
+[Unit]
+Description=ScreenSync no-VPN scrcpy video-only WSS relay
+After=network-online.target screensync-signaling.service
+Wants=network-online.target
+Requires=screensync-signaling.service
+
+[Service]
+Type=simple
+User=screensync
+Group=screensync
+WorkingDirectory=/opt/screensync-relay/remote/relay_v1
+Environment=SS_MEDIA_HOST=127.0.0.1
+Environment=SS_MEDIA_PORT=8767
+Environment=SS_NOVPN_DB=/var/lib/screensync-relay/relay.db
+ExecStart=/opt/screensync-relay/.venv/bin/python media_relay.py
+StateDirectory=screensync-relay
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/screensync-relay
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

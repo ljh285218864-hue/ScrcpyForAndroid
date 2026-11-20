@@ -1,0 +1,137 @@
+name: ScreenSync public relay read-only probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/screensync-beta4-novpn]
+    paths:
+      - '.github/workflows/screensync-live-relay-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  external-health:
+    name: External DNS / TLS / HTTPS / WSS verification (read only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - name: Probe relay.privyluxe.com:8443 without credentials
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import json
+          import os
+          import socket
+          import ssl
+          import sys
+          import urllib.error
+          import urllib.request
+
+          HOST = "relay.privyluxe.com"
+          PORT = 8443
+          TIMEOUT = 8
+          failures = []
+          dns_ok = False
+
+          def check(label, action):
+              try:
+                  action()
+                  print("PASS:", label, flush=True)
+                  return True
+              except Exception as exc:
+                  failures.append((label, str(exc)))
+                  print("FAIL:", label, "-", type(exc).__name__ + ":", str(exc), flush=True)
+                  return False
+
+          def dns():
+              global dns_ok
+              addresses = sorted({x[4][0] for x in socket.getaddrinfo(HOST, PORT, type=socket.SOCK_STREAM)})
+              assert addresses, "No public DNS result"
+              print("Resolved addresses:", ", ".join(addresses))
+              dns_ok = True
+
+          def tls():
+              context = ssl.create_default_context()
+              with socket.create_connection((HOST, PORT), timeout=TIMEOUT) as s:
+                  with context.wrap_socket(s, server_hostname=HOST) as t:
+                      cert = t.getpeercert()
+                      issuer = cert.get("issuer", ())
+                      print("TLS version:", t.version())
+                      print("Certificate notAfter:", cert.get("notAfter"))
+                      print("Certificate subject:", cert.get("subject"))
+                      assert t.version() in ("TLSv1.2", "TLSv1.3"), "Unsupported TLS version"
+                      assert cert.get("notAfter"), "Missing certificate expiration"
+
+          def health():
+              req = urllib.request.Request(
+                  "https://" + HOST + ":" + str(PORT) + "/health",
+                  headers={"User-Agent": "ScreenSync-ReadOnly-External-Health-Probe/1.0"})
+              with urllib.request.urlopen(req, timeout=TIMEOUT) as response:
+                  raw = response.read(4096)
+                  assert response.status == 200, "Expected 200; got %s" % response.status
+                  assert response.headers.get_content_type() == "application/json", "Expected application/json"
+                  result = json.loads(raw)
+                  print("Health JSON:", json.dumps(result, sort_keys=True))
+                  assert result.get("ok") is True
+                  assert result.get("service") == "screensync-novpn-signaling"
+                  # 'video_ready': false is currently hard-coded by this experimental API,
+                  # and is not evidence that the WSS relay is down.
+
+          def wss_upgrade():
+              key = base64.b64encode(os.urandom(16)).decode("ascii")
+              request = (
+                  "GET /media HTTP/1.1\r\n"
+                  "Host: " + HOST + ":" + str(PORT) + "\r\n"
+                  "Upgrade: websocket\r\n"
+                  "Connection: Upgrade\r\n"
+                  "Sec-WebSocket-Version: 13\r\n"
+                  "Sec-WebSocket-Key: " + key + "\r\n"
+                  "User-Agent: ScreenSync-ReadOnly-External-Health-Probe/1.0\r\n"
+                  "\r\n"
+              )
+              ctx = ssl.create_default_context()
+              with socket.create_connection((HOST, PORT), timeout=TIMEOUT) as raw:
+                  with ctx.wrap_socket(raw, server_hostname=HOST) as sock:
+                      sock.settimeout(TIMEOUT)
+                      sock.sendall(request.encode("ascii"))
+                      data = b""
+                      while b"\r\n\r\n" not in data and len(data) < 8192:
+                          chunk = sock.recv(2048)
+                          if not chunk:
+                              break
+                          data += chunk
+                      headers = data.split(b"\r\n\r\n", 1)[0].decode("iso-8859-1")
+                      lines = headers.split("\r\n")
+                      print("WSS handshake status:", lines[0] if lines else "<no response>")
+                      assert len(lines) > 0 and " 101 " in (lines[0] + " "), "WebSocket upgrade was not accepted"
+                      header_map = {}
+                      for line in lines[1:]:
+                          if ":" in line:
+                              k, v = line.split(":", 1)
+                              header_map[k.strip().lower()] = v.strip()
+                      expected = base64.b64encode(hashlib.sha1(
+                          (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("ascii")
+                      ).digest()).decode("ascii")
+                      assert header_map.get("sec-websocket-accept") == expected, "Invalid WebSocket acceptance key"
+                      # Close without authenticating or requesting a video session.
+                      print("WebSocket upgraded; no credentials sent and no video requested")
+
+          print("Read-only external check; no VPS credentials, no service changes, no client pairing.")
+          if check("DNS resolution", dns):
+              check("TLS certificate and hostname validation on :8443", tls)
+              check("HTTPS GET /health", health)
+              check("WSS GET /media upgrade (no login/no video)", wss_upgrade)
+          else:
+              print("Skipping TLS/HTTPS/WSS because external resolver could not resolve the host")
+
+          print("\nSUMMARY:", "PASS (public transport endpoints reachable)" if not failures
+                else "FAIL (public transport endpoints not fully verified)")
+          for label, reason in failures:
+              print("UNVERIFIED:", label, "-", reason)
+          print("LIMITS: This does not validate authenticated media forwarding, Android phones,")
+          print("live VPS resource capacity, or the condition of the existing x-ui/Reality/WireGuard.")
+          sys.exit(1 if failures else 0)
+          PY

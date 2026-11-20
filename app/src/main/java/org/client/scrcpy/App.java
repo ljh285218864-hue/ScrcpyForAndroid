@@ -31,6 +31,9 @@ public class App extends Application implements Application.ActivityLifecycleCal
         init();  // 初始化id 数据
         AdbHelper.startAdbServer();
         SessionLog.resetAndStart(this);
+        // Restore only explicitly enabled, best-effort signaling jobs.
+        // No foreground service, receiver or screen capture on boot.
+        NoVpnBackgroundSync.restore(this);
     }
 
     @Override

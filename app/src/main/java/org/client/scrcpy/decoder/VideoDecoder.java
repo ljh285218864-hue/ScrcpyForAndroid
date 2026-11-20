@@ -43,14 +43,19 @@ public class VideoDecoder {
         }
     }
 
-    public void stop() {
-        if (mWorker != null) {
-            mWorker.setRunning(false);
-            mWorker = null;
-            mIsConfigured.set(false);
-            if (mCodec != null) {
-                mCodec.stop();
-            }
+    public synchronized void stop() {
+        Worker oldWorker = mWorker;
+        mWorker = null;
+        mIsConfigured.set(false);
+        if (oldWorker != null) {
+            oldWorker.setRunning(false);
+            oldWorker.interrupt();
+        }
+        MediaCodec codec = mCodec;
+        mCodec = null;
+        if (codec != null) {
+            try { codec.stop(); } catch (IllegalStateException ignored) { }
+            try { codec.release(); } catch (IllegalStateException ignored) { }
         }
     }
 
@@ -114,7 +119,9 @@ public class VideoDecoder {
         @SuppressWarnings("deprecation")
         public void decodeSample(byte[] data, int offset, int size, long presentationTimeUs, int flags) {
             if (mIsConfigured.get() && mIsRunning.get()) {
-                int index = mCodec.dequeueInputBuffer(-1);
+                // Do not block the sole remote-decoder queue indefinitely.
+                // A blocked decoder must not prevent STOP/revoke from running.
+                int index = mCodec.dequeueInputBuffer(10_000); // 10 ms
                 if (index >= 0) {
                     ByteBuffer buffer;
 
@@ -124,10 +131,17 @@ public class VideoDecoder {
                     } else {
                         buffer = mCodec.getInputBuffer(index);
                     }
-                    if (buffer != null) {
-                        buffer.put(data, offset, size);
-                        mCodec.queueInputBuffer(index, 0, size, presentationTimeUs, flags);
+                    if (buffer == null || offset < 0 || size <= 0
+                            || offset > data.length || size > data.length - offset
+                            || (buffer != null && buffer.remaining() < size)) {
+                        // Release this input slot even for malformed or
+                        // oversized network frames; never leave MediaCodec
+                        // permanently starved of available input buffers.
+                        mCodec.queueInputBuffer(index, 0, 0, presentationTimeUs, 0);
+                        return;
                     }
+                    buffer.put(data, offset, size);
+                    mCodec.queueInputBuffer(index, 0, size, presentationTimeUs, flags);
                 }
             }
         }

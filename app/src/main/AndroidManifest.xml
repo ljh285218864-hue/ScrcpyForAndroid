@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Only restores the explicitly opted-in signaling/presence schedule. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
@@ -31,7 +32,8 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="false"
+        tools:replace="android:usesCleartextTraffic">
         <activity
             android:name=".AppQrCaptureActivity"
             android:exported="false"
@@ -40,27 +42,36 @@
             android:theme="@style/zxing_CaptureTheme"
             android:windowSoftInputMode="stateAlwaysHidden" />
 
-        <!-- User-consented in-app VPN; the OS still displays VPN status/security controls. -->
-        <service
-            android:name="com.wireguard.android.backend.GoBackend$VpnService"
-            android:permission="android.permission.BIND_VPN_SERVICE"
+        <activity
+            android:name=".RemoteSetupActivity"
+            android:exported="false"
+            android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation" />
+
+        <!-- Short, non-capturing reboot/app-upgrade signal reconciliation.
+             No foreground service, screen access, ADB, or activity launch. -->
+        <receiver
+            android:name=".NoVpnStandbyRestoreReceiver"
+            android:enabled="true"
             android:exported="false">
             <intent-filter>
-                <action android:name="android.net.VpnService" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
-        </service>
-
-        <activity android:name=".RemoteSetupActivity" android:exported="false" />
+        </receiver>
 
         <activity
             android:name=".SettingActivity"
             android:exported="false" />
 
+        <!-- Legacy LAN receiver uses a foreground-service notification.
+             Disabled only in this no-VPN experimental product variant;
+             the original LAN branch stays untouched. -->
         <service
             android:name=".WakeLanService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
+            android:enabled="false"
+            android:exported="false" />
 
         <!-- Internal wake-request test receiver. No public entry point or automatic screen sharing. -->
         <service

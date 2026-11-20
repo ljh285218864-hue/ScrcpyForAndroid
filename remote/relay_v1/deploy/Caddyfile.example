@@ -1,0 +1,13 @@
+# TEMPLATE, NOT READY TO DEPLOY.
+# Replace with an approved DNS name. Do not start on the user's VPS
+# until 3X-UI / Reality / existing HTTPS port ownership is checked.
+# The reverse_proxy handles HTTP Upgrade for WebSocket automatically.
+relay.example.invalid {
+    @media path /media
+    handle @media {
+        reverse_proxy 127.0.0.1:8767
+    }
+    handle {
+        reverse_proxy 127.0.0.1:8766
+    }
+}
