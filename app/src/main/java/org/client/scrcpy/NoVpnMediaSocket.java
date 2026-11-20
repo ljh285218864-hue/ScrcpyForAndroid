@@ -129,7 +129,7 @@ public final class NoVpnMediaSocket {
         if (shutdown) return false;
         boolean approvedSource = ScrcpyRelayWire.validSessionId(sourceSession)
                 && AccessibilityJpegStreamer.sharingActive()
-                && AccessibilityShotService.isShareStopOverlayVisible();
+                && AccessibilityJpegStreamer.hasVisibleStopControl();
         boolean activeViewer = ScrcpyRelayWire.validSessionId(viewerSession);
         if (!approvedSource && !activeViewer) return false;
         rejoinPending = true;
@@ -335,7 +335,7 @@ public final class NoVpnMediaSocket {
                 if (rejoinPending) {
                     String approved = ScrcpyRelayWire.validSessionId(sourceSession)
                             && AccessibilityJpegStreamer.sharingActive()
-                            && AccessibilityShotService.isShareStopOverlayVisible()
+                            && AccessibilityJpegStreamer.hasVisibleStopControl()
                             ? sourceSession : "";
                     String candidate = !approved.isEmpty() ? approved : viewerSession;
                     if (hasRecoverableSession()
@@ -362,7 +362,7 @@ public final class NoVpnMediaSocket {
                     // this approved session. Keep only the in-memory consent.
                     if (interrupted.equals(sourceSession)
                             && (!AccessibilityJpegStreamer.sharingActive()
-                                || !AccessibilityShotService.isShareStopOverlayVisible())) {
+                                || !AccessibilityJpegStreamer.hasVisibleStopControl())) {
                         endSourceSession("missing_visible_stop");
                         break;
                     }
@@ -416,12 +416,13 @@ public final class NoVpnMediaSocket {
                     if (shutdown || !sid.equals(waitingRequest)) return;
                     // This mode is OFF by default, paired-device-scoped,
                     // and was explicitly enabled on the SOURCE phone.
-                    // Never approve unless its cross-app, revocable status
-                    // overlay is genuinely displayed right now.
+                    // The explicit opt-in remains in the owner's app only.
+                    // Before the first JPEG frame, source.start() must display
+                    // one currently visible, immediate STOP control.
                     if (LongTermSharePolicy.mayAutoApprove(context)) {
                         persistentApprovedRequest = sid;
                         if (acceptRequest(sid)) {
-                            status("long_term_auto_approved_visible");
+                            status("long_term_auto_approved_from_app_setting");
                             return;
                         }
                         persistentApprovedRequest = "";
@@ -474,7 +475,7 @@ public final class NoVpnMediaSocket {
                         // Source user can revoke between approval and start.
                         if (LongTermSharePolicy.enabled(context)
                                 && AccessibilityShotService.ready()
-                                && AccessibilityShotService.isLongTermReadyOverlayVisible()) {
+                                && AccessibilityShotService.ready()) {
                             AccessibilityJpegStreamer.startPreviouslyApprovedWithoutUi(
                                     context, NoVpnMediaSocket.this);
                         } else {

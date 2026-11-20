@@ -4,7 +4,8 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 /** Opt-in, revocable consent tied to one approved pair, default OFF.
- * Requires a visible accessibility standby overlay before auto-acceptance.
+ * The owner's permission is visible in app settings; media sessions must
+ * display exactly one active sharing indicator with an immediate STOP action.
  */
 public final class LongTermSharePolicy {
     private static final String PREF = "ss_long_term_share_v1";
@@ -26,30 +27,21 @@ public final class LongTermSharePolicy {
     /** Invoke ONLY following affirmative consent in the local owner's UI. */
     public static boolean enableByOwner(Context ctx) {
         if (!NoVpnApi.isRegistered(ctx) || NoVpnApi.peerId(ctx).isEmpty()
-                || !AccessibilityShotService.ready()
-                || !AccessibilityShotService.showLongTermReadyOverlay()) return false;
-        boolean ok = prefs(ctx).edit().putBoolean("enabled", true)
+                || !AccessibilityShotService.ready()) return false;
+        return prefs(ctx).edit().putBoolean("enabled", true)
                 .putString("source", NoVpnApi.deviceId(ctx))
                 .putString("peer", NoVpnApi.peerId(ctx))
                 .putString("group", NoVpnApi.groupId(ctx)).commit();
-        if (!ok) AccessibilityShotService.hideLongTermReadyOverlay();
-        return ok;
     }
     public static void disable(Context ctx) {
         prefs(ctx).edit().clear().commit();
-        AccessibilityShotService.hideLongTermReadyOverlay();
     }
-    /** Called by Android after it binds the user's accessibility service. */
-    public static void showStandbyWhenAllowed(Context ctx) {
-        if (enabled(ctx) && !AccessibilityJpegStreamer.sharingActive())
-            AccessibilityShotService.showLongTermReadyOverlay();
-        else if (!enabled(ctx))
-            AccessibilityShotService.hideLongTermReadyOverlay();
-    }
-    /** Fails closed unless local, user-visible grant is currently active. */
+    /** Only the still-paired, explicitly owner-enabled grant may approve.
+     * Its corresponding JPEG source must show its live STOP indicator before
+     * the first video_setup/frame is sent, or capture must fail closed.
+     */
     public static boolean mayAutoApprove(Context ctx) {
         return enabled(ctx) && NoVpnBackgroundSync.isEnabled(ctx)
-                && AccessibilityShotService.ready()
-                && AccessibilityShotService.isLongTermReadyOverlayVisible();
+                && AccessibilityShotService.ready();
     }
 }

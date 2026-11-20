@@ -227,13 +227,13 @@ public final class RemoteSetupActivity extends Activity {
         heading(permissionsPanel, "首次使用设置");
         accessibilityButton = action(permissionsPanel, "开启无障碍截图权限",
                 v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        notificationsButton = action(permissionsPanel, "共享状态通知（可选）",
+        notificationsButton = action(permissionsPanel, "正在共享通知（可选）",
                 v -> openShareNotificationSettings());
         TextView securityNote = note(permissionsPanel,
-                "无障碍截图需由手机持有人明确开启。配对、联网和心跳无需通知权限。"
-                + "每次共享仍需同意。共享期间会在其他应用上方显示"
-                + "「正在共享 / 停止」浮条；退出 ScreenSync 或关闭普通通知"
-                + "不会仅因此停止本次已授权截图。");
+                "无障碍截图由手机持有人开启。配对、联网和后台维护不需要通知权限。"
+                + "长期共享授权只显示在本软件的开关中，不会在待机时显示提示。"
+                + "实际共享才显示一个『正在共享』停止入口：允许通知时为通知栏"
+                + "的一条通知；不允许通知时为跨应用停止浮条。");
         securityNote.setPadding(dp(4), dp(6), dp(4), 0);
 
         backgroundToggle = action(content, "后台在线维护：开启 / 关闭", v -> {
@@ -246,7 +246,7 @@ public final class RemoteSetupActivity extends Activity {
                 if (!enabled) LongTermSharePolicy.disable(this);
                 NoVpnBackgroundSync.setEnabled(this, enabled);
                 report(enabled ? "已开启后台心跳恢复：网络恢复、重启后尽力联系服务器；"
-                        + "长期自动观看仅在本机主动开启并显示浮条时生效。"
+                        + "长期自动观看仅在本机主动开启授权后生效，共享时会显示停止入口。"
                         : "已关闭后台心跳和长期自动授权，配对依然有效。");
                 refreshPresenceState();
             } catch (RuntimeException error) {
@@ -283,13 +283,15 @@ public final class RemoteSetupActivity extends Activity {
                             + "）在手机重启和网络恢复后发起观看时，"
                             + "无需再次点同意就传输当前屏幕。"
                             + "可能包含其他应用画面。"
-                            + "本机会持续显示『长期共享已开启/关闭授权』浮条，"
-                            + "共享时显示『正在共享/停止』浮条，"
-                            + "可以随时撤销。普通通知仍然可选。"
+                            + "长期共享开关只在本软件内显示，未共享时不显示常驻提示。"
+                            + "正在共享时只显示一个带停止入口的状态："
+                            + "通知栏的一条『正在共享』通知，"
+                            + "或关闭通知权限时的跨应用停止浮条。"
+                            + "可以随时在本软件关闭长期授权。"
                             + "如果系统停止运行或撤销无障碍，仍可能无法连接。")
                     .setPositiveButton("我同意长期共享", (d, w) -> {
                         if (!LongTermSharePolicy.enableByOwner(this)) {
-                            report("长期共享可见浮条不可用，未保存授权");
+                            report("无障碍服务不可用，无法启用长期授权");
                             return;
                         }
                         NoVpnBackgroundSync.setEnabled(this, true);
@@ -297,7 +299,8 @@ public final class RemoteSetupActivity extends Activity {
                         ScreenSyncDiagnostics.record(this, "LONG_TERM_SHARE",
                                 "owner_enabled_for_current_pair");
                         refreshButtons();
-                        report("长期授权已开启，可随时在屏幕浮条关闭");
+                        report("长期授权已开启，只有正在共享时才出现提示。"
+                                + "可在本软件关闭授权。");
                     })
                     .setNegativeButton("取消", null).show();
         });
@@ -305,8 +308,8 @@ public final class RemoteSetupActivity extends Activity {
                 .setTitle("后台在线设置（由手机持有人操作）")
                 .setMessage("可在手机应用设置中允许后台运行、自动启动和电池无限制。"
                         + "这些设置会提高心跳恢复概率，但无法保证强行停止后自动唤醒，"
-                        + "长期共享仅在本机已明确开启、状态浮条显示且"
-                        + "无障碍服务可用时才会响应已配对设备的观看申请。")
+                        + "只有本机明确开启长期共享、无障碍服务可用，"
+                        + "并且共享时能显示停止入口，才允许自动观看。")
                 .setPositiveButton("打开本应用设置", (dialog, which) -> {
                     Intent settings = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
                     settings.setData(android.net.Uri.parse("package:" + getPackageName()));
@@ -517,7 +520,6 @@ public final class RemoteSetupActivity extends Activity {
         AccessibilityJpegStreamer.setSourceUiVisible(true);
         refreshSharingStatus();
         refreshPresenceState();
-        LongTermSharePolicy.showStandbyWhenAllowed(this);
         NoVpnBackgroundSync.requestOnce(this, "owner_opened");
         ui.postDelayed(this::refreshPermissions, 600);
     }
@@ -970,8 +972,8 @@ public final class RemoteSetupActivity extends Activity {
             } else if ("pending".equals(currentState)) {
                 hint.setText("请让另一台手机检查六位配对码并点击确认。");
             } else if (paired) {
-                hint.setText("配对已完成。以后直接点击观看，"
-                        + "被观看方需要确认本次共享；不需要重新扫码。");
+                hint.setText("配对已完成。被观看方可在软件内启用长期共享授权；"
+                        + "未开启时需要每次在软件内确认。");
             } else {
                 hint.setText("正在连接服务器…");
             }

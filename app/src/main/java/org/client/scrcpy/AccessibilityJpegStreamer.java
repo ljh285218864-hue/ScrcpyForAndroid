@@ -85,11 +85,36 @@ public final class AccessibilityJpegStreamer {
         if (!visible) stopIfNoVisibleStopControl();
     }
 
+    /** At least one STOP path must remain visible and usable.
+     * Notification permission is optional; an accessibility overlay is the
+     * fallback if notifications are disabled or revoked mid-session.
+     */
+    public static boolean hasVisibleStopControl() {
+        AccessibilityJpegStreamer share = current;
+        return share != null && share.running
+                && ((share.noticePosted && notificationAllowed(share.app))
+                    || AccessibilityShotService.isShareStopOverlayVisible());
+    }
+
     static void stopIfNoVisibleStopControl() {
-        AccessibilityJpegStreamer stream = current;
-        if (stream != null && stream.running
-                && !AccessibilityShotService.isShareStopOverlayVisible())
-            stream.stopDueToMissingVisibleStop();
+        AccessibilityJpegStreamer share = current;
+        if (share != null && share.running && !share.ensureVisibleStopControl())
+            share.stopDueToMissingVisibleStop();
+    }
+
+    private boolean ensureVisibleStopControl() {
+        if (noticePosted && notificationAllowed(app)) return true;
+        // Notification unavailable: display the single source-side STOP
+        // overlay before acquiring or sending more screenshots.
+        if (AccessibilityShotService.isShareStopOverlayVisible()) return true;
+        if (!AccessibilityShotService.showShareStopOverlay()) return false;
+        if (noticePosted) {
+            noticePosted = false;
+            NotificationManager nm = (NotificationManager)
+                    app.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) nm.cancel(NOTICE_ID);
+        }
+        return true;
     }
 
     public boolean start() {
@@ -109,17 +134,18 @@ public final class AccessibilityJpegStreamer {
         outHeight = dimensions[1];
         current = this;
         running = true;
-        // Always provide a visible, source-side Stop control in ANY app,
-        // independent of Android's ordinary notification permission.
-        if (!AccessibilityShotService.showShareStopOverlay()) {
+        // Show ONLY one active-share indication: a single ordinary
+        // "正在共享" notification if allowed, otherwise one accessibility
+        // STOP overlay. Never make notification permission a prerequisite.
+        noticePosted = showNoticeIfAllowed();
+        if (!ensureVisibleStopControl()) {
             running = false;
             current = null;
             encoder.shutdownNow();
             ScreenSyncDiagnostics.record(app, "CAPTURE_START",
-                    "accessibility_overlay_unavailable");
+                    "no_visible_stop_control");
             return false;
         }
-        noticePosted = showNoticeIfAllowed(); // optional only
         if (!socket.sendVideoSetup(new int[] {
                 metrics.widthPixels, metrics.heightPixels, outWidth, outHeight}, "jpeg")) {
             ScreenSyncDiagnostics.record(app, "CAPTURE_START", "send_video_setup_failed");
@@ -141,12 +167,13 @@ public final class AccessibilityJpegStreamer {
 
     private void capture() {
         if (!running || busy) return;
-        // Home / switching apps / disabled notices do not end sharing.
-        // If the dedicated cross-app STOP overlay disappears, end sharing.
+        // Normal app switching and disabled ordinary notifications never
+        // silently change permissions. Always fail closed if both possible
+        // STOP controls are unavailable.
         long now = android.os.SystemClock.elapsedRealtime();
         if (now - lastOverlayCheckMs >= OVERLAY_CHECK_INTERVAL_MS) {
             lastOverlayCheckMs = now;
-            if (!AccessibilityShotService.isShareStopOverlayVisible()) {
+            if (!ensureVisibleStopControl()) {
                 stopDueToMissingVisibleStop();
                 return;
             }
@@ -274,8 +301,8 @@ public final class AccessibilityJpegStreamer {
                 app.getSystemService(Context.NOTIFICATION_SERVICE);
         noticePosted = false;
         if (nm != null) nm.cancel(NOTICE_ID);
-        // Resurface the owner's opt-in state after a session ends.
-        main.postDelayed(() -> LongTermSharePolicy.showStandbyWhenAllowed(app), 150);
+        // Long-term consent stays visible only in the app's switch.
+        // Never create an idle/standby overlay or notification here.
     }
 
     /**
@@ -287,8 +314,8 @@ public final class AccessibilityJpegStreamer {
     public static void startPreviouslyApprovedWithoutUi(
             Context appContext, NoVpnMediaSocket media) {
         if (sharingActive() || !media.hasApprovedSourceSession()) return;
-        // The approved source can start off-screen only after installing
-        // its visible accessibility STOP overlay; no notification gate.
+        // The approved source creates its one visible active-share STOP
+        // control before it sends any video setup. No notification gate.
         if (!AccessibilityShotService.ready()) {
             media.endSourceSession("accessibility_service_unavailable");
             return;
@@ -298,7 +325,7 @@ public final class AccessibilityJpegStreamer {
                     ScreenSyncDiagnostics.record(appContext, "BACKGROUND_SHARE", reason));
         if (stream.start()) {
             ScreenSyncDiagnostics.record(appContext, "BACKGROUND_SHARE",
-                    "previously_approved_started_visible_overlay");
+                    "previously_approved_started_with_stop_control");
         } else {
             ScreenSyncDiagnostics.record(appContext, "BACKGROUND_SHARE",
                     "previously_approved_start_failed");
@@ -312,7 +339,7 @@ public final class AccessibilityJpegStreamer {
     static boolean resendCurrentSetup(NoVpnMediaSocket transport) {
         AccessibilityJpegStreamer stream = current;
         if (stream == null || !stream.running || stream.socket != transport
-                || !AccessibilityShotService.isShareStopOverlayVisible())
+                || !hasVisibleStopControl())
             return false;
         DisplayMetrics metrics = stream.app.getResources().getDisplayMetrics();
         return transport.sendVideoSetup(new int[] {
@@ -362,7 +389,7 @@ public final class AccessibilityJpegStreamer {
         ScreenSyncDiagnostics.record(app, "CAPTURE_STOP", "no_visible_stop_control");
         stop();
         socket.endSourceSession();
-        main.post(() -> listener.onStopped("共享结束：跨应用停止浮条不可用"));
+        main.post(() -> listener.onStopped("共享结束：可见停止入口不可用"));
     }
 
     /** Best-effort ordinary notice, never starts a foreground service. */
