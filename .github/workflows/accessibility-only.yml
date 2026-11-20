@@ -90,6 +90,14 @@ jobs:
           assert 'ScreenSyncMediaKeeper.restoreOptedInSignaling(context)' in (source/'NoVpnBackgroundSync.java').read_text()
           assert 'ScreenSyncMediaKeeper.restoreOptedInSignaling(application)' in (source/'NoVpnBackgroundSync.java').read_text()
           assert 'reconnectWhenNetworkAvailable()' in (source/'NoVpnMediaSocket.java').read_text()
+          reconnect = (source/'NoVpnMediaSocket.java').read_text()
+          assert 'SESSION_REJOIN' not in reconnect or 'REJOIN_WINDOW_MS = 60_000L' in reconnect
+          assert 'session_resume' in reconnect and 'session_resumed' in reconnect
+          assert 'AccessibilityJpegStreamer.resendCurrentSetup(this)' in reconnect
+          assert 'isSourceTransportReady()' in (source/'AccessibilityJpegStreamer.java').read_text()
+          assert 'isShareStopOverlayVisible()' in reconnect
+          assert 'takeScreenshot(' not in reconnect
+          assert 'SESSION_REJOIN_GRACE_SECONDS = 60' in (Path('remote/relay_v1/media_relay.py')).read_text()
           watch = (source / 'ScreenSyncWatchNotice.java').read_text()
           assert watch.index('showIncomingWatchOverlay()') < watch.index('POST_NOTIFICATIONS')
           acces = (source / 'AccessibilityShotService.java').read_text()

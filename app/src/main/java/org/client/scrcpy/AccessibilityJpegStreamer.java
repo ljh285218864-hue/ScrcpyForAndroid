@@ -151,6 +151,11 @@ public final class AccessibilityJpegStreamer {
                 return;
             }
         }
+        // Never acquire screenshots while the old WSS session is disconnected.
+        if (!socket.isSourceTransportReady()) {
+            main.postDelayed(tick, 350);
+            return;
+        }
         // Limit queueing before we spend CPU and data on a screenshot that
         // would arrive late. Drop a frame rather than delay subsequent frames.
         if (socket.isSourceBackpressured()) {
@@ -297,6 +302,20 @@ public final class AccessibilityJpegStreamer {
                     "previously_approved_start_failed");
             media.endSourceSession("background_start_failed");
         }
+    }
+
+    /** Re-send video dimensions for the SAME currently approved source.
+     * No new capture, no permission changes and no replacement session.
+     */
+    static boolean resendCurrentSetup(NoVpnMediaSocket transport) {
+        AccessibilityJpegStreamer stream = current;
+        if (stream == null || !stream.running || stream.socket != transport
+                || !AccessibilityShotService.isShareStopOverlayVisible())
+            return false;
+        DisplayMetrics metrics = stream.app.getResources().getDisplayMetrics();
+        return transport.sendVideoSetup(new int[] {
+                metrics.widthPixels, metrics.heightPixels,
+                stream.outWidth, stream.outHeight}, "jpeg");
     }
 
     public static boolean sharingActive() {

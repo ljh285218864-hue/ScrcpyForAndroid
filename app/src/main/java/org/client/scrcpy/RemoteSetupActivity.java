@@ -615,6 +615,13 @@ public final class RemoteSetupActivity extends Activity {
                     return "服务器拒绝：" + status.substring("server_error:".length());
                 if ("protocol_error".equals(status))
                     return "接收协议错误，请查看诊断日志并更新到修复版";
+                if ("session_rejoin_requested".equals(status)
+                        || "session_network_interrupted".equals(status))
+                    return "网络切换中：60秒内尝试续接原共享，无需重复同意";
+                if ("session_resumed".equals(status))
+                    return "已恢复原来的授权共享会话";
+                if ("session_resume_expired".equals(status))
+                    return "网络恢复超时，本轮共享已结束";
                 return "连接状态：" + status;
         }
     }
@@ -639,9 +646,13 @@ public final class RemoteSetupActivity extends Activity {
                         if ("source_session_ended".equals(value)
                                 || "source_session_stopped".equals(value)
                                 || "session_stopped_by_user".equals(value)
-                                || "disconnected".equals(value)
-                                || "network_unavailable".equals(value)) {
-                            // Must stop screenshots even after the Activity becomes hidden.
+                                || (("disconnected".equals(value)
+                                        || "network_unavailable".equals(value))
+                                        && (mediaSocket == null
+                                        || !mediaSocket.hasRecoverableSession()))
+                                || "session_resume_expired".equals(value)) {
+                            // Keep the same owner-approved visible source
+                            // only during the 60-second network-rejoin window.
                             stopLocalStream();
                         }
                         if (!active || isFinishing()) return;
@@ -681,14 +692,17 @@ public final class RemoteSetupActivity extends Activity {
                             }
                         }
                         if ("source_session_ended".equals(value)
-                                || "source_session_stopped".equals(value)) {
+                                || "source_session_stopped".equals(value)
+                                || "session_resume_expired".equals(value)) {
                             stopLocalStream();
                         } else if ("viewer_session_ended".equals(value)) {
                             if (jpegRenderer != null) jpegRenderer.stopSession();
                             receivedVideoFrames = 0;
                         } else if ("session_stopped_by_user".equals(value)
-                                || "disconnected".equals(value)
-                                || "network_unavailable".equals(value)) {
+                                || (("disconnected".equals(value)
+                                     || "network_unavailable".equals(value))
+                                    && (mediaSocket == null
+                                      || !mediaSocket.hasRecoverableSession()))) {
                             stopLocalStream();
                             if (jpegRenderer != null) jpegRenderer.stopSession();
                             receivedVideoFrames = 0;

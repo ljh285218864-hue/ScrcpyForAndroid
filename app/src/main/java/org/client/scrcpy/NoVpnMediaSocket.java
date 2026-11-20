@@ -63,6 +63,18 @@ public final class NoVpnMediaSocket {
     private volatile long connectedAtMs;
     private volatile long lastSourceFrameAtMs;
     private volatile int sourceFramesSent;
+    private static final long REJOIN_WINDOW_MS = 60_000L;
+    private volatile long rejoinUntilElapsedMs;
+    private volatile boolean rejoinPending;
+    private volatile boolean sourceSetupReady = true;
+    private final Runnable expireRejoin = () -> {
+        if (!rejoinPending || android.os.SystemClock.elapsedRealtime()
+                < rejoinUntilElapsedMs) return;
+        rejoinPending = false;
+        clearSessions();
+        AccessibilityJpegStreamer.stopActiveWithoutSending();
+        status("session_resume_expired");
+    };
     private final Runnable retryConnection = () -> {
         if (shutdown || socket != null) return;
         try {
@@ -88,7 +100,37 @@ public final class NoVpnMediaSocket {
     }
 
     public boolean hasApprovedSourceSession() {
-        return authenticated && ScrcpyRelayWire.validSessionId(sourceSession);
+        return authenticated && !rejoinPending
+                && ScrcpyRelayWire.validSessionId(sourceSession);
+    }
+
+    /** Only the exact in-memory, previously approved session can rejoin. */
+    public boolean hasRecoverableSession() {
+        return rejoinPending && android.os.SystemClock.elapsedRealtime()
+                < rejoinUntilElapsedMs;
+    }
+
+    /** Pause screenshots while the old session awaits relay revalidation. */
+    public boolean isSourceTransportReady() {
+        return authenticated && !rejoinPending && sourceSetupReady
+                && socket != null && !shutdown
+                && ScrcpyRelayWire.validSessionId(sourceSession);
+    }
+
+    private boolean prepareRejoin() {
+        if (shutdown) return false;
+        boolean approvedSource = ScrcpyRelayWire.validSessionId(sourceSession)
+                && AccessibilityJpegStreamer.sharingActive()
+                && AccessibilityShotService.isShareStopOverlayVisible();
+        boolean activeViewer = ScrcpyRelayWire.validSessionId(viewerSession);
+        if (!approvedSource && !activeViewer) return false;
+        rejoinPending = true;
+        sourceSetupReady = false;
+        rejoinUntilElapsedMs = android.os.SystemClock.elapsedRealtime()
+                + REJOIN_WINDOW_MS;
+        main.removeCallbacks(expireRejoin);
+        main.postDelayed(expireRejoin, REJOIN_WINDOW_MS + 25);
+        return true;
     }
 
     public String activeViewerSessionId() {
@@ -204,9 +246,11 @@ public final class NoVpnMediaSocket {
                     if (socket != ws) return; // stale failed attempt cannot reset newer session
                     socket = null;
                     authenticated = false;
-                    clearSessions();
+                    if (!prepareRejoin()) {
+                        clearSessions();
+                        AccessibilityJpegStreamer.stopActiveWithoutSending();
+                    }
                 }
-                AccessibilityJpegStreamer.stopActiveWithoutSending();
                 ScreenSyncWatchNotice.clear(context);
                 ScreenSyncDiagnostics.record(context, "WSS_CLOSE",
                         "code=" + code + " live_s="
@@ -220,9 +264,11 @@ public final class NoVpnMediaSocket {
                     if (socket != ws) return;
                     socket = null;
                     authenticated = false;
-                    clearSessions();
+                    if (!prepareRejoin()) {
+                        clearSessions();
+                        AccessibilityJpegStreamer.stopActiveWithoutSending();
+                    }
                 }
-                AccessibilityJpegStreamer.stopActiveWithoutSending();
                 ScreenSyncWatchNotice.clear(context);
                 ScreenSyncDiagnostics.record(context, "WSS_FAIL",
                         "error=" + error.getClass().getSimpleName()
@@ -278,8 +324,56 @@ public final class NoVpnMediaSocket {
                 lastSourceFrameAtMs = 0;
                 reconnectAttempts = 0;
                 main.removeCallbacks(retryConnection);
+                if (rejoinPending) {
+                    String approved = ScrcpyRelayWire.validSessionId(sourceSession)
+                            && AccessibilityJpegStreamer.sharingActive()
+                            && AccessibilityShotService.isShareStopOverlayVisible()
+                            ? sourceSession : "";
+                    String candidate = !approved.isEmpty() ? approved : viewerSession;
+                    if (hasRecoverableSession()
+                            && ScrcpyRelayWire.validSessionId(candidate)) {
+                        send(new JSONObject().put("type", "session_resume")
+                                .put("session_id", candidate));
+                        status("session_rejoin_requested");
+                    } else {
+                        rejoinPending = false;
+                        main.removeCallbacks(expireRejoin);
+                        clearSessions();
+                        AccessibilityJpegStreamer.stopActiveWithoutSending();
+                        status("session_resume_expired");
+                    }
+                }
                 status("authenticated");
                 break;
+            case "session_interrupted":
+                if (body.optString("session_id").equals(viewerSession)
+                        || body.optString("session_id").equals(sourceSession))
+                    status("session_network_interrupted");
+                break;
+            case "session_resumed": {
+                String resumed = body.optString("session_id");
+                if (!rejoinPending || !hasRecoverableSession()
+                        || !(resumed.equals(sourceSession)
+                             || resumed.equals(viewerSession)))
+                    throw new SecurityException("未授权的旧会话恢复");
+                rejoinPending = false;
+                main.removeCallbacks(expireRejoin);
+                if (resumed.equals(sourceSession)) {
+                    // Sending only the setup of a still-live, locally
+                    // approved, visible source. Never creates a new capture.
+                    if (!AccessibilityJpegStreamer.resendCurrentSetup(this)) {
+                        endSourceSession("source_setup_rejoin_failed");
+                        AccessibilityJpegStreamer.stopActiveWithoutSending();
+                        status("session_resume_expired");
+                        return;
+                    }
+                    sourceSetupReady = true;
+                } else {
+                    viewerHasVideoSetup = false;
+                }
+                status("session_resumed");
+                break;
+            }
             case "peer_presence":
                 status(body.optBoolean("peer_connected") ? "peer_online" : "peer_offline");
                 break;
@@ -515,7 +609,7 @@ public final class NoVpnMediaSocket {
     /** JPEG-only frames, only inside a per-session approved source stream. */
     public boolean sendJpegFrame(byte[] jpeg) {
         WebSocket ws = socket;
-        if (!authenticated || shutdown || ws == null || sourceSession.isEmpty()
+        if (!isSourceTransportReady() || ws == null
                 || ws.queueSize() > JpegStreamTuning.MAX_PENDING_BYTES_BEFORE_SEND)
             return false;
         try {
@@ -532,6 +626,9 @@ public final class NoVpnMediaSocket {
     }
 
     private void clearSessions() {
+        rejoinPending = false;
+        sourceSetupReady = true;
+        main.removeCallbacks(expireRejoin);
         ScreenSyncWatchNotice.clear(context);
         receivedFrames = 0;
         watchRequestInFlight = false;
@@ -550,6 +647,8 @@ public final class NoVpnMediaSocket {
     public void endSourceSession(String reason) {
         String source = sourceSession;
         sourceSession = "";
+        rejoinPending = false;
+        main.removeCallbacks(expireRejoin);
         ScreenSyncDiagnostics.record(context, "SOURCE_END_LOCAL", "reason=" + reason
                 + " had_session=" + ScrcpyRelayWire.validSessionId(source));
         if (!ScrcpyRelayWire.validSessionId(source)) return;
@@ -577,6 +676,7 @@ public final class NoVpnMediaSocket {
         endSession();
         shutdown = true;
         main.removeCallbacks(retryConnection);
+        main.removeCallbacks(expireRejoin);
         WebSocket ws = socket;
         socket = null;
         authenticated = false;

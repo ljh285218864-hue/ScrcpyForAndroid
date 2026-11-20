@@ -171,7 +171,9 @@ class MediaRelay:
     async def expire_sessions(self) -> None:
         current = time.monotonic()
         for session_id, session in list(self.sessions.items()):
-            if session.expires <= current:
+            if (session.expires <= current or
+                    session.rejoin_deadline > 0 and
+                    session.rejoin_deadline <= current):
                 await self.discard(session_id, "session_expired")
 
     async def maintain_sessions(self) -> None:
