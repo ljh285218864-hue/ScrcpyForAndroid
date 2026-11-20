@@ -735,8 +735,13 @@ public final class RemoteSetupActivity extends Activity {
         String msg = last <= 0 ? "尚未确认心跳成功"
                 : age >= 0 && age <= 45000 ? "最近45秒有真实心跳"
                 : "超过45秒未确认在线，可能已离线";
+        String fcm = !enabled ? "后台维护未开启"
+                : ScreenSyncFcmBridge.configured()
+                ? "已配置（送达取决于系统和 Google Play 服务）"
+                : "未配置 Firebase，暂不能推送唤醒";
         presenceState.setText("后台在线维护：" + (enabled ? "已开启" : "已关闭")
-                + "；" + msg + "。这不是屏幕可观看状态。");
+                + "；" + msg + "。\\nFCM 远程唤醒：" + fcm
+                + "。这不是屏幕可观看状态。");
     }
 
     /** Display only a local in-app request card. This is not an alert or
