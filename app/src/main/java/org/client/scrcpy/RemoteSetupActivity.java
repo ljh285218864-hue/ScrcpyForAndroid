@@ -92,8 +92,8 @@ public final class RemoteSetupActivity extends Activity {
     // Minimal everyday screen: no ADB, USB, Wi-Fi IP, VPN, ports or test controls.
     // Either phone can start an independent pair; the other scans its QR.
     // The server is explicit opt-in and does not give media consent.
-    private Button scanButton, accessibilityButton, notificationsButton,
-            backgroundToggle, longTermToggle;
+    private Button scanButton, accessibilityButton, accessibilityHelpButton,
+            notificationsButton, backgroundToggle, longTermToggle;
     private TextView shareVisibleStatus, presenceState;
     private TextView hint;
     private LinearLayout permissionsPanel;
@@ -244,8 +244,11 @@ public final class RemoteSetupActivity extends Activity {
 
         permissionsPanel = panel(content);
         heading(permissionsPanel, "首次使用设置");
-        accessibilityButton = action(permissionsPanel, "开启无障碍截图权限",
+        accessibilityButton = action(permissionsPanel, "查看无障碍截图设置",
                 v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        accessibilityHelpButton = action(permissionsPanel,
+                "无障碍自动关闭：查看原因和修复方法",
+                v -> showAccessibilityHealthHelp());
         notificationsButton = action(permissionsPanel, "共享通知：软件内开启", v -> {
             boolean next = !ShareNotificationPreference.isEnabled(this);
             ShareNotificationPreference.setEnabled(this, next);
@@ -398,6 +401,7 @@ public final class RemoteSetupActivity extends Activity {
         ScreenSyncDiagnostics.record(this, "DIAGNOSTICS", "paired="
                 + "paired".equals(currentState)
                 + " accessibility=" + AccessibilityShotService.ready()
+                + " system_accessibility=" + AccessibilityPermissionHealth.state(this)
                 + " notification=" + notificationOk
                 + " media_socket=" + (mediaSocket != null)
                 + " sharing=" + (jpegStreamer != null)
@@ -500,11 +504,55 @@ public final class RemoteSetupActivity extends Activity {
                 .show();
     }
 
+    private void showAccessibilityHealthHelp() {
+        String state = AccessibilityPermissionHealth.state(this);
+        String status = AccessibilityPermissionHealth.CONNECTED.equals(state)
+                ? "系统无障碍已开启，服务也已连接。"
+                : AccessibilityPermissionHealth.ENABLED_DISCONNECTED.equals(state)
+                ? "系统无障碍开关仍开启，但服务未连接，可能被系统暂停或进程重启。"
+                : "系统无障碍开关当前为关闭，必须由手机持有人手动重新开启。";
+        String manufacturer = android.os.Build.MANUFACTURER.toLowerCase(
+                java.util.Locale.ROOT);
+        String manufacturerTip =
+                manufacturer.contains("vivo") || manufacturer.contains("iqoo")
+                ? "vivo/iQOO：检查后台耗电管理、自启动与省电策略。"
+                : manufacturer.contains("oppo") || manufacturer.contains("realme")
+                    || manufacturer.contains("oneplus")
+                ? "OPPO/一加/realme：检查应用耗电管理、自启动和后台运行。"
+                : manufacturer.contains("xiaomi") || manufacturer.contains("redmi")
+                    || manufacturer.contains("poco")
+                ? "小米/Redmi/POCO：检查后台无限制、自启动和任务锁定。"
+                : "检查本机的应用耗电管理、后台启动和自动清理设置。";
+        new AlertDialog.Builder(this)
+                .setTitle("ScreenSync 无障碍状态")
+                .setMessage(status
+                        + "\n\n" + manufacturerTip
+                        + "\n检查：① 电池使用设为不限制；② 允许后台启动；"
+                        + "③ 关闭闲置应用自动撤销权限（如有）；"
+                        + "④ 避免强制停止或卸载重装。"
+                        + "\n每次重装或不同签名安装后，系统可能需要重新授权。"
+                        + "\n无法由应用自行恢复已关闭的系统权限。")
+                .setPositiveButton("无障碍设置", (dialog, which) ->
+                        startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)))
+                .setNeutralButton("本应用设置", (dialog, which) -> {
+                    Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                    intent.setData(android.net.Uri.parse("package:" + getPackageName()));
+                    startActivity(intent);
+                })
+                .setNegativeButton("返回", null).show();
+    }
+
     private void refreshPermissions() {
         if (accessibilityButton != null) {
-            accessibilityButton.setText(AccessibilityShotService.ready()
-                    ? "✓ 无障碍截图已授权" : "1 · 开启无障碍截图权限");
-            accessibilityButton.setEnabled(!AccessibilityShotService.ready());
+            String state = AccessibilityPermissionHealth.state(this);
+            accessibilityButton.setText(
+                    AccessibilityPermissionHealth.CONNECTED.equals(state)
+                        ? "✓ 无障碍：系统已开启、服务已连接"
+                        : AccessibilityPermissionHealth.ENABLED_DISCONNECTED.equals(state)
+                        ? "无障碍：系统已开启、服务暂未连接（点此查看）"
+                        : "无障碍：系统开关已关闭（点此手动开启）");
+            // Even a running service can be inspected by the device owner.
+            accessibilityButton.setEnabled(true);
         }
         if (notificationsButton != null) {
             boolean appEnabled = ShareNotificationPreference.isEnabled(this);
@@ -519,7 +567,8 @@ public final class RemoteSetupActivity extends Activity {
         super.onResume();
         ScreenSyncDiagnostics.record(this, "APP_RESUME", "registered="
                 + NoVpnApi.isRegistered(this)
-                + " accessibility=" + AccessibilityShotService.ready());
+                + " accessibility=" + AccessibilityShotService.ready()
+                + " system_accessibility=" + AccessibilityPermissionHealth.state(this));
         active = true;
         ScreenSyncWatchNotice.clear(this);
         if (mediaSocket != null) mediaSocket.redispatchIncomingRequest();

@@ -152,6 +152,12 @@ jobs:
           assert writers == ['AccessibilityJpegStreamer.java'], writers
           assert 'nm.notify(NOTICE_ID, notification.build())' in screenshot
           assert screenshot.count('nm.notify(NOTICE_ID, notification.build())') == 1
+          health = (source / 'AccessibilityPermissionHealth.java').read_text()
+          assert 'getEnabledAccessibilityServiceList' in health
+          assert 'AccessibilityShotService.ready()' in health
+          assert 'Settings.Secure.put' not in health
+          assert 'system_accessibility=' in ui
+          assert 'showAccessibilityHealthHelp()' in ui
           acces = (source / 'AccessibilityShotService.java').read_text()
           assert 'TYPE_ACCESSIBILITY_OVERLAY' not in acces
           assert 'longTermReadyOverlay' not in acces
