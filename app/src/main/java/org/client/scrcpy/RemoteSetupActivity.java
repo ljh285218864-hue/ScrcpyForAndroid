@@ -771,6 +771,7 @@ public final class RemoteSetupActivity extends Activity {
         NoVpnMediaSocket retained = ScreenSyncMediaKeeper.current();
         if (retained != null) {
             retained.setListener(callback);
+            retained.reconnectWhenNetworkAvailable();
             mediaSocket = retained;
             if (retained.hasConfiguredVideo() && jpegRenderer != null)
                 jpegRenderer.startSession(retained.activeViewerSessionId());

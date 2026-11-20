@@ -242,6 +242,14 @@ public final class NoVpnMediaSocket {
         status("connecting");
     }
 
+    /** Expedite failed-socket reconnect after a Wi-Fi / mobile-data change.
+     * Leaves healthy sockets and consent state unchanged. */
+    public void reconnectWhenNetworkAvailable() {
+        if (shutdown) return;
+        main.removeCallbacks(retryConnection);
+        main.postDelayed(retryConnection, 300);
+    }
+
     private void scheduleReconnect() {
         if (shutdown) return;
         main.removeCallbacks(retryConnection);

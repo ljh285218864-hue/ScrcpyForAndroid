@@ -86,6 +86,7 @@ public final class NoVpnBackgroundSync {
         schedule(context);
         ensureNetworkListener(context);
         NoVpnPresenceLoop.start(context);
+        ScreenSyncMediaKeeper.restoreOptedInSignaling(context);
     }
 
     /** Invoked by the device owner via the pairing UI after mutual approval. */
@@ -96,6 +97,7 @@ public final class NoVpnBackgroundSync {
             schedule(context);
             ensureNetworkListener(context);
             NoVpnPresenceLoop.start(context);
+            ScreenSyncMediaKeeper.restoreOptedInSignaling(context);
             requestOnce(context, "owner_enabled");
         } else {
             WorkManager manager = WorkManager.getInstance(context);
@@ -156,6 +158,7 @@ public final class NoVpnBackgroundSync {
                     new ConnectivityManager.NetworkCallback() {
                         @Override public void onAvailable(Network network) {
                             NoVpnPresenceLoop.recheckSoon();
+                            ScreenSyncMediaKeeper.restoreOptedInSignaling(application);
                             requestOnce(application, "network_return");
                         }
                         @Override public void onCapabilitiesChanged(Network network,
@@ -163,6 +166,7 @@ public final class NoVpnBackgroundSync {
                             if (caps.hasCapability(
                                     NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
                                 NoVpnPresenceLoop.recheckSoon();
+                                ScreenSyncMediaKeeper.restoreOptedInSignaling(application);
                                 requestOnce(application, "network_changed");
                             }
                         }
