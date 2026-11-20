@@ -125,6 +125,63 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.read(viewer))["session_id"], sid)
         return sid
 
+
+
+    async def test_session_resume_requires_approved_same_session(self):
+        viewer_id, source_id = self.ids["a"]
+        viewer = await self.login(viewer_id)
+        source = await self.login(source_id)
+        sid = await self.open_session(viewer, source)
+
+        # Pending requests cannot be treated as consent to resume.
+        await source.send(json.dumps({"type": "session_resume", "session_id": sid}))
+        self.assertEqual((await self.read(source))["code"], "RESUME_NOT_ALLOWED")
+
+        await source.send(json.dumps({"type": "watch_accept", "session_id": sid}))
+        self.assertEqual((await self.read(viewer))["type"], "watch_active")
+        self.assertEqual((await self.read(source))["type"], "stream_allowed")
+
+        # Source switches network; original visible approval remains in memory.
+        await source.close()
+        interruption = await self.read(viewer)
+        self.assertEqual(interruption["type"], "session_interrupted")
+        self.assertIn(sid, self.relay.sessions)
+        self.assertFalse(self.relay.sessions[sid].source_ready)
+
+        reconnect = await self.login(source_id)
+        await reconnect.send(json.dumps({"type": "session_resume", "session_id": sid}))
+        self.assertEqual((await self.read(viewer))["type"], "session_resumed")
+        self.assertEqual((await self.read(reconnect))["type"], "session_resumed")
+
+        # Need new video setup; never pass old frames until restored.
+        frame = media.video_frame(sid, video_packet())
+        await reconnect.send(frame)
+        self.assertEqual((await self.read(reconnect))["code"], "VIDEO_SESSION_NOT_ACTIVE")
+        await reconnect.send(json.dumps({"type": "video_setup", "session_id": sid,
+                                           "dimensions": [1080, 2400, 720, 1600],
+                                           "codec": "h264"}))
+        self.assertEqual((await self.read(viewer))["type"], "video_setup")
+        await reconnect.send(frame)
+        self.assertEqual(await self.read(viewer), frame)
+        await reconnect.send(json.dumps({"type": "watch_end", "session_id": sid}))
+        self.assertEqual((await self.read(viewer))["type"], "watch_end")
+        self.assertEqual((await self.read(reconnect))["type"], "watch_end")
+
+    async def test_paused_session_disallows_new_capture_and_expires(self):
+        viewer_id, source_id = self.ids["a"]
+        viewer = await self.login(viewer_id)
+        source = await self.login(source_id)
+        sid = await self.open_session(viewer, source)
+        await source.send(json.dumps({"type": "watch_accept", "session_id": sid}))
+        await self.read(viewer)
+        await self.read(source)
+        await source.close()
+        self.assertEqual((await self.read(viewer))["type"], "session_interrupted")
+        self.relay.sessions[sid].rejoin_deadline = media.time.monotonic() - 1
+        await self.relay.expire_sessions()
+        self.assertEqual((await self.read(viewer))["type"], "watch_end")
+        self.assertNotIn(sid, self.relay.sessions)
+
     async def test_invalid_token_cannot_join(self):
         socket = await connect(self.url, compression=None)
         self.sockets.append(socket)

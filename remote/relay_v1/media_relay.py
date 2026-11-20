@@ -38,6 +38,8 @@ MAX_CONNECTIONS = 128
 MAX_COMMANDS_PER_SECOND = 30
 REQUEST_TTL_SECONDS = 30
 SESSION_TTL_SECONDS = 20 * 60
+# Short recovery of the exact approved, in-memory session; no persisted approval.
+SESSION_REJOIN_GRACE_SECONDS = 60
 MAX_FRAMES_PER_SECOND = 90
 MAX_BYTES_PER_SECOND = 8 * 1024 * 1024
 SESSION_ID = re.compile(r"[a-f0-9]{32}\Z")
@@ -112,6 +114,11 @@ class Session:
     window_at: float = 0.
     frames_in_window: int = 0
     bytes_in_window: int = 0
+    # A resumed session must be revalidated by BOTH device identities.
+    # No server restart or Android process reboot can reconstruct approval.
+    rejoin_deadline: float = 0.
+    source_ready: bool = True
+    viewer_ready: bool = True
 
 
 class MediaRelay:
@@ -171,10 +178,33 @@ class MediaRelay:
         while True:
             await asyncio.sleep(1)
             for session_id, session in list(self.sessions.items()):
-                if session.expires <= time.monotonic():
+                now = time.monotonic()
+                if (session.expires <= now or
+                        session.rejoin_deadline > 0 and
+                        session.rejoin_deadline <= now):
                     await self.discard(session_id, "session_expired")
                 elif not self.valid_pair(session):
                     await self.discard(session_id, "pairing_revoked")
+
+    async def detach_device(self, device_id: str) -> None:
+        """Allow a 60s rejoin ONLY for already approved media sessions."""
+        now = time.monotonic()
+        affected = [(sid, s) for sid, s in self.sessions.items()
+                    if device_id in (s.viewer, s.source)]
+        for sid, session in affected:
+            if not session.approved:
+                await self.discard(sid, "request_disconnected")
+                continue
+            session.rejoin_deadline = now + SESSION_REJOIN_GRACE_SECONDS
+            session.configured = False
+            if session.source == device_id:
+                session.source_ready = False
+            if session.viewer == device_id:
+                session.viewer_ready = False
+            await self.tell(
+                session.viewer if device_id == session.source else session.source,
+                {"type": "session_interrupted", "session_id": sid,
+                 "grace_seconds": SESSION_REJOIN_GRACE_SECONDS})
 
     def paired_online(self, client: Device) -> str | None:
         with api.db_connect() as db:
@@ -267,6 +297,28 @@ class MediaRelay:
         if command == "watch_end":
             await self.discard(session_id, "stopped_by_device")
             return
+        if command == "session_resume":
+            # Neither a new viewing request nor a new screen acquisition.
+            # The source must still hold visible, local, in-memory approval.
+            if (not session.approved or not session.rejoin_deadline
+                    or time.monotonic() > session.rejoin_deadline):
+                await self.tell(client.device_id, {
+                    "type": "error", "code": "RESUME_NOT_ALLOWED"})
+                return
+            if session.source == client.device_id:
+                session.source_ready = True
+            elif session.viewer == client.device_id:
+                session.viewer_ready = True
+            if session.source_ready and session.viewer_ready:
+                # Re-send setup from the same approved capture; JPEG frames
+                # are held back until source sends a new video_setup.
+                session.rejoin_deadline = 0.
+                session.expires = time.monotonic() + SESSION_TTL_SECONDS
+                session.configured = False
+                for member in (session.source, session.viewer):
+                    await self.tell(member, {
+                        "type": "session_resumed", "session_id": session_id})
+            return
         if command == "watch_decline" and client.device_id == session.source:
             await self.discard(session_id, "declined_by_source")
             return
@@ -280,7 +332,7 @@ class MediaRelay:
                                                 "session_id": session_id})
             return
         if command == "video_setup" and client.device_id == session.source \
-                and session.approved:
+                and session.approved and not session.rejoin_deadline:
             dims, codec = body.get("dimensions"), body.get("codec")
             if not legal_dimensions(dims) or codec not in ("h264", "h265", "jpeg"):
                 await self.tell(client.device_id, {"type": "error",
@@ -306,6 +358,7 @@ class MediaRelay:
         if session is None or session.source != client.device_id \
                 or session.group_id != client.group_id \
                 or not session.approved or not session.configured \
+                or session.rejoin_deadline \
                 or time.monotonic() > session.expires:
             await self.tell(client.device_id, {"type": "error",
                                                "code": "VIDEO_SESSION_NOT_ACTIVE"})
@@ -376,15 +429,10 @@ class MediaRelay:
             # never clean up sessions belonging to this replacement socket.
             self.online[client.device_id] = client
             if old:
-                affected = [sid for sid, s in self.sessions.items()
-                            if client.device_id in (s.viewer, s.source)]
-                ended = [self.sessions.pop(sid) for sid in affected]
-                for session in ended:
-                    other = (session.source if session.viewer == client.device_id
-                             else session.viewer)
-                    await self.tell(other, {"type": "watch_end",
-                                           "session_id": session.session_id,
-                                           "reason": "device_reconnected"})
+                # Swapping an authenticated connection is not proof that
+                # the screenshot source still consents. Only a same-process
+                # session_resume may rejoin the original approved session.
+                await self.detach_device(client.device_id)
                 await old.socket.close(code=4005, reason="DEVICE_RECONNECTED")
             if self.online.get(client.device_id) is not client:
                 return
@@ -404,10 +452,7 @@ class MediaRelay:
             self.connection_count -= 1
             if client and self.online.get(client.device_id) is client:
                 self.online.pop(client.device_id, None)
-                affected = [sid for sid, s in self.sessions.items()
-                            if client.device_id in (s.viewer, s.source)]
-                for sid in affected:
-                    await self.discard(sid, "device_disconnected")
+                await self.detach_device(client.device_id)
 
 
 async def run():
