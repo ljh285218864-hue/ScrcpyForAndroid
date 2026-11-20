@@ -12,6 +12,9 @@ WorkingDirectory=/opt/screensync-relay/remote/relay_v1
 Environment=SS_NOVPN_HOST=127.0.0.1
 Environment=SS_NOVPN_PORT=8766
 Environment=SS_NOVPN_DB=/var/lib/screensync-relay/relay.db
+# Optional FCM project ID / service-account JSON path. Keep the private
+# credential OUT of Git and out of the public web root.
+EnvironmentFile=-/etc/screensync/fcm.env
 ExecStart=/opt/screensync-relay/.venv/bin/python server.py serve
 StateDirectory=screensync-relay
 UMask=0077
