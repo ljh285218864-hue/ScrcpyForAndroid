@@ -88,7 +88,13 @@ jobs:
           ui = (source/'RemoteSetupActivity.java').read_text()
           assert 'ShareNotificationPreference.setEnabled(this, next)' in ui
           assert 'if (!next) AccessibilityJpegStreamer.stopIfNoVisibleStopControl()' in ui
-          assert 'systemNotificationSettingsButton' in ui
+          assert 'systemNotificationSettingsButton' not in ui
+          assert 'openShareNotificationSettings()' not in ui
+          assert 'ACTION_APP_NOTIFICATION_SETTINGS' not in ui
+          assert '收到观看申请' in ui
+          assert 'confirmPendingIncomingShare()' in ui
+          assert 'declinePendingIncomingShare()' in ui
+          assert 'new AlertDialog.Builder(RemoteSetupActivity.this)\n                                .setTitle("已配对设备请求观看")' not in ui
           assert 'requestPermissions(new String[]{\n                    Manifest.permission.POST_NOTIFICATIONS}' not in ui
           assert 'noticePosted = showNoticeIfAllowed()' in screenshot
           assert screenshot.index('noticePosted = showNoticeIfAllowed()') < screenshot.index('if (!ensureVisibleStopControl())')
@@ -114,9 +120,11 @@ jobs:
           assert 'long_term_permission_revoked' in socket
           assert 'isPersistentSourceStartPending()' in (source/'RemoteSetupActivity.java').read_text()
           assert 'LongTermSharePolicy.showStandbyWhenAllowed(this)' not in (source/'AccessibilityShotService.java').read_text()
-          assert 'ScreenSyncWatchNotice.show(context)' in socket
+          assert 'ScreenSyncWatchNotice.show(context)' not in socket
+          assert 'queued_for_in_app_confirmation' in socket
           incoming = (source/'ScreenSyncWatchNotice.java').read_text()
           assert 'manager.notify(' not in incoming
+          assert 'public static void show(' not in incoming
           assert 'showIncomingWatchOverlay(' not in incoming
           assert '我同意长期共享' in (source/'RemoteSetupActivity.java').read_text()
           assert 'NoVpnPresenceLoop.start(context)' in (source/'NoVpnBackgroundSync.java').read_text()
@@ -139,6 +147,11 @@ jobs:
           assert 'new Notification(' not in watch
           assert 'new NotificationChannel(' not in watch
           assert 'manager.notify(' not in watch
+          java = list(source.rglob('*.java'))
+          writers = [p.name for p in java if '.notify(' in p.read_text()]
+          assert writers == ['AccessibilityJpegStreamer.java'], writers
+          assert 'nm.notify(NOTICE_ID, notification.build())' in screenshot
+          assert screenshot.count('nm.notify(NOTICE_ID, notification.build())') == 1
           acces = (source / 'AccessibilityShotService.java').read_text()
           assert 'TYPE_ACCESSIBILITY_OVERLAY' not in acces
           assert 'longTermReadyOverlay' not in acces

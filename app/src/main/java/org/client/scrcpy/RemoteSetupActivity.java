@@ -48,7 +48,13 @@ public final class RemoteSetupActivity extends Activity {
     private TextView mediaState;
     private NoVpnMediaSocket mediaSocket;
     private NoVpnMediaSocket.Listener mediaListener;
-    private String shownIncomingSession = "";
+    // Incoming watch requests are visible ONLY in this Activity. No popup,
+    // notification, or cross-app overlay is created for an unapproved request.
+    private String pendingIncomingShareSession = "";
+    private String pendingIncomingViewerId = "";
+    private LinearLayout incomingSharePanel;
+    private TextView incomingShareInfo;
+    private Button incomingShareAllow, incomingShareDecline;
     private AccessibilityJpegStreamer jpegStreamer;
     private JpegFrameRenderer jpegRenderer;
     private ImageView jpegImage;
@@ -87,7 +93,7 @@ public final class RemoteSetupActivity extends Activity {
     // Either phone can start an independent pair; the other scans its QR.
     // The server is explicit opt-in and does not give media consent.
     private Button scanButton, accessibilityButton, notificationsButton,
-            systemNotificationSettingsButton, backgroundToggle, longTermToggle;
+            backgroundToggle, longTermToggle;
     private TextView shareVisibleStatus, presenceState;
     private TextView hint;
     private LinearLayout permissionsPanel;
@@ -180,6 +186,19 @@ public final class RemoteSetupActivity extends Activity {
         mediaState = note(statusPanel, "手机连接就绪后，点击观看对方屏幕");
         mediaState.setPadding(0, dp(8), 0, dp(2));
 
+        // A request without long-term consent needs a local owner's tap.
+        // Show it as an in-app card, never an incoming notification/dialog.
+        incomingSharePanel = panel(content);
+        heading(incomingSharePanel, "收到观看申请");
+        incomingShareInfo = note(incomingSharePanel,
+                "只有你点击同意，配对设备才能查看本次屏幕。");
+        incomingShareAllow = action(incomingSharePanel,
+                "允许本次屏幕共享", v -> confirmPendingIncomingShare());
+        primary(incomingShareAllow);
+        incomingShareDecline = action(incomingSharePanel,
+                "拒绝本次观看", v -> declinePendingIncomingShare());
+        incomingSharePanel.setVisibility(android.view.View.GONE);
+
         mediaRequestButton = action(content, "观看对方屏幕", v -> {
             ScreenSyncDiagnostics.record(this, "USER_ACTION", "watch_fullscreen");
             if (viewerLayer != null) {
@@ -237,20 +256,14 @@ public final class RemoteSetupActivity extends Activity {
                     "app_enabled=" + next);
             refreshPermissions();
             report(next
-                    ? "软件内共享通知已开启；如系统禁止通知，仍不会弹出"
-                    : "软件内共享通知已关闭；配对、后台在线和重连不受影响");
+                    ? "共享通知已开启；只有实际共享时才显示"
+                    : "共享通知已关闭；配对、后台在线和重连不受影响");
         });
-        systemNotificationSettingsButton = action(permissionsPanel,
-                "查看系统通知权限（由用户自行设置）",
-                v -> openShareNotificationSettings());
         TextView securityNote = note(permissionsPanel,
-                "无障碍截图由手机持有人开启。配对、联网和后台维护不需要通知权限。"
-                + "长期共享授权只显示在本软件的开关中，不会在待机时显示提示。"
-                + "软件内共享通知与手机系统通知是两个独立开关，"
-                + "只有两者同时允许时才会显示『正在共享／停止』通知。"
-                + "系统设置始终优先；系统禁止时不弹通知、不补发悬浮条。"
-                + "配对、后台在线和重连不受通知开关影响。"
-                + "没有可见停止入口时不启动后台截图。");
+                "仅真正共享屏幕时才可能显示一条『正在共享／停止』通知。"
+                + "不发送观看申请、配对、后台在线或长期授权常驻通知。"
+                + "未开启长期授权时，观看申请只在本页面显示同意和拒绝按钮。"
+                + "无可见共享停止入口时不会启动后台截图。");
         securityNote.setPadding(dp(4), dp(6), dp(4), 0);
 
         backgroundToggle = action(content, "后台在线维护：开启 / 关闭", v -> {
@@ -468,20 +481,6 @@ public final class RemoteSetupActivity extends Activity {
         button.setTypeface(null, android.graphics.Typeface.BOLD);
     }
 
-    private void openShareNotificationSettings() {
-        // Never request a denied system permission automatically. This opens
-        // Settings only after a direct user tap; the app preference stays ON.
-        try {
-            Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
-            intent.putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
-            startActivity(intent);
-        } catch (RuntimeException unavailable) {
-            ScreenSyncDiagnostics.record(this, "PERMISSION_UI",
-                    "notifications_settings_unavailable");
-            report("请在系统设置 → 应用 → 屏幕同步 → 通知中手动开启");
-        }
-    }
-
     private void showSourcePrerequisiteDialog(String issue) {
         boolean needsAccessibility = "accessibility_not_enabled".equals(issue);
         String message = needsAccessibility
@@ -509,17 +508,10 @@ public final class RemoteSetupActivity extends Activity {
         }
         if (notificationsButton != null) {
             boolean appEnabled = ShareNotificationPreference.isEnabled(this);
-            boolean systemAllowed = AccessibilityJpegStreamer.notificationAllowed(this);
-            notificationsButton.setText("共享通知（软件）：" +
-                    (appEnabled ? "已开启，点击关闭" : "已关闭，点击开启")
-                    + "；系统：" + (systemAllowed ? "已允许" : "已禁止"));
+            notificationsButton.setText(appEnabled
+                    ? "正在共享通知：已开启（点击关闭）"
+                    : "正在共享通知：已关闭（点击开启）");
             notificationsButton.setEnabled(true);
-        }
-        if (systemNotificationSettingsButton != null) {
-            boolean systemAllowed = AccessibilityJpegStreamer.notificationAllowed(this);
-            systemNotificationSettingsButton.setText(systemAllowed
-                    ? "系统通知：允许（点此打开系统设置）"
-                    : "系统通知：禁止（软件不会绕过；点此查看）");
         }
     }
 
@@ -537,6 +529,7 @@ public final class RemoteSetupActivity extends Activity {
         refreshButtons();
         refreshPermissions();
         AccessibilityJpegStreamer.setSourceUiVisible(true);
+        refreshPendingShareRequest();
         refreshSharingStatus();
         refreshPresenceState();
         NoVpnBackgroundSync.requestOnce(this, "owner_opened");
@@ -554,6 +547,7 @@ public final class RemoteSetupActivity extends Activity {
     @Override protected void onPause() {
         AccessibilityJpegStreamer.setSourceUiVisible(false);
         active = false;
+        refreshPendingShareRequest();
         requestAfterConnect = false;
         ui.removeCallbacks(refresh);
         // If the owner disabled background online maintenance, leave no
@@ -581,8 +575,8 @@ public final class RemoteSetupActivity extends Activity {
         if (mediaSocket != null && mediaListener != null)
             mediaSocket.clearListenerIf(mediaListener);
         // The transport is retained by ScreenSyncMediaKeeper in this process.
-        // The active source's one visible "正在共享" Stop notification
-        // controls screenshot safety outside this Activity.
+        // Only the source's one "正在共享" notification is displayed
+        // outside this Activity. No request/standby notification is created.
         if (jpegRenderer != null) {
             jpegRenderer.close();
             jpegRenderer = null;
@@ -604,7 +598,7 @@ public final class RemoteSetupActivity extends Activity {
     private void refreshSharingStatus() {
         if (shareVisibleStatus == null) return;
         shareVisibleStatus.setText(AccessibilityJpegStreamer.sharingActive()
-                ? "本机正在共享屏幕 · 可在其他应用上点击悬浮条「停止共享」"
+                ? "本机正在共享屏幕 · 可在通知栏点击「停止共享」"
                 : "本机未共享屏幕。配对在线不代表正在共享。");
     }
 
@@ -618,6 +612,63 @@ public final class RemoteSetupActivity extends Activity {
                 : "超过45秒未确认在线，可能已离线";
         presenceState.setText("后台在线维护：" + (enabled ? "已开启" : "已关闭")
                 + "；" + msg + "。这不是屏幕可观看状态。");
+    }
+
+    /** Display only a local in-app request card. This is not an alert or
+     * notification; approval requires a direct tap by the device owner.
+     */
+    private void refreshPendingShareRequest() {
+        if (incomingSharePanel == null) return;
+        boolean visible = active && !isFinishing()
+                && "paired".equals(currentState)
+                && !pendingIncomingShareSession.isEmpty();
+        incomingSharePanel.setVisibility(visible
+                ? android.view.View.VISIBLE : android.view.View.GONE);
+        if (!visible) return;
+        if (incomingShareInfo != null) {
+            String peer = pendingIncomingViewerId;
+            String suffix = peer.substring(Math.max(0, peer.length() - 6));
+            incomingShareInfo.setText("已配对设备（ID尾号：" + suffix
+                    + "）请求查看当前屏幕。必须由本机持有人点击允许。"
+                    + "共享期间会显示带停止按钮的共享状态通知。");
+        }
+        if (incomingShareAllow != null) incomingShareAllow.setEnabled(!busy);
+        if (incomingShareDecline != null) incomingShareDecline.setEnabled(!busy);
+    }
+
+    private void clearPendingIncomingShare() {
+        pendingIncomingShareSession = "";
+        pendingIncomingViewerId = "";
+        refreshPendingShareRequest();
+    }
+
+    private void confirmPendingIncomingShare() {
+        String sid = pendingIncomingShareSession;
+        if (sid.isEmpty() || mediaSocket == null) return;
+        // The local owner explicitly taps this visible in-app control.
+        String issue = AccessibilityJpegStreamer.readinessIssue(this);
+        if (!issue.isEmpty()) {
+            ScreenSyncDiagnostics.record(this,
+                    "SHARE_PREFLIGHT", "blocked=" + issue);
+            mediaSocket.declineRequest(sid);
+            clearPendingIncomingShare();
+            showSourcePrerequisiteDialog(issue);
+            return;
+        }
+        ScreenSyncDiagnostics.record(this, "USER_ACTION", "share_approved");
+        boolean accepted = mediaSocket.acceptRequest(sid);
+        clearPendingIncomingShare();
+        if (!accepted) mediaState.setText(
+                "观看申请已失效，请让另一台手机重新请求");
+    }
+
+    private void declinePendingIncomingShare() {
+        String sid = pendingIncomingShareSession;
+        if (sid.isEmpty()) return;
+        ScreenSyncDiagnostics.record(this, "USER_ACTION", "share_declined");
+        if (mediaSocket != null) mediaSocket.declineRequest(sid);
+        clearPendingIncomingShare();
+        mediaState.setText("已拒绝本次观看申请");
     }
 
     private void startLocalStream() {
@@ -785,50 +836,20 @@ public final class RemoteSetupActivity extends Activity {
                         }
                     }
                     @Override public void onRequest(String sid, String viewerId) {
+                        // No incoming request popup or notification. Keep
+                        // unapproved requests inside the foreground UI only.
                         if (!active || isFinishing()) {
                             ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
-                                    "WATCH_INBOUND", "background_notification");
-                            ScreenSyncWatchNotice.show(RemoteSetupActivity.this);
+                                    "WATCH_INBOUND", "awaiting_in_app_approval");
                             return;
                         }
-                        if (sid.equals(shownIncomingSession)) return;
-                        shownIncomingSession = sid;
+                        if (sid.equals(pendingIncomingShareSession)) return;
+                        pendingIncomingShareSession = sid;
+                        pendingIncomingViewerId = viewerId;
                         ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
-                                "WATCH_INBOUND", "request_received");
-                        new AlertDialog.Builder(RemoteSetupActivity.this)
-                                .setTitle("已配对设备请求观看")
-                                .setMessage("对方设备 ID 尾号：" +
-                                        viewerId.substring(Math.max(0, viewerId.length() - 6))
-                                        + "\n是否允许对方观看你手机的当前屏幕？"
-                                        + "\n将通过无障碍截图发送 JPEG 画面。"
-                                        + "\n共享期间只在系统允许时显示"
-                                        + "「正在共享 / 停止」通知，"
-                                        + "不会以悬浮条绕过系统通知开关。")
-                                .setPositiveButton("允许本次屏幕共享", (dialog, which) -> {
-                                    ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
-                                            "USER_ACTION", "share_approved");
-                                    String issue = AccessibilityJpegStreamer
-                                            .readinessIssue(RemoteSetupActivity.this);
-                                    if (!issue.isEmpty()) {
-                                        ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
-                                                "SHARE_PREFLIGHT", "blocked=" + issue);
-                                        if (mediaSocket != null)
-                                            mediaSocket.declineRequest(sid);
-                                        showSourcePrerequisiteDialog(issue);
-                                        return;
-                                    }
-                                    if (mediaSocket != null && !mediaSocket.acceptRequest(sid)) {
-                                        ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
-                                                "SHARE_PREFLIGHT", "accept_send_failed");
-                                        mediaState.setText("共享请求失效，请让对方重新点击观看");
-                                    }
-                                })
-                                .setNegativeButton("拒绝", (dialog, which) -> {
-                                    ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
-                                            "USER_ACTION", "share_declined");
-                                    if (mediaSocket != null)
-                                        mediaSocket.declineRequest(sid);
-                                }).show();
+                                "WATCH_INBOUND", "in_app_request_only");
+                        refreshPendingShareRequest();
+                        mediaState.setText("收到观看申请，请在本页面选择允许或拒绝");
                     }
                     @Override public void onVideoSetup(String sid, int[] dimensions,
                                                         String codec) {
@@ -958,6 +979,7 @@ public final class RemoteSetupActivity extends Activity {
                     ? android.view.View.VISIBLE : android.view.View.GONE);
             mediaEndButton.setEnabled(!busy);
         }
+        refreshPendingShareRequest();
         if (permissionsPanel != null)
             permissionsPanel.setVisibility(paired
                     ? android.view.View.VISIBLE : android.view.View.GONE);

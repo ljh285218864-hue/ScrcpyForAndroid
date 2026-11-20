@@ -429,7 +429,8 @@ public final class NoVpnMediaSocket {
                     }
                     Listener target = listener;
                     if (target != null) target.onRequest(sid, from);
-                    else ScreenSyncWatchNotice.show(context);
+                    else ScreenSyncDiagnostics.record(context,
+                            "WATCH_INBOUND", "queued_for_in_app_confirmation");
                 });
                 break;
             }

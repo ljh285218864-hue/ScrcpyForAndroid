@@ -12,12 +12,6 @@ public final class ScreenSyncWatchNotice {
     private static final int LEGACY_NOTICE_ID = 8416;
     private ScreenSyncWatchNotice() {}
 
-    public static void show(Context context) {
-        // Intentionally silent: user requested no incoming-watch notifications.
-        ScreenSyncDiagnostics.record(context.getApplicationContext(),
-                "WATCH_NOTICE", "suppressed_by_product_setting");
-    }
-
     public static void clear(Context context) {
         NotificationManager manager = (NotificationManager)
                 context.getApplicationContext().getSystemService(
