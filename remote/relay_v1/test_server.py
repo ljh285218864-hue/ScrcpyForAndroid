@@ -353,8 +353,8 @@ class RelayHTTPTests(unittest.TestCase):
             self.assertEqual(db.execute(
                 "SELECT device_id,group_id FROM fcm_registrations").fetchone()["device_id"],
                 b["device_id"])
-        with patch.object(relay, "fcm_configured", return_value=True), \\
-                patch.object(relay, "send_fcm_wake", return_value=True) as sender:
+        with (patch.object(relay, "fcm_configured", return_value=True),
+              patch.object(relay, "send_fcm_wake", return_value=True) as sender):
             # Only currently paired identity A can wake B. Another group
             # never receives B's token and always targets their own peer.
             self.assertEqual(self.post("/v1/push/wake", {}, c["token"])[1]["state"],
