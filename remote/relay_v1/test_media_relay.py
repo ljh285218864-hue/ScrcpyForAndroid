@@ -167,6 +167,28 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.read(viewer))["type"], "watch_end")
         self.assertEqual((await self.read(reconnect))["type"], "watch_end")
 
+    async def test_viewer_rejoins_while_source_socket_stays_online(self):
+        viewer_id, source_id = self.ids["a"]
+        viewer = await self.login(viewer_id)
+        source = await self.login(source_id)
+        sid = await self.open_session(viewer, source)
+        await source.send(json.dumps({"type":"watch_accept","session_id":sid}))
+        self.assertEqual((await self.read(viewer))["type"],"watch_active")
+        self.assertEqual((await self.read(source))["type"],"stream_allowed")
+        await viewer.close()
+        self.assertEqual((await self.read(source))["type"],"session_interrupted")
+        reconnect = await self.login(viewer_id)
+        await reconnect.send(json.dumps({"type":"session_resume","session_id":sid}))
+        self.assertEqual((await self.read(reconnect))["type"],"session_resumed")
+        self.assertEqual((await self.read(source))["type"],"session_resumed")
+        # The original local approval is still required for video_setup.
+        await source.send(json.dumps({"type":"video_setup","session_id":sid,
+                          "dimensions":[1080,2400,720,1600],"codec":"jpeg"}))
+        self.assertEqual((await self.read(reconnect))["type"],"video_setup")
+        await source.send(json.dumps({"type":"watch_end","session_id":sid}))
+        self.assertEqual((await self.read(source))["type"],"watch_end")
+        self.assertEqual((await self.read(reconnect))["type"],"watch_end")
+
     async def test_paused_session_disallows_new_capture_and_expires(self):
         viewer_id, source_id = self.ids["a"]
         viewer = await self.login(viewer_id)

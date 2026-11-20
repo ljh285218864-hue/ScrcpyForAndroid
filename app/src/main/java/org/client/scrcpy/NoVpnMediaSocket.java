@@ -345,11 +345,31 @@ public final class NoVpnMediaSocket {
                 }
                 status("authenticated");
                 break;
-            case "session_interrupted":
-                if (body.optString("session_id").equals(viewerSession)
-                        || body.optString("session_id").equals(sourceSession))
+            case "session_interrupted": {
+                String interrupted = body.optString("session_id");
+                if (interrupted.equals(viewerSession)
+                        || interrupted.equals(sourceSession)) {
+                    // The other device lost its socket. Even if OUR WSS is
+                    // healthy, stop sending frames while the server pauses
+                    // this approved session. Keep only the in-memory consent.
+                    if (interrupted.equals(sourceSession)
+                            && (!AccessibilityJpegStreamer.sharingActive()
+                                || !AccessibilityShotService.isShareStopOverlayVisible())) {
+                        endSourceSession("missing_visible_stop");
+                        break;
+                    }
+                    if (!rejoinPending) {
+                        rejoinPending = true;
+                        sourceSetupReady = false;
+                        rejoinUntilElapsedMs = android.os.SystemClock.elapsedRealtime()
+                                + REJOIN_WINDOW_MS;
+                        main.removeCallbacks(expireRejoin);
+                        main.postDelayed(expireRejoin, REJOIN_WINDOW_MS + 25);
+                    }
                     status("session_network_interrupted");
+                }
                 break;
+            }
             case "session_resumed": {
                 String resumed = body.optString("session_id");
                 if (!rejoinPending || !hasRecoverableSession()
