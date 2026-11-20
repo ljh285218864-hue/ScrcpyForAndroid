@@ -274,6 +274,8 @@ public final class AccessibilityJpegStreamer {
                 app.getSystemService(Context.NOTIFICATION_SERVICE);
         noticePosted = false;
         if (nm != null) nm.cancel(NOTICE_ID);
+        // Resurface the owner's opt-in state after a session ends.
+        main.postDelayed(() -> LongTermSharePolicy.showStandbyWhenAllowed(app), 150);
     }
 
     /**
@@ -335,6 +337,8 @@ public final class AccessibilityJpegStreamer {
     }
 
     public static void stopActiveFromOverlay() {
+        AccessibilityJpegStreamer stream = current;
+        if (stream != null) LongTermSharePolicy.disable(stream.app);
         stopFromSourceDevice("共享已从跨应用悬浮条停止");
     }
 

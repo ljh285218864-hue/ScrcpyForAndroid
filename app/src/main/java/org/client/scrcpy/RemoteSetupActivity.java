@@ -86,7 +86,8 @@ public final class RemoteSetupActivity extends Activity {
     // Minimal everyday screen: no ADB, USB, Wi-Fi IP, VPN, ports or test controls.
     // Either phone can start an independent pair; the other scans its QR.
     // The server is explicit opt-in and does not give media consent.
-    private Button scanButton, accessibilityButton, notificationsButton, backgroundToggle;
+    private Button scanButton, accessibilityButton, notificationsButton,
+            backgroundToggle, longTermToggle;
     private TextView shareVisibleStatus, presenceState;
     private TextView hint;
     private LinearLayout permissionsPanel;
@@ -212,6 +213,7 @@ public final class RemoteSetupActivity extends Activity {
 
         mediaEndButton = action(content, "结束本次观看 / 共享", v -> {
             ScreenSyncDiagnostics.record(this, "USER_ACTION", "stop_pressed");
+            LongTermSharePolicy.disable(this);
             requestAfterConnect = false;
             stopLocalStream();
             if (jpegRenderer != null) jpegRenderer.stopSession();
@@ -252,6 +254,52 @@ public final class RemoteSetupActivity extends Activity {
         });
         presenceState = note(content, "");
         refreshPresenceState();
+
+        longTermToggle = action(content, "长期共享授权：关闭", v -> {
+            if (LongTermSharePolicy.enabled(this)) {
+                new AlertDialog.Builder(this)
+                        .setTitle("关闭长期共享授权")
+                        .setMessage("以后新的观看申请将重新要求本机确认；配对和服务器连接保持不变。")
+                        .setPositiveButton("关闭授权", (d, w) -> {
+                            LongTermSharePolicy.disable(this);
+                            refreshButtons();
+                        }).setNegativeButton("取消", null).show();
+                return;
+            }
+            if (!NoVpnApi.isRegistered(this) || !"paired".equals(currentState)) {
+                report("请先完成两台手机的配对");
+                return;
+            }
+            if (!AccessibilityShotService.ready()) {
+                report("请先由本机持有人开启无障碍截图服务");
+                return;
+            }
+            String peer = NoVpnApi.peerId(this);
+            String suffix = peer.substring(Math.max(0, peer.length() - 6));
+            new AlertDialog.Builder(this)
+                    .setTitle("确认长期屏幕共享授权")
+                    .setMessage("本机将允许已经配对的设备（ID尾号：" + suffix
+                            + "）在手机重启和网络恢复后发起观看时，"
+                            + "无需再次点同意就传输当前屏幕。"
+                            + "可能包含其他应用画面。"
+                            + "本机会持续显示『长期共享已开启/关闭授权』浮条，"
+                            + "共享时显示『正在共享/停止』浮条，"
+                            + "可以随时撤销。普通通知仍然可选。"
+                            + "如果系统停止运行或撤销无障碍，仍可能无法连接。")
+                    .setPositiveButton("我同意长期共享", (d, w) -> {
+                        if (!LongTermSharePolicy.enableByOwner(this)) {
+                            report("长期共享可见浮条不可用，未保存授权");
+                            return;
+                        }
+                        NoVpnBackgroundSync.setEnabled(this, true);
+                        ScreenSyncMediaKeeper.restoreOptedInSignaling(this);
+                        ScreenSyncDiagnostics.record(this, "LONG_TERM_SHARE",
+                                "owner_enabled_for_current_pair");
+                        refreshButtons();
+                        report("长期授权已开启，可随时在屏幕浮条关闭");
+                    })
+                    .setNegativeButton("取消", null).show();
+        });
         action(content, "后台自启动与电池设置", v -> new AlertDialog.Builder(this)
                 .setTitle("后台在线设置（由手机持有人操作）")
                 .setMessage("可在手机应用设置中允许后台运行、自动启动和电池无限制。"
@@ -275,6 +323,7 @@ public final class RemoteSetupActivity extends Activity {
                                 ScreenSyncMediaKeeper.stop();
                                 mediaSocket = null;
                             }
+                            LongTermSharePolicy.disable(this);
                             NoVpnBackgroundSync.setEnabled(this, false);
                             pendingId = "";
                             currentState = "";
@@ -466,6 +515,7 @@ public final class RemoteSetupActivity extends Activity {
         AccessibilityJpegStreamer.setSourceUiVisible(true);
         refreshSharingStatus();
         refreshPresenceState();
+        LongTermSharePolicy.showStandbyWhenAllowed(this);
         NoVpnBackgroundSync.requestOnce(this, "owner_opened");
         ui.postDelayed(this::refreshPermissions, 600);
     }
@@ -885,6 +935,13 @@ public final class RemoteSetupActivity extends Activity {
         if (permissionsPanel != null)
             permissionsPanel.setVisibility(paired
                     ? android.view.View.VISIBLE : android.view.View.GONE);
+        if (longTermToggle != null) {
+            longTermToggle.setVisibility(paired
+                    ? android.view.View.VISIBLE : android.view.View.GONE);
+            longTermToggle.setText(LongTermSharePolicy.enabled(this)
+                    ? "关闭长期共享授权（当前已开启）"
+                    : "开启长期共享授权（需明确同意）");
+        }
         if (backgroundToggle != null) {
             backgroundToggle.setVisibility(paired
                     ? android.view.View.VISIBLE : android.view.View.GONE);

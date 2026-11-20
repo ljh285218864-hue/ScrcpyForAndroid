@@ -82,6 +82,11 @@ jobs:
           assert 'TYPE_ACCESSIBILITY_OVERLAY' in overlay
           assert 'stopActiveFromOverlay()' in overlay
           assert 'SYSTEM_ALERT_WINDOW' not in Path('app/src/main/AndroidManifest.xml').read_text()
+          longterm = (source/'LongTermSharePolicy.java').read_text()
+          assert 'enableByOwner' in longterm
+          assert 'isLongTermReadyOverlayVisible()' in longterm
+          assert 'LongTermSharePolicy.showStandbyWhenAllowed(this)' in (source/'AccessibilityShotService.java').read_text()
+          assert '我同意长期共享' in (source/'RemoteSetupActivity.java').read_text()
           assert 'NoVpnPresenceLoop.start(context)' in (source/'NoVpnBackgroundSync.java').read_text()
           keeper = (source/'ScreenSyncMediaKeeper.java').read_text()
           assert 'restoreOptedInSignaling(Context context)' in keeper

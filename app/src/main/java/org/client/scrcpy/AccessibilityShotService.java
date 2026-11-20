@@ -34,6 +34,7 @@ public final class AccessibilityShotService extends AccessibilityService {
     private static volatile AccessibilityShotService connected;
     private WindowManager shareWindowManager;
     private View stopOverlay;
+    private View longTermReadyOverlay;
     private View incomingWatchOverlay;
     private final Handler incomingHandler = new Handler(Looper.getMainLooper());
     private final Runnable expireIncomingWatch = this::removeIncomingWatchOverlay;
@@ -165,12 +166,86 @@ public final class AccessibilityShotService extends AccessibilityService {
         }
     }
 
+    static boolean showLongTermReadyOverlay() {
+        AccessibilityShotService a = connected;
+        return a != null && Looper.myLooper() == Looper.getMainLooper()
+                && a.attachLongTermReadyOverlay();
+    }
+
+    static boolean isLongTermReadyOverlayVisible() {
+        return connected != null && connected.longTermReadyOverlay != null;
+    }
+
+    static void hideLongTermReadyOverlay() {
+        AccessibilityShotService a = connected;
+        if (a == null) return;
+        if (Looper.myLooper() == Looper.getMainLooper())
+            a.detachLongTermReadyOverlay();
+        else new Handler(Looper.getMainLooper()).post(a::detachLongTermReadyOverlay);
+    }
+
+    private boolean attachLongTermReadyOverlay() {
+        if (stopOverlay != null) return false;
+        if (longTermReadyOverlay != null) return true;
+        WindowManager window = (WindowManager) getSystemService(WINDOW_SERVICE);
+        if (window == null) return false;
+        LinearLayout bar = new LinearLayout(this);
+        bar.setPadding(dp(7), dp(4), dp(7), dp(4));
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setBackgroundColor(Color.argb(242, 33, 44, 71));
+        TextView message = new TextView(this);
+        message.setText("ScreenSync 长期共享已开启");
+        message.setTextSize(12);
+        message.setTextColor(Color.WHITE);
+        bar.addView(message);
+        Button stop = new Button(this);
+        stop.setText("关闭授权");
+        stop.setAllCaps(false);
+        stop.setTextSize(12);
+        stop.setMinWidth(0);
+        stop.setMinimumWidth(0);
+        stop.setOnClickListener(v -> LongTermSharePolicy.disable(this));
+        bar.addView(stop);
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT);
+        lp.gravity = Gravity.TOP | Gravity.END;
+        lp.x = dp(6);
+        lp.y = dp(70);
+        try {
+            window.addView(bar, lp);
+            longTermReadyOverlay = bar;
+            ScreenSyncDiagnostics.record(this, "LONG_TERM_SHARE", "standby_visible");
+            return true;
+        } catch (RuntimeException error) {
+            ScreenSyncDiagnostics.record(this, "LONG_TERM_SHARE", "standby_unavailable");
+            return false;
+        }
+    }
+
+    private void detachLongTermReadyOverlay() {
+        View previous = longTermReadyOverlay;
+        longTermReadyOverlay = null;
+        if (previous == null) return;
+        WindowManager w = (WindowManager) getSystemService(WINDOW_SERVICE);
+        if (w != null) {
+            try { w.removeViewImmediate(previous); }
+            catch (RuntimeException ignored) { }
+        }
+    }
+
     private int dp(int x) {
         return Math.round(x * getResources().getDisplayMetrics().density);
     }
 
     private boolean attachStopOverlay() {
         removeIncomingWatchOverlay();
+        detachLongTermReadyOverlay();
         if (stopOverlay != null) return true;
         WindowManager manager = (WindowManager) getSystemService(WINDOW_SERVICE);
         if (manager == null) return false;
@@ -187,7 +262,8 @@ public final class AccessibilityShotService extends AccessibilityService {
         status.setPadding(dp(6), 0, dp(8), 0);
         bar.addView(status);
         Button stop = new Button(this);
-        stop.setText("停止共享");
+        stop.setText(LongTermSharePolicy.enabled(this)
+                ? "停止并关闭长期授权" : "停止共享");
         stop.setAllCaps(false);
         stop.setTextSize(12);
         stop.setMinWidth(0);
@@ -278,6 +354,7 @@ public final class AccessibilityShotService extends AccessibilityService {
     @Override protected void onServiceConnected() {
         super.onServiceConnected();
         connected = this;
+        LongTermSharePolicy.showStandbyWhenAllowed(this);
         ScreenSyncDiagnostics.record(this, "ACCESSIBILITY", "service_connected");
     }
     @Override public void onAccessibilityEvent(AccessibilityEvent event) { }
@@ -285,6 +362,7 @@ public final class AccessibilityShotService extends AccessibilityService {
     @Override public boolean onUnbind(android.content.Intent intent) {
         AccessibilityJpegStreamer.stopActiveOnAccessibilityLost();
         detachStopOverlay();
+        detachLongTermReadyOverlay();
         removeIncomingWatchOverlay();
         if (connected == this) connected = null;
         ScreenSyncDiagnostics.record(this, "ACCESSIBILITY", "service_unbound");
@@ -293,6 +371,7 @@ public final class AccessibilityShotService extends AccessibilityService {
     @Override public void onDestroy() {
         AccessibilityJpegStreamer.stopActiveOnAccessibilityLost();
         detachStopOverlay();
+        detachLongTermReadyOverlay();
         removeIncomingWatchOverlay();
         if (connected == this) connected = null;
         super.onDestroy();
