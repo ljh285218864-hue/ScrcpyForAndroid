@@ -87,7 +87,7 @@ public final class RemoteSetupActivity extends Activity {
     // Either phone can start an independent pair; the other scans its QR.
     // The server is explicit opt-in and does not give media consent.
     private Button scanButton, accessibilityButton, notificationsButton,
-            backgroundToggle, longTermToggle;
+            systemNotificationSettingsButton, backgroundToggle, longTermToggle;
     private TextView shareVisibleStatus, presenceState;
     private TextView hint;
     private LinearLayout permissionsPanel;
@@ -227,13 +227,30 @@ public final class RemoteSetupActivity extends Activity {
         heading(permissionsPanel, "首次使用设置");
         accessibilityButton = action(permissionsPanel, "开启无障碍截图权限",
                 v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        notificationsButton = action(permissionsPanel, "正在共享通知（可选）",
+        notificationsButton = action(permissionsPanel, "共享通知：软件内开启", v -> {
+            boolean next = !ShareNotificationPreference.isEnabled(this);
+            ShareNotificationPreference.setEnabled(this, next);
+            // A source session may already be live. If its sole visible
+            // Stop action was disabled, end that session immediately.
+            if (!next) AccessibilityJpegStreamer.stopIfNoVisibleStopControl();
+            ScreenSyncDiagnostics.record(this, "NOTICE_PREFERENCE",
+                    "app_enabled=" + next);
+            refreshPermissions();
+            report(next
+                    ? "软件内共享通知已开启；如系统禁止通知，仍不会弹出"
+                    : "软件内共享通知已关闭；配对、后台在线和重连不受影响");
+        });
+        systemNotificationSettingsButton = action(permissionsPanel,
+                "查看系统通知权限（由用户自行设置）",
                 v -> openShareNotificationSettings());
         TextView securityNote = note(permissionsPanel,
                 "无障碍截图由手机持有人开启。配对、联网和后台维护不需要通知权限。"
                 + "长期共享授权只显示在本软件的开关中，不会在待机时显示提示。"
-                + "只有真正共享时显示一条通知栏『正在共享／停止』通知。"
-                + "关闭普通通知时仍可后台在线，但屏幕截图不会启动。");
+                + "软件内共享通知与手机系统通知是两个独立开关，"
+                + "只有两者同时允许时才会显示『正在共享／停止』通知。"
+                + "系统设置始终优先；系统禁止时不弹通知、不补发悬浮条。"
+                + "配对、后台在线和重连不受通知开关影响。"
+                + "没有可见停止入口时不启动后台截图。");
         securityNote.setPadding(dp(4), dp(6), dp(4), 0);
 
         backgroundToggle = action(content, "后台在线维护：开启 / 关闭", v -> {
@@ -452,13 +469,8 @@ public final class RemoteSetupActivity extends Activity {
     }
 
     private void openShareNotificationSettings() {
-        if (android.os.Build.VERSION.SDK_INT >= 33
-                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                        != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{
-                    Manifest.permission.POST_NOTIFICATIONS}, 9434);
-            return;
-        }
+        // Never request a denied system permission automatically. This opens
+        // Settings only after a direct user tap; the app preference stays ON.
         try {
             Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
             intent.putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
@@ -496,11 +508,18 @@ public final class RemoteSetupActivity extends Activity {
             accessibilityButton.setEnabled(!AccessibilityShotService.ready());
         }
         if (notificationsButton != null) {
-            boolean allowed = AccessibilityJpegStreamer.notificationAllowed(this);
-            notificationsButton.setText(allowed
-                    ? "共享通知：已允许（可在系统设置中关闭）"
-                    : "共享通知：已关闭（配对和联网正常，无法开始屏幕共享）");
+            boolean appEnabled = ShareNotificationPreference.isEnabled(this);
+            boolean systemAllowed = AccessibilityJpegStreamer.notificationAllowed(this);
+            notificationsButton.setText("共享通知（软件）：" +
+                    (appEnabled ? "已开启，点击关闭" : "已关闭，点击开启")
+                    + "；系统：" + (systemAllowed ? "已允许" : "已禁止"));
             notificationsButton.setEnabled(true);
+        }
+        if (systemNotificationSettingsButton != null) {
+            boolean systemAllowed = AccessibilityJpegStreamer.notificationAllowed(this);
+            systemNotificationSettingsButton.setText(systemAllowed
+                    ? "系统通知：允许（点此打开系统设置）"
+                    : "系统通知：禁止（软件不会绕过；点此查看）");
         }
     }
 
@@ -562,7 +581,7 @@ public final class RemoteSetupActivity extends Activity {
         if (mediaSocket != null && mediaListener != null)
             mediaSocket.clearListenerIf(mediaListener);
         // The transport is retained by ScreenSyncMediaKeeper in this process.
-        // The visible accessibility STOP overlay, not notifications,
+        // The active source's one visible "正在共享" Stop notification
         // controls screenshot safety outside this Activity.
         if (jpegRenderer != null) {
             jpegRenderer.close();
@@ -624,7 +643,7 @@ public final class RemoteSetupActivity extends Activity {
         if (shot.start()) {
             ScreenSyncDiagnostics.record(this, "SOURCE_START", "jpeg_stream_started");
             jpegStreamer = shot;
-            mediaState.setText("本机正在共享；切换其他应用仍可点击悬浮条停止");
+            mediaState.setText("本机正在共享，可在通知栏点击停止共享");
             refreshSharingStatus();
         } else {
             String reason = AccessibilityJpegStreamer.readinessIssue(this);
@@ -633,7 +652,7 @@ public final class RemoteSetupActivity extends Activity {
                             ? "capture_or_transport" : reason));
             mediaState.setText(reason.isEmpty()
                     ? "本次共享启动失败，请查看诊断日志"
-                    : "请检查无障碍截图服务和跨应用共享停止浮条");
+                    : "请检查无障碍截图服务和可见的共享停止通知");
             mediaSocket.endSourceSession(reason.isEmpty()
                     ? "source_start_failed" : "source_permissions_missing");
         }
@@ -782,9 +801,9 @@ public final class RemoteSetupActivity extends Activity {
                                         viewerId.substring(Math.max(0, viewerId.length() - 6))
                                         + "\n是否允许对方观看你手机的当前屏幕？"
                                         + "\n将通过无障碍截图发送 JPEG 画面。"
-                                        + "\n共享期间会在其他应用上方显示"
-                                        + "「正在共享 / 停止共享」浮条，"
-                                        + "普通通知开关不控制已授权的截图。")
+                                        + "\n共享期间只在系统允许时显示"
+                                        + "「正在共享 / 停止」通知，"
+                                        + "不会以悬浮条绕过系统通知开关。")
                                 .setPositiveButton("允许本次屏幕共享", (dialog, which) -> {
                                     ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
                                             "USER_ACTION", "share_approved");

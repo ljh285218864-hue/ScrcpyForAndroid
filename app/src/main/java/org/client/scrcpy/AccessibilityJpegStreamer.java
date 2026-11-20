@@ -92,7 +92,7 @@ public final class AccessibilityJpegStreamer {
     public static boolean hasVisibleStopControl() {
         AccessibilityJpegStreamer share = current;
         return share != null && share.running && share.noticePosted
-                && notificationAllowed(share.app);
+                && ShareNotificationPreference.mayPost(share.app);
     }
 
     static void stopIfNoVisibleStopControl() {
@@ -102,7 +102,7 @@ public final class AccessibilityJpegStreamer {
     }
 
     private boolean ensureVisibleStopControl() {
-        return noticePosted && notificationAllowed(app);
+        return noticePosted && ShareNotificationPreference.mayPost(app);
     }
 
     public boolean start() {
@@ -373,7 +373,7 @@ public final class AccessibilityJpegStreamer {
 
     /** Capture-only status notification. Never starts a foreground service. */
     private boolean showNoticeIfAllowed() {
-        if (!notificationAllowed(app)) return false;
+        if (!ShareNotificationPreference.mayPost(app)) return false;
         try {
             NotificationManager nm = (NotificationManager)
                     app.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -385,7 +385,7 @@ public final class AccessibilityJpegStreamer {
                     channel.setShowBadge(false);
                     nm.createNotificationChannel(channel);
                 }
-                if (!notificationAllowed(app)) return false;
+                if (!ShareNotificationPreference.mayPost(app)) return false;
             }
             Intent intent = new Intent(app, AccessibilityShareStopReceiver.class)
                     .setAction(AccessibilityShareStopReceiver.ACTION_STOP);

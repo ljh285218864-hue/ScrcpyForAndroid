@@ -78,7 +78,18 @@ jobs:
           assert 'sourceUiVisible' not in screenshot
           assert 'showShareStopOverlay()' not in screenshot
           assert 'ensureVisibleStopControl()' in screenshot
-          assert 'return noticePosted && notificationAllowed(app);' in screenshot
+          assert 'return noticePosted && ShareNotificationPreference.mayPost(app);' in screenshot
+          assert 'if (!ShareNotificationPreference.mayPost(app)) return false;' in screenshot
+          assert 'ShareNotificationPreference.mayPost(share.app)' in screenshot
+          pref = (source/'ShareNotificationPreference.java').read_text()
+          assert 'getBoolean(KEY_ENABLED, true)' in pref
+          assert 'return isEnabled(ctx) && AccessibilityJpegStreamer.notificationAllowed(ctx)' in pref
+          assert 'setEnabled(Context ctx, boolean enabled)' in pref
+          ui = (source/'RemoteSetupActivity.java').read_text()
+          assert 'ShareNotificationPreference.setEnabled(this, next)' in ui
+          assert 'if (!next) AccessibilityJpegStreamer.stopIfNoVisibleStopControl()' in ui
+          assert 'systemNotificationSettingsButton' in ui
+          assert 'requestPermissions(new String[]{\n                    Manifest.permission.POST_NOTIFICATIONS}' not in ui
           assert 'noticePosted = showNoticeIfAllowed()' in screenshot
           assert screenshot.index('noticePosted = showNoticeIfAllowed()') < screenshot.index('if (!ensureVisibleStopControl())')
           assert 'showStandbyWhenAllowed' not in screenshot
