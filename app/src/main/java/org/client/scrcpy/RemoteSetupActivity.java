@@ -807,7 +807,16 @@ public final class RemoteSetupActivity extends Activity {
                                 viewerLayer.showWaiting("配对手机暂未连接，请在对方手机打开软件");
                             else if ("disconnected".equals(value)
                                     || "network_unavailable".equals(value))
-                                viewerLayer.showWaiting("网络连接中断，请关闭后重试");
+                                viewerLayer.showWaiting(
+                                        mediaSocket != null
+                                        && mediaSocket.hasRecoverableSession()
+                                        ? "连接暂时中断，正在续接已授权的共享…"
+                                        : "网络已中断，本次共享未能恢复");
+                            else if ("session_network_interrupted".equals(value)
+                                    || "session_rejoin_requested".equals(value))
+                                viewerLayer.showWaiting("网络切换中，正在恢复原共享…");
+                            else if ("session_resumed".equals(value))
+                                viewerLayer.showWaiting("已重新连接，等待最新画面…");
                             else if ("protocol_error".equals(value)
                                     || value.startsWith("server_error:"))
                                 viewerLayer.showWaiting(friendlyMediaStatus(value));

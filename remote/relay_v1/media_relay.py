@@ -392,12 +392,14 @@ class MediaRelay:
             session.bytes_in_window = 0
         session.frames_in_window += 1
         session.bytes_in_window += len(data)
-        if payload[0] == 2 and session.frames_in_window > 4:
-            await self.discard(session_id, "jpeg_rate_limit")
-            return
         if session.frames_in_window > MAX_FRAMES_PER_SECOND \
                 or session.bytes_in_window > MAX_BYTES_PER_SECOND:
             await self.discard(session_id, "media_rate_limit")
+            return
+        if payload[0] == 2 and session.frames_in_window > 4:
+            # A short Wi-Fi/4G buffering burst must not revoke an approved
+            # and owner-stoppable session. Drop the surplus JPEG, keeping
+            # the strict high-rate/media-byte abuse caps above unchanged.
             return
         try:
             # Never buffer unbounded frames for a slow watcher.

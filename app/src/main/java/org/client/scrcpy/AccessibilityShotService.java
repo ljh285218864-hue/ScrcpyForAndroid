@@ -43,11 +43,16 @@ public final class AccessibilityShotService extends AccessibilityService {
                         Bitmap hardware = Bitmap.wrapHardwareBuffer(
                                 buffer, result.getColorSpace());
                         if (hardware == null) throw new IllegalStateException("no bitmap");
-                        Bitmap software = hardware.copy(Bitmap.Config.ARGB_8888, false);
-                        hardware.recycle();
-                        if (software == null) throw new IllegalStateException("copy failed");
-                        callback.success(software);
-                    } catch (RuntimeException error) {
+                        try {
+                            Bitmap software = hardware.copy(Bitmap.Config.ARGB_8888, false);
+                            if (software == null) throw new IllegalStateException("copy failed");
+                            callback.success(software);
+                        } finally {
+                            // Always free the hardware wrapper, including on
+                            // a copy/decode failure to prevent native OOM.
+                            hardware.recycle();
+                        }
+                    } catch (RuntimeException | OutOfMemoryError error) {
                         ScreenSyncDiagnostics.record(service, "CAPTURE_COPY_FAIL",
                                 "error=" + error.getClass().getSimpleName());
                         callback.failure(-2);

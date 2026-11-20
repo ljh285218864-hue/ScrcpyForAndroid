@@ -339,6 +339,37 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.read(viewer))["type"], "watch_end")
         self.assertEqual((await self.read(source))["type"], "watch_end")
 
+    async def test_jpeg_burst_drops_excess_without_ending_approved_share(self):
+        one, two = self.ids["a"]
+        viewer = await self.login(one)
+        source = await self.login(two)
+        sid = await self.open_session(viewer, source)
+        await source.send(json.dumps({"type": "watch_accept", "session_id": sid}))
+        self.assertEqual((await self.read(viewer))["type"], "watch_active")
+        self.assertEqual((await self.read(source))["type"], "stream_allowed")
+        await source.send(json.dumps({"type": "video_setup", "session_id": sid,
+                                      "dimensions": [1080, 2400, 540, 1200],
+                                      "codec": "jpeg"}))
+        self.assertEqual((await self.read(viewer))["type"], "video_setup")
+        packet = (bytes([2, 0]) + bytes(8) + b"\\xff\\xd8"
+                  + bytes(68) + b"\\xff\\xd9")
+        frame = media.video_frame(sid, packet)
+        # The existing server limit is at most 4 delivered JPEGs per second.
+        self.relay.sessions[sid].window_at = media.time.monotonic()
+        for _ in range(6):
+            await source.send(frame)
+        for _ in range(4):
+            self.assertEqual(await self.read(viewer), frame)
+        await asyncio.sleep(0.05)  # Let the relay process surplus packets.
+        self.assertIn(sid, self.relay.sessions)
+        self.assertTrue(self.relay.sessions[sid].approved)
+        self.relay.sessions[sid].window_at -= 2
+        await source.send(frame)
+        self.assertEqual(await self.read(viewer), frame)
+        await viewer.send(json.dumps({"type": "watch_end", "session_id": sid}))
+        self.assertEqual((await self.read(viewer))["type"], "watch_end")
+        self.assertEqual((await self.read(source))["type"], "watch_end")
+
     async def test_valid_delivered_frames_renew_only_approved_session(self):
         one, two = self.ids["a"]
         viewer = await self.login(one)

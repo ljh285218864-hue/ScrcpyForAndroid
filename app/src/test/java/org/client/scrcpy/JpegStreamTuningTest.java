@@ -5,8 +5,8 @@ import static org.junit.Assert.*;
 
 public final class JpegStreamTuningTest {
     @Test public void portraitGetsSharperWithoutExceedingDecoderLimit() {
-        assertArrayEquals(new int[]{648, 1440}, JpegStreamTuning.targetSize(1080, 2400));
-        assertArrayEquals(new int[]{1440, 648}, JpegStreamTuning.targetSize(2400, 1080));
+        assertArrayEquals(new int[]{540, 1200}, JpegStreamTuning.targetSize(1080, 2400));
+        assertArrayEquals(new int[]{1200, 540}, JpegStreamTuning.targetSize(2400, 1080));
     }
 
     @Test public void smallScreensAreNeverUpscaled() {
@@ -18,6 +18,8 @@ public final class JpegStreamTuningTest {
         assertTrue(JpegStreamTuning.JPEG_QUALITY <= 82);
         assertTrue(JpegStreamTuning.MAX_LONG_EDGE <= 2048);
         assertTrue(JpegStreamTuning.CAPTURE_GAP_MS >= 250);
+        assertTrue(JpegStreamTuning.MIN_CAPTURE_INTERVAL_MS >= 300);
+        assertTrue(JpegStreamTuning.MIN_JPEG_QUALITY >= 45);
         assertTrue(JpegStreamTuning.MAX_PENDING_BYTES_BEFORE_CAPTURE
                 < JpegStreamTuning.MAX_PENDING_BYTES_BEFORE_SEND);
     }
