@@ -3,7 +3,7 @@ name: ScreenSync Accessibility-only APK (no ADB)
 on:
   workflow_dispatch:
   push:
-    branches: [feature/screensync-accessibility-only]
+    branches: [feature/screensync-accessibility-only, feature/screensync-notifications-isolated]
     paths:
       - 'app/**'
       - 'settings.gradle'
