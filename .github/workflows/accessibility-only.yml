@@ -1,0 +1,117 @@
+name: ScreenSync Accessibility-only APK (no ADB)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/screensync-accessibility-only]
+    paths:
+      - 'app/**'
+      - 'settings.gradle'
+      - '.github/workflows/accessibility-only.yml'
+      - 'remote/relay_v1/**'
+
+permissions:
+  contents: read
+
+jobs:
+  check-relay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify JPEG relay source and unit tests
+        run: |
+          bash -n remote/relay_v1/deploy/read-only-preflight.sh
+          python3 -m venv "$RUNNER_TEMP/ss-relay"
+          . "$RUNNER_TEMP/ss-relay/bin/activate"
+          python3 -m pip install -r remote/relay_v1/requirements-media.txt
+          python3 -m unittest discover -s remote/relay_v1 -p 'test_*.py' -v
+
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: 'false'
+      - name: Install Android 36
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+      - name: Guard pure accessibility screenshot product
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          source = Path('app/src/main/java/org/client/scrcpy')
+          files = list(source.rglob('*.java'))
+          forbidden = ('AdbHelper.java','LocalScrcpyStreamer.java',
+                       'SystemAdbQrPairingSession.java','MainActivity.java',
+                       'SendCommands.java','WakeLanService.java','Scrcpy.java',
+                       'ScrcpyHost.java','UsbShellCompat.java')
+          assert all(not (source / name).exists() for name in forbidden)
+          assert not (source / 'usb').exists()
+          assert not (source / 'utils').exists()
+          assert not (source / 'decoder').exists()
+          assert not (source / 'model').exists()
+          assert 'include \u0027:server\u0027' not in Path('settings.gradle').read_text()
+          gradle = Path('app/build.gradle').read_text()
+          assert 'libadb' not in gradle.lower()
+          assert 'copyServer' not in gradle
+          manifest = ET.parse('app/src/main/AndroidManifest.xml').getroot()
+          ns = '{http://schemas.android.com/apk/res/android}'
+          services = [x.get(ns+'name','') for x in manifest.findall('.//service')]
+          assert services == ['.AccessibilityShotService'], services
+          assert (source / 'AccessibilityJpegStreamer.java').exists()
+          assert 'AccessibilityShotService.capture(' in (source/'AccessibilityJpegStreamer.java').read_text()
+          assert 'LocalScrcpyStreamer' not in (source/'RemoteSetupActivity.java').read_text()
+          assert (Path('remote/relay_v1/media_relay.py')).exists()
+          print('PASS: accessibility/JPEG-only capture; legacy ADB deleted from application source')
+          PY
+      - name: Unit tests and assemble JPEG APK
+        env:
+          SCREENSYNC_NOVPN_URL: https://relay.privyluxe.com:8443
+          SCREENSYNC_MEDIA_URL: wss://relay.privyluxe.com:8443/media
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew :app:testScrcpyDebugUnitTest :app:assembleScrcpyDebug --no-daemon --stacktrace
+          apk="$(find app/build/outputs/apk/scrcpy/debug -maxdepth 1 -name '*.apk' -print -quit)"
+          test -s "$apk"
+          unzip -t "$apk" | tail -2
+          python3 - "$apk" <<'PY'
+          import sys,zipfile
+          apk = sys.argv[1]
+          with zipfile.ZipFile(apk) as z:
+              names = z.namelist()
+              assert not any('libadb.so' in n for n in names), 'old native ADB packed'
+              assert not any('scrcpy-server.jar' in n for n in names), 'old scrcpy server packed'
+              dex = b''.join(z.read(n) for n in names if n.startswith('classes') and n.endswith('.dex'))
+              assert b'org/client/scrcpy/AccessibilityShotService' in dex
+              assert b'org/client/scrcpy/AccessibilityJpegStreamer' in dex
+              for forbidden in (b'org/client/scrcpy/AdbHelper',
+                                b'org/client/scrcpy/LocalScrcpyStreamer',
+                                b'org/client/scrcpy/MainActivity',
+                                b'org/client/scrcpy/WakeLanService'):
+                  assert forbidden not in dex, f'old component in DEX: {forbidden}'
+              for endpoint in (b'https://relay.privyluxe.com:8443',
+                               b'wss://relay.privyluxe.com:8443/media'):
+                  assert endpoint in dex, f'missing relay endpoint {endpoint}'
+          print('PASS: APK contains native Android screenshot source, no wireless ADB binary/classes')
+          PY
+          cp "$apk" ScreenSync-Accessibility-JPEG-NoADB-arm64.apk
+          sha256sum ScreenSync-Accessibility-JPEG-NoADB-arm64.apk \
+            > ScreenSync-Accessibility-JPEG-NoADB-arm64.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScreenSync-Accessibility-JPEG-NoADB
+          path: |
+            ScreenSync-Accessibility-JPEG-NoADB-arm64.apk
+            ScreenSync-Accessibility-JPEG-NoADB-arm64.sha256
+          retention-days: 14
+          if-no-files-found: error

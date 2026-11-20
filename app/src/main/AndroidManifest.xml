@@ -28,14 +28,6 @@
 
         <activity android:name=".RemoteSetupActivity" android:exported="true" />
 
-        <!-- Legacy LAN receiver uses a foreground-service notification.
-             Disabled only in this no-VPN experimental product variant;
-             the original LAN branch stays untouched. -->
-        <service
-            android:name=".WakeLanService"
-            android:enabled="false"
-            android:exported="false" />
-
         <service
             android:name=".AccessibilityShotService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
@@ -51,7 +43,5 @@
 
         <receiver android:name=".AccessibilityShareStopReceiver"
             android:exported="false" />
-
     </application>
-
 </manifest>
