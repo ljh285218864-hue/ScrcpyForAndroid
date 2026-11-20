@@ -61,6 +61,32 @@ public final class RemoteSetupActivity extends Activity {
     private FullscreenViewer viewerLayer;
     private int receivedVideoFrames;
     private boolean requestAfterConnect;
+    private boolean pushWakeRequested;
+    private long pushWakeDeadlineMs;
+    // B retries only while its viewer remains open, at most 45 seconds.
+    private final Runnable retryWatchAfterWake = new Runnable() {
+        @Override public void run() {
+            if (!active || !requestAfterConnect || viewerLayer == null
+                    || !viewerLayer.isShowing() || mediaSocket == null) return;
+            if (android.os.SystemClock.elapsedRealtime() > pushWakeDeadlineMs) {
+                requestAfterConnect = false;
+                mediaState.setText("远程唤醒超时：请确认 A 手机支持 Google Play 服务");
+                viewerLayer.showWaiting("未能连接被观看手机，请检查其网络和后台限制");
+                return;
+            }
+            if (!mediaSocket.hasActiveViewerSession()
+                    && !mediaSocket.hasViewerRequestOutstanding()
+                    && mediaSocket.requestWatch()) {
+                requestAfterConnect = false;
+                ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
+                        "FCM_VIEW_RETRY", "watch_request_resent");
+                mediaState.setText("正在等待 A 恢复连接并确认本次共享");
+                viewerLayer.showWaiting("正在连接 A 手机，请稍候…");
+                return;
+            }
+            ui.postDelayed(this, 3000);
+        }
+    };
     private boolean active;
     private boolean busy;
     private String currentState = "";
@@ -214,6 +240,7 @@ public final class RemoteSetupActivity extends Activity {
                     viewerLayer.showWaiting("等待对方手机确认本次共享…");
                 return;
             }
+            resetPushWakeRetry();
             requestAfterConnect = true;
             if (mediaSocket == null) {
                 connectMediaTest();
@@ -234,6 +261,7 @@ public final class RemoteSetupActivity extends Activity {
             ScreenSyncDiagnostics.record(this, "USER_ACTION", "stop_pressed");
             LongTermSharePolicy.disable(this);
             requestAfterConnect = false;
+            resetPushWakeRetry();
             stopLocalStream();
             if (jpegRenderer != null) jpegRenderer.stopSession();
             if (mediaSocket != null) mediaSocket.endSession();
@@ -380,6 +408,7 @@ public final class RemoteSetupActivity extends Activity {
             // Closing a picture does not close WSS, but a request that has
             // not yet been transmitted must not auto-start while hidden.
             requestAfterConnect = false;
+            resetPushWakeRetry();
         });
         root.addView(viewerLayer, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -394,6 +423,52 @@ public final class RemoteSetupActivity extends Activity {
         ScreenSyncDiagnostics.record(this, "APP", "simple_ui_started");
         refreshButtons();
         refreshPermissions();
+    }
+
+    private void resetPushWakeRetry() {
+        pushWakeRequested = false;
+        pushWakeDeadlineMs = 0;
+        ui.removeCallbacks(retryWatchAfterWake);
+    }
+
+    private void beginPeerWakeAfterOffline() {
+        if (!active || viewerLayer == null || !viewerLayer.isShowing()) return;
+        requestAfterConnect = true;
+        if (pushWakeDeadlineMs == 0)
+            pushWakeDeadlineMs = android.os.SystemClock.elapsedRealtime() + 45_000L;
+        if (!pushWakeRequested) {
+            pushWakeRequested = true;
+            // No network request on Android's main thread. A remote wake is
+            // never a screen-capture command, only a signal reconnect hint.
+            new Thread(() -> {
+                String outcome;
+                try {
+                    outcome = NoVpnApi.requestPeerWake(
+                            getApplicationContext()).optString("state", "unavailable");
+                } catch (Exception failure) {
+                    outcome = "unavailable";
+                }
+                final String result = outcome;
+                ScreenSyncDiagnostics.record(getApplicationContext(),
+                        "FCM_WAKE_REQUEST", "state=" + result);
+                ui.post(() -> {
+                    if (!active || viewerLayer == null
+                            || !viewerLayer.isShowing()) return;
+                    if ("sent".equals(result)) {
+                        mediaState.setText("已发送远程唤醒，等待 A 手机连接");
+                    } else if ("not_configured".equals(result)
+                            || "peer_not_registered".equals(result)) {
+                        mediaState.setText("FCM 尚未配置或 A 手机未注册推送；仍尝试网络连接");
+                    } else {
+                        mediaState.setText("远程唤醒未确认，正在尝试普通网络连接");
+                    }
+                });
+            }, "screensync-fcm-wake").start();
+        }
+        ui.removeCallbacks(retryWatchAfterWake);
+        ui.postDelayed(retryWatchAfterWake, 3000);
+        if (viewerLayer != null)
+            viewerLayer.showWaiting("正在尝试远程唤醒 A 手机…");
     }
 
     private void showDiagnostics() {
@@ -598,6 +673,7 @@ public final class RemoteSetupActivity extends Activity {
         active = false;
         refreshPendingShareRequest();
         requestAfterConnect = false;
+        resetPushWakeRetry();
         ui.removeCallbacks(refresh);
         // If the owner disabled background online maintenance, leave no
         // unattended WSS connection when returning to the home screen.
@@ -832,6 +908,14 @@ public final class RemoteSetupActivity extends Activity {
                             stopLocalStream();
                         }
                         if (!active || isFinishing()) return;
+                        if ("server_error:PEER_OFFLINE".equals(value)) {
+                            beginPeerWakeAfterOffline();
+                            return;
+                        }
+                        if ("viewer_session_active".equals(value)) {
+                            requestAfterConnect = false;
+                            resetPushWakeRetry();
+                        }
                         mediaState.setText("viewer_session_ended".equals(value)
                                 && receivedVideoFrames == 0
                                 ? "对方结束了共享且没有发送画面，请检查被观看手机权限"
