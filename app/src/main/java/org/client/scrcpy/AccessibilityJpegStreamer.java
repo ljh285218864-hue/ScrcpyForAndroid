@@ -19,8 +19,10 @@ import java.util.concurrent.Executors;
 
 /**
  * User-initiated screenshot sharing, without foreground service, ADB,
- * MediaProjection or VPN. Notification + STOP action remain visible while
- * sharing. The remote side must get explicit permission for EACH session.
+ * MediaProjection or VPN. Source activity always shows a sharing status and
+ * a Stop control while visible. The optional notification may also provide
+ * Stop while the activity is not visible. Explicit permission is required
+ * for EACH session; no hidden capture without a visible stop control.
  * Never auto-resumes capture on reboot, network reconnection or process start.
  */
 public final class AccessibilityJpegStreamer {
@@ -29,8 +31,9 @@ public final class AccessibilityJpegStreamer {
     // Single, quiet sharing-status notification; never bypass app/channel settings.
     private static final int NOTICE_ID = 8413;
     private static final String CHANNEL_ID = "screensync_active_share";
-    private static final long NOTIFICATION_CHECK_INTERVAL_MS = 5000L;
+    private static final long VISIBILITY_CHECK_INTERVAL_MS = 1000L;
     private static final long DELAY_MS = JpegStreamTuning.CAPTURE_GAP_MS;
+    private static volatile boolean sourceUiVisible;
     private static volatile AccessibilityJpegStreamer current;
 
     private final Context app;
@@ -40,7 +43,8 @@ public final class AccessibilityJpegStreamer {
     private final ExecutorService encoder = Executors.newSingleThreadExecutor();
     private volatile boolean running;
     private volatile boolean busy;
-    private long lastNotificationCheckMs;
+    private long lastVisibilityCheckMs;
+    private volatile boolean noticePosted;
     private int captureSerial;
     private int outWidth, outHeight;
     private int screenshotCount, sendCount, sendFailCount, captureFailCount;
@@ -54,35 +58,47 @@ public final class AccessibilityJpegStreamer {
         listener = cb;
     }
 
-    /** Use the SAME prerequisite logic in the UI and the capture source.
-     * A viewer's notification permission is not proof that the SOURCE is ready.
-     */
+    /** Device-owner accessibility permission, never ordinary notifications. */
     public static String readinessIssue(Context context) {
-        if (!AccessibilityShotService.ready()) return "accessibility_not_enabled";
+        return AccessibilityShotService.ready() ? "" : "accessibility_not_enabled";
+    }
+
+    /** Ordinary sharing notification is optional, not a capture prerequisite. */
+    public static boolean notificationAllowed(Context context) {
         NotificationManager manager = (NotificationManager)
                 context.getSystemService(Context.NOTIFICATION_SERVICE);
-        if (manager == null) return "notification_service_unavailable";
+        if (manager == null) return false;
         if (Build.VERSION.SDK_INT >= 33
                 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                        != PackageManager.PERMISSION_GRANTED)
-            return "notification_permission_missing";
+                        != PackageManager.PERMISSION_GRANTED) return false;
         if (Build.VERSION.SDK_INT >= 24 && !manager.areNotificationsEnabled())
-            return "app_notifications_disabled";
+            return false;
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationChannel channel = manager.getNotificationChannel(CHANNEL_ID);
             if (channel != null
                     && channel.getImportance() == NotificationManager.IMPORTANCE_NONE)
-                return "sharing_channel_blocked";
+                return false;
         }
-        return "";
+        return true;
     }
 
-    public static boolean notificationAllowed(Context context) {
-        String issue = readinessIssue(context);
-        return !"notification_service_unavailable".equals(issue)
-                && !issue.startsWith("notification_")
-                && !"app_notifications_disabled".equals(issue)
-                && !"sharing_channel_blocked".equals(issue);
+    /** Called solely by the device owner's visible share/stop activity. */
+    static void setSourceUiVisible(boolean visible) {
+        sourceUiVisible = visible;
+        if (!visible) stopIfNoVisibleStopControl();
+    }
+
+    /** No hidden capture after leaving the UI if optional notice is absent. */
+    static void stopIfNoVisibleStopControl() {
+        AccessibilityJpegStreamer stream = current;
+        if (stream != null && stream.running
+                && !sourceUiVisible && !stream.hasPostedNotice()) {
+            stream.stopDueToMissingVisibleStop();
+        }
+    }
+
+    private boolean hasPostedNotice() {
+        return noticePosted && notificationAllowed(app);
     }
 
     public boolean start() {
@@ -102,15 +118,15 @@ public final class AccessibilityJpegStreamer {
         outHeight = dimensions[1];
         current = this;
         running = true;
-        try {
-            // The source's user-visible notification must be posted BEFORE
-            // any video_setup is sent to the remote viewer.
-            showNotice();
-        } catch (RuntimeException failure) {
+        // Notice delivery is best-effort, never a general app permission gate.
+        // But capture requires at least one actual visible Stop control.
+        noticePosted = showNoticeIfAllowed();
+        if (!sourceUiVisible && !hasPostedNotice()) {
             running = false;
             current = null;
+            encoder.shutdownNow();
             ScreenSyncDiagnostics.record(app, "CAPTURE_START",
-                    "notification_error=" + failure.getClass().getSimpleName());
+                    "no_visible_stop_control");
             return false;
         }
         if (!socket.sendVideoSetup(new int[] {
@@ -132,14 +148,14 @@ public final class AccessibilityJpegStreamer {
 
     private void capture() {
         if (!running || busy) return;
-        // The device owner controls Android notification permissions. If they
-        // disable this app's shared-screen status while streaming, end capture
-        // rather than secretly continuing with no visible STOP control.
+        // The owner can disable ordinary notices while keeping this app
+        // visible. If neither the UI nor the optional notice has a visible
+        // stop control, terminate the video session (not server presence).
         long now = android.os.SystemClock.elapsedRealtime();
-        if (now - lastNotificationCheckMs >= NOTIFICATION_CHECK_INTERVAL_MS) {
-            lastNotificationCheckMs = now;
-            if (!notificationAllowed(app)) {
-                stopDueToNotificationSettings();
+        if (now - lastVisibilityCheckMs >= VISIBILITY_CHECK_INTERVAL_MS) {
+            lastVisibilityCheckMs = now;
+            if (!sourceUiVisible && !hasPostedNotice()) {
+                stopDueToMissingVisibleStop();
                 return;
             }
         }
@@ -258,6 +274,7 @@ public final class AccessibilityJpegStreamer {
         if (current == this) current = null;
         NotificationManager nm = (NotificationManager)
                 app.getSystemService(Context.NOTIFICATION_SERVICE);
+        noticePosted = false;
         if (nm != null) nm.cancel(NOTICE_ID);
     }
 
@@ -270,6 +287,12 @@ public final class AccessibilityJpegStreamer {
     public static void startPreviouslyApprovedWithoutUi(
             Context appContext, NoVpnMediaSocket media) {
         if (sharingActive() || !media.hasApprovedSourceSession()) return;
+        // An off-screen session may only begin when a visible STOP notice
+        // can actually be posted. Never covertly start capture.
+        if (!notificationAllowed(appContext)) {
+            media.endSourceSession("no_visible_stop_control");
+            return;
+        }
         AccessibilityJpegStreamer stream = new AccessibilityJpegStreamer(
                 appContext, media, reason ->
                     ScreenSyncDiagnostics.record(appContext, "BACKGROUND_SHARE", reason));
@@ -303,47 +326,52 @@ public final class AccessibilityJpegStreamer {
         stream.main.post(() -> stream.listener.onStopped("共享已从通知栏停止"));
     }
 
-    private void stopDueToNotificationSettings() {
-        ScreenSyncDiagnostics.record(app, "CAPTURE_STOP", "sharing_notification_disabled");
+    private void stopDueToMissingVisibleStop() {
+        if (!running) return;
+        ScreenSyncDiagnostics.record(app, "CAPTURE_STOP", "no_visible_stop_control");
         stop();
         socket.endSourceSession();
-        main.post(() -> listener.onStopped("系统已关闭共享通知，屏幕共享已停止"));
+        main.post(() -> listener.onStopped("共享已结束：请在软件内保持可见或开启共享状态通知"));
     }
 
-    private void showNotice() {
-        // Fail closed: no forced alert, no workaround for blocked app/channel.
-        if (!notificationAllowed(app))
-            throw new IllegalStateException("sharing_notifications_disabled");
-        NotificationManager nm = (NotificationManager)
-                app.getSystemService(Context.NOTIFICATION_SERVICE);
-        if (nm == null) throw new IllegalStateException("notification_manager_missing");
-        if (Build.VERSION.SDK_INT >= 26) {
-            NotificationChannel existing = nm.getNotificationChannel(CHANNEL_ID);
-            if (existing == null) {
-                NotificationChannel channel = new NotificationChannel(CHANNEL_ID,
-                        "ScreenSync 共享状态", NotificationManager.IMPORTANCE_LOW);
-                channel.setShowBadge(false);
-                nm.createNotificationChannel(channel);
+    /** Best-effort ordinary notice, never starts a foreground service. */
+    private boolean showNoticeIfAllowed() {
+        if (!notificationAllowed(app)) return false;
+        try {
+            NotificationManager nm = (NotificationManager)
+                    app.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) return false;
+            if (Build.VERSION.SDK_INT >= 26) {
+                if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+                    NotificationChannel channel = new NotificationChannel(CHANNEL_ID,
+                            "ScreenSync 共享状态", NotificationManager.IMPORTANCE_LOW);
+                    channel.setShowBadge(false);
+                    nm.createNotificationChannel(channel);
+                }
+                if (!notificationAllowed(app)) return false;
             }
-            // Importance chosen by the owner is never overwritten.
-            if (!notificationAllowed(app))
-                throw new IllegalStateException("sharing_channel_disabled");
+            Intent intent = new Intent(app, AccessibilityShareStopReceiver.class)
+                    .setAction(AccessibilityShareStopReceiver.ACTION_STOP);
+            PendingIntent stopAction = PendingIntent.getBroadcast(app, NOTICE_ID, intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            Notification.Builder notification = Build.VERSION.SDK_INT >= 26
+                    ? new Notification.Builder(app, CHANNEL_ID)
+                    : new Notification.Builder(app);
+            notification.setSmallIcon(android.R.drawable.ic_menu_view)
+                    .setContentTitle("ScreenSync 正在共享屏幕")
+                    .setContentText("屏幕截图正在传输，点击停止可立即结束共享")
+                    .setOngoing(true).setOnlyAlertOnce(true)
+                    .setDefaults(0)
+                    .addAction(new Notification.Action.Builder(
+                            android.R.drawable.ic_menu_close_clear_cancel,
+                            "停止共享", stopAction).build());
+            nm.notify(NOTICE_ID, notification.build());
+            return true;
+        } catch (RuntimeException failure) {
+            ScreenSyncDiagnostics.record(app, "CAPTURE_NOTICE",
+                    "optional_notice_failed=" + failure.getClass().getSimpleName());
+            return false;
         }
-        Intent intent = new Intent(app, AccessibilityShareStopReceiver.class)
-                .setAction(AccessibilityShareStopReceiver.ACTION_STOP);
-        PendingIntent stopAction = PendingIntent.getBroadcast(app, NOTICE_ID, intent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Notification.Builder notification = Build.VERSION.SDK_INT >= 26
-                ? new Notification.Builder(app, CHANNEL_ID)
-                : new Notification.Builder(app);
-        notification.setSmallIcon(android.R.drawable.ic_menu_view)
-                .setContentTitle("ScreenSync 正在共享屏幕")
-                .setContentText("屏幕截图正在传输，点击停止可立即结束共享")
-                .setOngoing(true).setOnlyAlertOnce(true)
-                .setDefaults(0)
-                .addAction(new Notification.Action.Builder(
-                        android.R.drawable.ic_menu_close_clear_cancel,
-                        "停止共享", stopAction).build());
-        nm.notify(NOTICE_ID, notification.build());
     }
+
 }

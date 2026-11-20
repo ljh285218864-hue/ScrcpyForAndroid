@@ -86,7 +86,8 @@ public final class RemoteSetupActivity extends Activity {
     // Minimal everyday screen: no ADB, USB, Wi-Fi IP, VPN, ports or test controls.
     // Either phone can start an independent pair; the other scans its QR.
     // The server is explicit opt-in and does not give media consent.
-    private Button scanButton, accessibilityButton, notificationsButton;
+    private Button scanButton, accessibilityButton, notificationsButton, backgroundToggle;
+    private TextView shareVisibleStatus, presenceState;
     private TextView hint;
     private LinearLayout permissionsPanel;
 
@@ -124,6 +125,11 @@ public final class RemoteSetupActivity extends Activity {
         status = note(statusPanel, "正在检查配对状态…");
         status.setTextColor(Color.rgb(48, 63, 83));
         status.setPadding(0, dp(5), 0, dp(3));
+        shareVisibleStatus = note(statusPanel,
+                "本机未共享屏幕。开始共享时，此处会显示状态及停止入口。");
+        shareVisibleStatus.setTextColor(Color.rgb(140, 35, 35));
+        shareVisibleStatus.setTextSize(16);
+        shareVisibleStatus.setPadding(0, dp(8), 0, dp(8));
 
         hint = note(content, "第一台手机生成二维码，第二台扫码，核对六位数字后即可连接。");
         hint.setPadding(dp(4), dp(12), dp(4), dp(12));
@@ -212,18 +218,49 @@ public final class RemoteSetupActivity extends Activity {
             if (mediaSocket != null) mediaSocket.endSession();
             if (viewerLayer != null) viewerLayer.closePicture();
             mediaState.setText("本次共享已结束，配对仍然有效");
+            refreshSharingStatus();
         });
 
         permissionsPanel = panel(content);
         heading(permissionsPanel, "首次使用设置");
         accessibilityButton = action(permissionsPanel, "开启无障碍截图权限",
                 v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        notificationsButton = action(permissionsPanel, "允许共享状态通知",
+        notificationsButton = action(permissionsPanel, "共享状态通知（可选）",
                 v -> openShareNotificationSettings());
         TextView securityNote = note(permissionsPanel,
-                "无障碍服务需由手机持有人开启。每次共享均需本机明确同意，"
-                + "共享时会显示可停止的通知。");
+                "无障碍截图需由手机持有人明确开启。配对、联网和心跳无需通知权限。"
+                + "每次共享仍需同意；关闭通知时仅在软件页面可见期间共享，"
+                + "退出页面会停止截图。");
         securityNote.setPadding(dp(4), dp(6), dp(4), 0);
+
+        backgroundToggle = action(content, "后台在线维护：开启 / 关闭", v -> {
+            if (!NoVpnApi.isRegistered(this) || !"paired".equals(currentState)) {
+                report("请先完成双方配对");
+                return;
+            }
+            boolean enabled = !NoVpnBackgroundSync.isEnabled(this);
+            try {
+                NoVpnBackgroundSync.setEnabled(this, enabled);
+                report(enabled ? "已开启后台心跳恢复：网络恢复、重启后尽力联系服务器；"
+                        + "不自动截图或批准观看，系统可能延迟。"
+                        : "已关闭后台心跳恢复，配对依然有效。");
+                refreshPresenceState();
+            } catch (RuntimeException error) {
+                report("后台在线设置失败，请检查系统后台运行权限");
+            }
+        });
+        presenceState = note(content, "");
+        refreshPresenceState();
+        action(content, "后台自启动与电池设置", v -> new AlertDialog.Builder(this)
+                .setTitle("后台在线设置（由手机持有人操作）")
+                .setMessage("可在手机应用设置中允许后台运行、自动启动和电池无限制。"
+                        + "这些设置会提高心跳恢复概率，但无法保证强行停止后自动唤醒，"
+                        + "也不会在开机时自动启动截图或批准远程观看。")
+                .setPositiveButton("打开本应用设置", (dialog, which) -> {
+                    Intent settings = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                    settings.setData(android.net.Uri.parse("package:" + getPackageName()));
+                    startActivity(settings);
+                }).setNegativeButton("取消", null).show());
 
         revoke = action(content, "解除配对", v ->
                 new AlertDialog.Builder(this)
@@ -381,19 +418,16 @@ public final class RemoteSetupActivity extends Activity {
     private void showSourcePrerequisiteDialog(String issue) {
         boolean needsAccessibility = "accessibility_not_enabled".equals(issue);
         String message = needsAccessibility
-                ? "被观看手机没有开启无障碍截图服务。请先在本机设置开启，再让另一台手机重新申请观看。"
-                : "被观看手机没有允许 ScreenSync 显示共享状态通知。"
-                    + "请开启应用通知和 ScreenSync 共享状态通知频道，再重新申请观看。";
+                ? "本机没有开启无障碍截图服务。请在本机系统设置里手动开启。"
+                : "当前无法启动截图；请检查是否有可见的共享状态和停止入口。";
         new AlertDialog.Builder(this)
                 .setTitle("当前无法共享屏幕")
                 .setMessage(message + "\n\n本次请求已拒绝，不会在后台偷偷启动共享。")
-                .setPositiveButton(needsAccessibility ? "去开启无障碍" : "去开启通知",
+                .setPositiveButton(needsAccessibility ? "去开启无障碍" : "确定",
                         (dialog, which) -> {
                             if (needsAccessibility) {
                                 startActivity(new Intent(
                                         Settings.ACTION_ACCESSIBILITY_SETTINGS));
-                            } else {
-                                openShareNotificationSettings();
                             }
                         })
                 .setNegativeButton("稍后", null)
@@ -409,8 +443,9 @@ public final class RemoteSetupActivity extends Activity {
         if (notificationsButton != null) {
             boolean allowed = AccessibilityJpegStreamer.notificationAllowed(this);
             notificationsButton.setText(allowed
-                    ? "✓ 共享状态通知已允许" : "2 · 允许共享状态通知");
-            notificationsButton.setEnabled(!allowed);
+                    ? "共享通知：已允许（可在系统设置中关闭）"
+                    : "共享通知：已关闭（不影响配对、联网和可见页面共享）");
+            notificationsButton.setEnabled(true);
         }
     }
 
@@ -427,6 +462,10 @@ public final class RemoteSetupActivity extends Activity {
         refresh.run();
         refreshButtons();
         refreshPermissions();
+        AccessibilityJpegStreamer.setSourceUiVisible(true);
+        refreshSharingStatus();
+        refreshPresenceState();
+        NoVpnBackgroundSync.requestOnce(this, "owner_opened");
         ui.postDelayed(this::refreshPermissions, 600);
     }
 
@@ -439,6 +478,7 @@ public final class RemoteSetupActivity extends Activity {
     }
 
     @Override protected void onPause() {
+        AccessibilityJpegStreamer.setSourceUiVisible(false);
         active = false;
         requestAfterConnect = false;
         ui.removeCallbacks(refresh);
@@ -457,7 +497,7 @@ public final class RemoteSetupActivity extends Activity {
         if (mediaSocket != null && mediaListener != null)
             mediaSocket.clearListenerIf(mediaListener);
         // The transport is retained by ScreenSyncMediaKeeper in this process.
-        // The screenshot capturer has its own stop notification while active.
+        // Capture cannot continue invisibly without a visible stop control.
         if (jpegRenderer != null) {
             jpegRenderer.close();
             jpegRenderer = null;
@@ -473,6 +513,26 @@ public final class RemoteSetupActivity extends Activity {
         jpegStreamer = null;
         if (shot != null) shot.stop();
         else AccessibilityJpegStreamer.stopActiveWithoutSending();
+        refreshSharingStatus();
+    }
+
+    private void refreshSharingStatus() {
+        if (shareVisibleStatus == null) return;
+        shareVisibleStatus.setText(AccessibilityJpegStreamer.sharingActive()
+                ? "本机正在共享屏幕 · 点击下方「结束本次观看 / 共享」随时停止"
+                : "本机未共享屏幕。配对在线不代表正在共享。");
+    }
+
+    private void refreshPresenceState() {
+        if (presenceState == null) return;
+        boolean enabled = NoVpnBackgroundSync.isEnabled(this);
+        long last = NoVpnBackgroundSync.lastSuccess(this);
+        long age = System.currentTimeMillis() - last;
+        String msg = last <= 0 ? "尚未确认心跳成功"
+                : age >= 0 && age <= 45000 ? "最近45秒有真实心跳"
+                : "超过45秒未确认在线，可能已离线";
+        presenceState.setText("后台在线维护：" + (enabled ? "已开启" : "已关闭")
+                + "；" + msg + "。这不是屏幕可观看状态。");
     }
 
     private void startLocalStream() {
@@ -498,7 +558,8 @@ public final class RemoteSetupActivity extends Activity {
         if (shot.start()) {
             ScreenSyncDiagnostics.record(this, "SOURCE_START", "jpeg_stream_started");
             jpegStreamer = shot;
-            mediaState.setText("屏幕共享中，可从通知栏立即停止");
+            mediaState.setText("本机屏幕正在共享，随时可在软件内停止");
+            refreshSharingStatus();
         } else {
             String reason = AccessibilityJpegStreamer.readinessIssue(this);
             ScreenSyncDiagnostics.record(this, "SOURCE_START",
@@ -506,7 +567,7 @@ public final class RemoteSetupActivity extends Activity {
                             ? "capture_or_transport" : reason));
             mediaState.setText(reason.isEmpty()
                     ? "本次共享启动失败，请查看诊断日志"
-                    : "共享前请先开启无障碍及通知权限");
+                    : "共享前请先在设备上开启无障碍截图服务");
             mediaSocket.endSourceSession(reason.isEmpty()
                     ? "source_start_failed" : "source_permissions_missing");
         }
@@ -586,8 +647,8 @@ public final class RemoteSetupActivity extends Activity {
                                 if ("viewer_session_ended".equals(value)
                                         && receivedVideoFrames == 0)
                                     viewerLayer.showWaiting(
-                                            "没有收到画面。请在被观看手机开启无障碍截图和应用通知，"
-                                            + "然后关闭画面并重新申请观看。");
+                                            "没有收到画面。请检查被观看手机的无障碍权限、"
+                                            + "共享状态和网络连接，再重新申请。");
                                 else
                                     viewerLayer.showWaiting(
                                             "本次共享已结束，点击右上角关闭");
@@ -637,8 +698,9 @@ public final class RemoteSetupActivity extends Activity {
                                 .setMessage("对方设备 ID 尾号：" +
                                         viewerId.substring(Math.max(0, viewerId.length() - 6))
                                         + "\n是否允许对方观看你手机的当前屏幕？"
-                                        + "\n将使用本机已授权的无障碍截图发送画面；通知栏显示正在共享。"
-                                        + "\n可点击停止共享立即结束。")
+                                        + "\n将通过无障碍截图发送 JPEG 画面。"
+                                        + "\n共享期间软件会显示状态和停止按钮；"
+                                        + "若关闭普通通知，离开软件页面即结束截图。")
                                 .setPositiveButton("允许本次屏幕共享", (dialog, which) -> {
                                     ScreenSyncDiagnostics.record(RemoteSetupActivity.this,
                                             "USER_ACTION", "share_approved");
@@ -795,6 +857,13 @@ public final class RemoteSetupActivity extends Activity {
         if (permissionsPanel != null)
             permissionsPanel.setVisibility(paired
                     ? android.view.View.VISIBLE : android.view.View.GONE);
+        if (backgroundToggle != null) {
+            backgroundToggle.setVisibility(paired
+                    ? android.view.View.VISIBLE : android.view.View.GONE);
+            backgroundToggle.setText(NoVpnBackgroundSync.isEnabled(this)
+                    ? "关闭后台在线维护（不影响配对）"
+                    : "开启后台在线维护（不采集屏幕）");
+        }
         if (revoke != null) {
             revoke.setVisibility(registered
                     ? android.view.View.VISIBLE : android.view.View.GONE);
@@ -818,6 +887,8 @@ public final class RemoteSetupActivity extends Activity {
             }
         }
         refreshPermissions();
+        refreshSharingStatus();
+        refreshPresenceState();
     }
 
     private void report(String value) {

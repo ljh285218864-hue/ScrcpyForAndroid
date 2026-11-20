@@ -71,6 +71,21 @@ jobs:
           assert 'AccessibilityShotService.capture(' in (source/'AccessibilityJpegStreamer.java').read_text()
           assert 'LocalScrcpyStreamer' not in (source/'RemoteSetupActivity.java').read_text()
           assert (Path('remote/relay_v1/media_relay.py')).exists()
+          screenshot = (source / 'AccessibilityJpegStreamer.java').read_text()
+          assert 'notification_permission_missing' not in screenshot
+          assert 'showNoticeIfAllowed()' in screenshot
+          assert 'stopIfNoVisibleStopControl()' in screenshot
+          assert 'sourceUiVisible' in screenshot
+          assert 'NoVpnPresenceLoop.start(context)' in (source/'NoVpnBackgroundSync.java').read_text()
+          boot = (source/'NoVpnStandbyRestoreReceiver.java').read_text()
+          for forbidden in ('takeScreenshot(', 'startService(', 'watch_accept',
+                            'MediaProjection', 'startForeground('):
+              assert forbidden not in boot
+          import xml.etree.ElementTree as ET
+          android = '{http://schemas.android.com/apk/res/android}'
+          manifest = ET.parse('app/src/main/AndroidManifest.xml').getroot()
+          permissions = {p.attrib.get(android+'name') for p in manifest.findall('uses-permission')}
+          assert 'android.permission.RECEIVE_BOOT_COMPLETED' in permissions
           print('PASS: accessibility/JPEG-only capture; legacy ADB deleted from application source')
           PY
       - name: Unit tests and assemble JPEG APK
