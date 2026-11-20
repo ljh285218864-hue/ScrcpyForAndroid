@@ -333,6 +333,9 @@ public final class AccessibilityJpegStreamer {
     }
 
     public static void stopActiveFromNotification() {
+        // A deliberate source-device Stop revokes background auto-approval.
+        AccessibilityJpegStreamer stream = current;
+        if (stream != null) LongTermSharePolicy.disable(stream.app);
         stopFromSourceDevice("共享已从通知栏停止");
     }
 

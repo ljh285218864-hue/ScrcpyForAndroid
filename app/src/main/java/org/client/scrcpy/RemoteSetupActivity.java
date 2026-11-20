@@ -243,10 +243,11 @@ public final class RemoteSetupActivity extends Activity {
             }
             boolean enabled = !NoVpnBackgroundSync.isEnabled(this);
             try {
+                if (!enabled) LongTermSharePolicy.disable(this);
                 NoVpnBackgroundSync.setEnabled(this, enabled);
                 report(enabled ? "已开启后台心跳恢复：网络恢复、重启后尽力联系服务器；"
-                        + "不自动截图或批准观看，系统可能延迟。"
-                        : "已关闭后台心跳恢复，配对依然有效。");
+                        + "长期自动观看仅在本机主动开启并显示浮条时生效。"
+                        : "已关闭后台心跳和长期自动授权，配对依然有效。");
                 refreshPresenceState();
             } catch (RuntimeException error) {
                 report("后台在线设置失败，请检查系统后台运行权限");
@@ -304,7 +305,8 @@ public final class RemoteSetupActivity extends Activity {
                 .setTitle("后台在线设置（由手机持有人操作）")
                 .setMessage("可在手机应用设置中允许后台运行、自动启动和电池无限制。"
                         + "这些设置会提高心跳恢复概率，但无法保证强行停止后自动唤醒，"
-                        + "也不会在开机时自动启动截图或批准远程观看。")
+                        + "长期共享仅在本机已明确开启、状态浮条显示且"
+                        + "无障碍服务可用时才会响应已配对设备的观看申请。")
                 .setPositiveButton("打开本应用设置", (dialog, which) -> {
                     Intent settings = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
                     settings.setData(android.net.Uri.parse("package:" + getPackageName()));
