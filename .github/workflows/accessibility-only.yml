@@ -76,15 +76,17 @@ jobs:
           assert 'showNoticeIfAllowed()' in screenshot
           assert 'stopIfNoVisibleStopControl()' in screenshot
           assert 'sourceUiVisible' not in screenshot
-          assert 'showShareStopOverlay()' in screenshot
+          assert 'showShareStopOverlay()' not in screenshot
           assert 'ensureVisibleStopControl()' in screenshot
+          assert 'return noticePosted && notificationAllowed(app);' in screenshot
           assert 'noticePosted = showNoticeIfAllowed()' in screenshot
           assert screenshot.index('noticePosted = showNoticeIfAllowed()') < screenshot.index('if (!ensureVisibleStopControl())')
           assert 'showStandbyWhenAllowed' not in screenshot
           assert 'notificationAllowed(appContext)' not in screenshot
           overlay = (source/'AccessibilityShotService.java').read_text()
-          assert 'TYPE_ACCESSIBILITY_OVERLAY' in overlay
-          assert 'stopActiveFromOverlay()' in overlay
+          assert 'TYPE_ACCESSIBILITY_OVERLAY' not in overlay
+          assert 'stopActiveFromOverlay()' not in screenshot
+          assert 'shareWindowManager' not in overlay
           assert 'SYSTEM_ALERT_WINDOW' not in Path('app/src/main/AndroidManifest.xml').read_text()
           longterm = (source/'LongTermSharePolicy.java').read_text()
           assert 'enableByOwner' in longterm
@@ -127,7 +129,7 @@ jobs:
           assert 'new NotificationChannel(' not in watch
           assert 'manager.notify(' not in watch
           acces = (source / 'AccessibilityShotService.java').read_text()
-          assert 'TYPE_ACCESSIBILITY_OVERLAY' in acces
+          assert 'TYPE_ACCESSIBILITY_OVERLAY' not in acces
           assert 'longTermReadyOverlay' not in acces
           assert 'incomingWatchOverlay' not in acces
           assert 'acceptRequest(' not in acces

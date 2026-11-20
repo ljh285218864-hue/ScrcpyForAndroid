@@ -232,8 +232,8 @@ public final class RemoteSetupActivity extends Activity {
         TextView securityNote = note(permissionsPanel,
                 "无障碍截图由手机持有人开启。配对、联网和后台维护不需要通知权限。"
                 + "长期共享授权只显示在本软件的开关中，不会在待机时显示提示。"
-                + "实际共享才显示一个『正在共享』停止入口：允许通知时为通知栏"
-                + "的一条通知；不允许通知时为跨应用停止浮条。");
+                + "只有真正共享时显示一条通知栏『正在共享／停止』通知。"
+                + "关闭普通通知时仍可后台在线，但屏幕截图不会启动。");
         securityNote.setPadding(dp(4), dp(6), dp(4), 0);
 
         backgroundToggle = action(content, "后台在线维护：开启 / 关闭", v -> {
@@ -284,9 +284,9 @@ public final class RemoteSetupActivity extends Activity {
                             + "无需再次点同意就传输当前屏幕。"
                             + "可能包含其他应用画面。"
                             + "长期共享开关只在本软件内显示，未共享时不显示常驻提示。"
-                            + "正在共享时只显示一个带停止入口的状态："
-                            + "通知栏的一条『正在共享』通知，"
-                            + "或关闭通知权限时的跨应用停止浮条。"
+                            + "正在共享时只显示通知栏一条带停止按钮的状态。"
+                            + "关闭普通通知权限不会影响配对和后台连接，"
+                            + "但关闭后不能后台截图。"
                             + "可以随时在本软件关闭长期授权。"
                             + "如果系统停止运行或撤销无障碍，仍可能无法连接。")
                     .setPositiveButton("我同意长期共享", (d, w) -> {
@@ -299,8 +299,8 @@ public final class RemoteSetupActivity extends Activity {
                         ScreenSyncDiagnostics.record(this, "LONG_TERM_SHARE",
                                 "owner_enabled_for_current_pair");
                         refreshButtons();
-                        report("长期授权已开启，只有正在共享时才出现提示。"
-                                + "可在本软件关闭授权。");
+                        report("长期授权已开启，只有真正共享时才显示一条通知，"
+                                + "不会出现悬浮条。");
                     })
                     .setNegativeButton("取消", null).show();
         });
@@ -309,7 +309,7 @@ public final class RemoteSetupActivity extends Activity {
                 .setMessage("可在手机应用设置中允许后台运行、自动启动和电池无限制。"
                         + "这些设置会提高心跳恢复概率，但无法保证强行停止后自动唤醒，"
                         + "只有本机明确开启长期共享、无障碍服务可用，"
-                        + "并且共享时能显示停止入口，才允许自动观看。")
+                        + "并且共享时能发布『正在共享』通知，才允许自动观看。")
                 .setPositiveButton("打开本应用设置", (dialog, which) -> {
                     Intent settings = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
                     settings.setData(android.net.Uri.parse("package:" + getPackageName()));
@@ -499,7 +499,7 @@ public final class RemoteSetupActivity extends Activity {
             boolean allowed = AccessibilityJpegStreamer.notificationAllowed(this);
             notificationsButton.setText(allowed
                     ? "共享通知：已允许（可在系统设置中关闭）"
-                    : "共享通知：已关闭（不影响配对、联网和可见页面共享）");
+                    : "共享通知：已关闭（配对和联网正常，无法开始屏幕共享）");
             notificationsButton.setEnabled(true);
         }
     }
