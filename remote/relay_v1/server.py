@@ -17,6 +17,8 @@ import secrets
 import sqlite3
 import threading
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -40,6 +42,57 @@ MAX_SELF_REGISTER_HOUR = max(1, min(100, int(os.getenv("SS_SELF_REGISTER_HOUR", 
 MAX_SELF_REGISTER_DAY = max(1, min(300, int(os.getenv("SS_SELF_REGISTER_DAY", "30"))))
 STALE_ONLINE_SECONDS = 45
 LOCK = threading.RLock()
+# FCM is optional: never put service-account keys in Git or in the APK.
+FCM_PROJECT_ID = os.getenv("SS_FCM_PROJECT_ID", "")
+FCM_CREDENTIALS = os.getenv("SS_FCM_SERVICE_ACCOUNT_JSON", "")
+FCM_PROJECT = re.compile(r"[a-z][a-z0-9-]{3,63}\\Z")
+FCM_TOKEN = re.compile(r"[a-zA-Z0-9_:~.%\\-]{30,2048}\\Z")
+WAKE_COOLDOWN_SECONDS = 15
+WAKE_HOURLY_LIMIT = 60
+
+
+def fcm_configured() -> bool:
+    return bool(FCM_PROJECT.fullmatch(FCM_PROJECT_ID)
+                and FCM_CREDENTIALS and Path(FCM_CREDENTIALS).is_file())
+
+
+def send_fcm_wake(token: str, group_id: str, sender_id: str) -> bool:
+    """Best effort NORMAL-priority data-only connectivity reminder.
+
+    NEVER grants screen capture consent and never contains a screen image.
+    Sender/receiver are server-verified members of the same paired group.
+    """
+    if not fcm_configured() or not FCM_TOKEN.fullmatch(token):
+        return False
+    from google.oauth2 import service_account
+    from google.auth.transport.requests import Request as AuthRequest
+
+    credentials = service_account.Credentials.from_service_account_file(
+        FCM_CREDENTIALS,
+        scopes=["https://www.googleapis.com/auth/firebase.messaging"])
+    credentials.refresh(AuthRequest())
+    payload = {
+        "message": {
+            "token": token,
+            "data": {"type": "screensync_wake", "group_id": group_id,
+                     "from_device_id": sender_id},
+            "android": {"priority": "NORMAL", "ttl": "30s",
+                        "collapse_key": "screensync_wake"}
+        }
+    }
+    url = ("https://fcm.googleapis.com/v1/projects/"
+           + FCM_PROJECT_ID + "/messages:send")
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+        headers={"Authorization": "Bearer " + credentials.token,
+                 "Content-Type": "application/json; charset=utf-8"},
+        method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status == 200
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return False
 
 
 class ApiError(Exception):
@@ -107,6 +160,15 @@ def schema() -> None:
         CREATE INDEX IF NOT EXISTS device_group ON devices(group_id);
         CREATE INDEX IF NOT EXISTS sig_to ON signals(recipient_id,seq);
         CREATE INDEX IF NOT EXISTS sig_age ON signals(created);
+        CREATE TABLE IF NOT EXISTS fcm_registrations(
+            device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+            group_id TEXT NOT NULL,
+            push_token TEXT NOT NULL,
+            created INTEGER NOT NULL,
+            last_wake INTEGER NOT NULL DEFAULT 0,
+            wake_window INTEGER NOT NULL DEFAULT 0,
+            wake_count INTEGER NOT NULL DEFAULT 0
+        );
         """)
     os.chmod(DATABASE, 0o600)
 
@@ -328,6 +390,50 @@ def dispatch(db: sqlite3.Connection, path: str, body: dict, authorization: str) 
         return {"state": "online", "peer_online":
                 timestamp-other["last_seen"] <= STALE_ONLINE_SECONDS,
                 "peer_device_id": other["id"]}
+    if path == "/v1/push/token":
+        push_token = body.get("token")
+        if not isinstance(push_token, str) or not FCM_TOKEN.fullmatch(push_token):
+            raise ApiError("INVALID_PUSH_TOKEN")
+        # Token stays scoped to this authenticated, already-paired device.
+        # Rotate old tokens atomically; never return a token to clients.
+        db.execute(
+            "INSERT INTO fcm_registrations"
+            "(device_id, group_id, push_token, created) VALUES (?,?,?,?) "
+            "ON CONFLICT(device_id) DO UPDATE SET "
+            "group_id=excluded.group_id, push_token=excluded.push_token, "
+            "created=excluded.created",
+            (caller["id"], caller["group_id"], push_token, timestamp))
+        return {"state": "registered"}
+    if path == "/v1/push/clear":
+        db.execute("DELETE FROM fcm_registrations WHERE device_id=?",
+                   (caller["id"],))
+        return {"state": "cleared"}
+    if path == "/v1/push/wake":
+        # Only the exact currently paired peer can be signaled. A wake
+        # is not a watch_accept and cannot start capture by itself.
+        if not fcm_configured():
+            return {"state": "not_configured"}
+        entry = db.execute(
+            "SELECT push_token,last_wake,wake_window,wake_count "
+            "FROM fcm_registrations WHERE device_id=? AND group_id=?",
+            (other["id"], caller["group_id"])).fetchone()
+        if not entry:
+            return {"state": "peer_not_registered"}
+        if timestamp - entry["last_wake"] < WAKE_COOLDOWN_SECONDS:
+            return {"state": "throttled"}
+        window = entry["wake_window"]
+        count = entry["wake_count"]
+        if timestamp - window >= 3600:
+            window, count = timestamp, 0
+        if count >= WAKE_HOURLY_LIMIT:
+            return {"state": "rate_limited"}
+        db.execute(
+            "UPDATE fcm_registrations SET last_wake=?,wake_window=?,wake_count=? "
+            "WHERE device_id=?",
+            (timestamp, window, count + 1, other["id"]))
+        # Internal-only fields MUST be stripped by the HTTP handler.
+        return {"state": "queued", "_push_token": entry["push_token"],
+                "_push_group": caller["group_id"], "_push_sender": caller["id"]}
     if path == "/v1/signal/send":
         kind = body.get("type")
         payload = body.get("payload")
@@ -418,6 +524,7 @@ class Handler(BaseHTTPRequestHandler):
         if path not in ("/v1/self-register", "/v1/activate", "/v1/join",
                         "/v1/status", "/v1/invite",
                         "/v1/approve", "/v1/decline", "/v1/revoke", "/v1/heartbeat",
+                        "/v1/push/token", "/v1/push/clear", "/v1/push/wake",
                         "/v1/signal/send", "/v1/signal/poll"):
             self.reply(404, {"error": "NOT_FOUND"})
             return
@@ -433,6 +540,18 @@ class Handler(BaseHTTPRequestHandler):
                 db.execute("BEGIN IMMEDIATE")
                 reply = dispatch(db, path, body, self.headers.get("Authorization", ""))
                 db.commit()
+            # Never hold the SQLite transaction lock while calling Google.
+            # Strip all internal fields before an HTTP response, including
+            # when FCM times out or credentials are invalid.
+            push_token = reply.pop("_push_token", None)
+            push_group = reply.pop("_push_group", None)
+            push_sender = reply.pop("_push_sender", None)
+            if push_token:
+                try:
+                    sent = send_fcm_wake(push_token, push_group, push_sender)
+                    reply = {"state": "sent" if sent else "delivery_unavailable"}
+                except Exception:
+                    reply = {"state": "delivery_unavailable"}
             self.reply(200, reply)
         except ApiError as error:
             self.reply(error.status, {"error": error.code})
