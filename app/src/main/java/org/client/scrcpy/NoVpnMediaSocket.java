@@ -207,6 +207,7 @@ public final class NoVpnMediaSocket {
                     clearSessions();
                 }
                 AccessibilityJpegStreamer.stopActiveWithoutSending();
+                ScreenSyncWatchNotice.clear(context);
                 ScreenSyncDiagnostics.record(context, "WSS_CLOSE",
                         "code=" + code + " live_s="
                         + ((android.os.SystemClock.elapsedRealtime() - connectedAtMs) / 1000));
@@ -222,6 +223,7 @@ public final class NoVpnMediaSocket {
                     clearSessions();
                 }
                 AccessibilityJpegStreamer.stopActiveWithoutSending();
+                ScreenSyncWatchNotice.clear(context);
                 ScreenSyncDiagnostics.record(context, "WSS_FAIL",
                         "error=" + error.getClass().getSimpleName()
                                 + " http=" + (response == null ? 0 : response.code())
@@ -530,6 +532,7 @@ public final class NoVpnMediaSocket {
     }
 
     private void clearSessions() {
+        ScreenSyncWatchNotice.clear(context);
         receivedFrames = 0;
         watchRequestInFlight = false;
         viewerHasVideoSetup = false;

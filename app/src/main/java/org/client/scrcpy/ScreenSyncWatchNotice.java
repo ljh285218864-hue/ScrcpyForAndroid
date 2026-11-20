@@ -30,6 +30,12 @@ public final class ScreenSyncWatchNotice {
             ScreenSyncDiagnostics.record(app, "WATCH_NOTICE", "suppressed_during_sharing");
             return;
         }
+        // First try the source user's accessible, on-screen review button.
+        // This never accepts a request; normal notifications are optional.
+        if (AccessibilityShotService.showIncomingWatchOverlay()) {
+            ScreenSyncDiagnostics.record(app, "WATCH_NOTICE", "owner_review_overlay");
+            return;
+        }
         if (Build.VERSION.SDK_INT >= 33
                 && app.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                         != PackageManager.PERMISSION_GRANTED) {
@@ -69,6 +75,7 @@ public final class ScreenSyncWatchNotice {
     }
 
     public static void clear(Context context) {
+        AccessibilityShotService.hideIncomingWatchOverlay();
         NotificationManager manager = (NotificationManager)
                 context.getApplicationContext().getSystemService(
                         Context.NOTIFICATION_SERVICE);
