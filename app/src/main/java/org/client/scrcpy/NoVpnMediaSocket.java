@@ -53,6 +53,8 @@ public final class NoVpnMediaSocket {
     private volatile boolean shutdown;
     private volatile String waitingRequest = "";
     private volatile String locallyApprovedRequest = "";
+    private volatile String persistentApprovedRequest = "";
+    private volatile boolean persistentSourceStartPending;
     private volatile String pendingViewerSession = "";
     private volatile String sourceSession = "";
     private volatile String viewerSession = "";
@@ -97,6 +99,12 @@ public final class NoVpnMediaSocket {
 
     public void clearListenerIf(Listener previous) {
         if (listener == previous) listener = null;
+    }
+
+    /** Used by the visible Activity to avoid racing with authorized
+     * auto-start from a separate, still visible source owner grant. */
+    public boolean isPersistentSourceStartPending() {
+        return persistentSourceStartPending;
     }
 
     public boolean hasApprovedSourceSession() {
@@ -405,8 +413,20 @@ public final class NoVpnMediaSocket {
                     throw new SecurityException("接收请求身份不一致");
                 waitingRequest = sid;
                 main.post(() -> {
+                    if (shutdown || !sid.equals(waitingRequest)) return;
+                    // This mode is OFF by default, paired-device-scoped,
+                    // and was explicitly enabled on the SOURCE phone.
+                    // Never approve unless its cross-app, revocable status
+                    // overlay is genuinely displayed right now.
+                    if (LongTermSharePolicy.mayAutoApprove(context)) {
+                        persistentApprovedRequest = sid;
+                        if (acceptRequest(sid)) {
+                            status("long_term_auto_approved_visible");
+                            return;
+                        }
+                        persistentApprovedRequest = "";
+                    }
                     Listener target = listener;
-                    if (shutdown) return;
                     if (target != null) target.onRequest(sid, from);
                     else ScreenSyncWatchNotice.show(context);
                 });
@@ -438,18 +458,35 @@ public final class NoVpnMediaSocket {
                         || !sid.equals(waitingRequest)
                         || !sid.equals(locallyApprovedRequest))
                     throw new SecurityException("用户未同意本次视频发送");
+                boolean persistent = sid.equals(persistentApprovedRequest);
+                persistentApprovedRequest = "";
                 sourceSession = sid;
                 waitingRequest = "";
                 locallyApprovedRequest = "";
+                persistentSourceStartPending = persistent;
                 status("video_source_permitted");
                 main.post(() -> {
-                    // The UI callback may have been detached after the user
-                    // explicitly accepted this exact session. Do not lose the
-                    // approval merely due to task removal; never auto-resume
-                    // an unapproved or expired session.
-                    if (listener == null && !shutdown && hasApprovedSourceSession())
+                    if (shutdown || !hasApprovedSourceSession()) {
+                        persistentSourceStartPending = false;
+                        return;
+                    }
+                    if (persistent) {
+                        // Source user can revoke between approval and start.
+                        if (LongTermSharePolicy.enabled(context)
+                                && AccessibilityShotService.ready()
+                                && AccessibilityShotService.isLongTermReadyOverlayVisible()) {
+                            AccessibilityJpegStreamer.startPreviouslyApprovedWithoutUi(
+                                    context, NoVpnMediaSocket.this);
+                        } else {
+                            endSourceSession("long_term_permission_revoked");
+                        }
+                        persistentSourceStartPending = false;
+                    } else if (listener == null) {
+                        // Only the specific user-accepted session, not a
+                        // general auto-recording fallback.
                         AccessibilityJpegStreamer.startPreviouslyApprovedWithoutUi(
                                 context, NoVpnMediaSocket.this);
+                    }
                 });
                 break;
             }
@@ -658,6 +695,8 @@ public final class NoVpnMediaSocket {
         sourceSession = "";
         waitingRequest = "";
         locallyApprovedRequest = "";
+        persistentApprovedRequest = "";
+        persistentSourceStartPending = false;
     }
 
     public void endSourceSession() {
@@ -667,6 +706,8 @@ public final class NoVpnMediaSocket {
     public void endSourceSession(String reason) {
         String source = sourceSession;
         sourceSession = "";
+        persistentApprovedRequest = "";
+        persistentSourceStartPending = false;
         rejoinPending = false;
         main.removeCallbacks(expireRejoin);
         ScreenSyncDiagnostics.record(context, "SOURCE_END_LOCAL", "reason=" + reason

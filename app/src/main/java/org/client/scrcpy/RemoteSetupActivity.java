@@ -688,9 +688,12 @@ public final class RemoteSetupActivity extends Activity {
         receivedVideoFrames = 0;
         NoVpnMediaSocket.Listener callback = new NoVpnMediaSocket.Listener() {
                     @Override public void onStatus(String value) {
-                        if ("video_source_permitted".equals(value)) {
-                            // Start the previously approved share even if the
-                            // owner just pressed Home after approving.
+                        if ("video_source_permitted".equals(value)
+                                && (mediaSocket == null
+                                    || !mediaSocket.isPersistentSourceStartPending())) {
+                            // A one-time, explicitly approved manual request.
+                            // Owner-enabled long-term sharing is started only
+                            // by the local policy/visible overlay gate.
                             startLocalStream();
                         }
                         if ("source_session_ended".equals(value)
