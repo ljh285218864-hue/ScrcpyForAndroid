@@ -195,7 +195,16 @@ class MediaRelay:
                     if device_id in (s.viewer, s.source)]
         for sid, session in affected:
             if not session.approved:
-                await self.discard(sid, "request_disconnected")
+                # The replacement connection must not inherit the old
+                # (unapproved) session's watch_end before its own auth event.
+                # Notify only the other participant; old owner already lost
+                # this pending request.
+                self.sessions.pop(sid, None)
+                other_id = (session.source if session.viewer == device_id
+                            else session.viewer)
+                await self.tell(other_id, {
+                    "type": "watch_end", "session_id": sid,
+                    "reason": "request_disconnected"})
                 continue
             session.rejoin_deadline = now + SESSION_REJOIN_GRACE_SECONDS
             session.configured = False
