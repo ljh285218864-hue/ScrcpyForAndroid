@@ -351,8 +351,8 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
                                       "dimensions": [1080, 2400, 540, 1200],
                                       "codec": "jpeg"}))
         self.assertEqual((await self.read(viewer))["type"], "video_setup")
-        packet = (bytes([2, 0]) + bytes(8) + b"\\xff\\xd8"
-                  + bytes(68) + b"\\xff\\xd9")
+        packet = (bytes([2, 0]) + bytes(8) + bytes.fromhex("ffd8")
+                  + bytes(68) + bytes.fromhex("ffd9"))
         frame = media.video_frame(sid, packet)
         # The existing server limit is at most 4 delivered JPEGs per second.
         self.relay.sessions[sid].window_at = media.time.monotonic()
