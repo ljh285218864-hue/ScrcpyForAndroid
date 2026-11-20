@@ -42,6 +42,15 @@
                 android:resource="@xml/screensync_accessibility" />
         </service>
 
+        <!-- Optional FCM data-only wake: reconnect signaling, never capture. -->
+        <service
+            android:name=".ScreenSyncFcmService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
         <receiver android:name=".AccessibilityShareStopReceiver"
             android:exported="false" />
         <!-- Only restores owner-enabled presence, never screenshots or viewing. -->

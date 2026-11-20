@@ -66,7 +66,14 @@ jobs:
           manifest = ET.parse('app/src/main/AndroidManifest.xml').getroot()
           ns = '{http://schemas.android.com/apk/res/android}'
           services = [x.get(ns+'name','') for x in manifest.findall('.//service')]
-          assert services == ['.AccessibilityShotService'], services
+          assert services == ['.AccessibilityShotService', '.ScreenSyncFcmService'], services
+          fcm = next(s for s in manifest.findall('.//service')
+                     if s.get(ns+'name') == '.ScreenSyncFcmService')
+          assert fcm.get(ns+'exported') == 'false'
+          assert 'com.google.firebase.MESSAGING_EVENT' in Path(
+              'app/src/main/AndroidManifest.xml').read_text()
+          assert 'FirebaseMessagingService' in (
+              source/'ScreenSyncFcmService.java').read_text()
           assert (source / 'AccessibilityJpegStreamer.java').exists()
           assert 'AccessibilityShotService.capture(' in (source/'AccessibilityJpegStreamer.java').read_text()
           assert 'LocalScrcpyStreamer' not in (source/'RemoteSetupActivity.java').read_text()
@@ -178,6 +185,10 @@ jobs:
         env:
           SCREENSYNC_NOVPN_URL: https://relay.privyluxe.com:8443
           SCREENSYNC_MEDIA_URL: wss://relay.privyluxe.com:8443/media
+          SCREENSYNC_FCM_APP_ID: ${{ secrets.SCREENSYNC_FCM_APP_ID }}
+          SCREENSYNC_FCM_PROJECT_ID: ${{ secrets.SCREENSYNC_FCM_PROJECT_ID }}
+          SCREENSYNC_FCM_SENDER_ID: ${{ secrets.SCREENSYNC_FCM_SENDER_ID }}
+          SCREENSYNC_FCM_API_KEY: ${{ secrets.SCREENSYNC_FCM_API_KEY }}
         run: |
           set -euo pipefail
           chmod +x gradlew

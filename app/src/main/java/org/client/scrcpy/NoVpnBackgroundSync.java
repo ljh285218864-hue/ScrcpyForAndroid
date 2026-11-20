@@ -98,8 +98,10 @@ public final class NoVpnBackgroundSync {
             ensureNetworkListener(context);
             NoVpnPresenceLoop.start(context);
             ScreenSyncMediaKeeper.restoreOptedInSignaling(context);
+            ScreenSyncFcmBridge.registerIfOptedIn(context);
             requestOnce(context, "owner_enabled");
         } else {
+            ScreenSyncFcmBridge.unregisterDevice(context);
             WorkManager manager = WorkManager.getInstance(context);
             manager.cancelUniqueWork(UNIQUE_PERIODIC);
             manager.cancelUniqueWork(UNIQUE_ONCE);

@@ -255,6 +255,23 @@ public final class NoVpnApi {
         return post(context, "/v1/heartbeat", new JSONObject(), true);
     }
 
+    public static JSONObject registerPushToken(Context context, String token)
+            throws Exception {
+        if (token == null || token.length() < 30 || token.length() > 2048)
+            throw new IllegalArgumentException("invalid FCM token");
+        return post(context, "/v1/push/token",
+                new JSONObject().put("token", token), true);
+    }
+
+    public static JSONObject clearPushToken(Context context) throws Exception {
+        return post(context, "/v1/push/clear", new JSONObject(), true);
+    }
+
+    public static JSONObject requestPeerWake(Context context) throws Exception {
+        // The server, not the client, resolves the exact paired recipient.
+        return post(context, "/v1/push/wake", new JSONObject(), true);
+    }
+
     public static JSONObject send(Context context, String type, JSONObject payload)
             throws Exception {
         String peer = peerId(context);

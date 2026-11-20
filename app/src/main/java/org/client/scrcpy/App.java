@@ -12,6 +12,8 @@ public final class App extends Application {
     @Override public void onCreate() {
         super.onCreate();
         ScreenSyncWatchNotice.clear(this);
+        ScreenSyncFcmBridge.initialize(this);
         NoVpnBackgroundSync.restore(this);
+        ScreenSyncFcmBridge.registerIfOptedIn(this);
     }
 }
