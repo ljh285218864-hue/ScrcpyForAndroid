@@ -215,7 +215,7 @@ public final class RemoteSetupActivity extends Activity {
         });
         refreshSharingNotificationButton();
 
-        backgroundToggle = action(content, "后台待机：开启 / 关闭（仅维持配对状态）", v -> {
+        backgroundToggle = action(content, "后台在线维护：开启 / 关闭（不采集屏幕）", v -> {
             if (!NoVpnApi.isRegistered(this) || !"paired".equals(currentState)) {
                 report("两台手机完成双方确认后，才能启用后台恢复检查");
                 return;
@@ -224,8 +224,9 @@ public final class RemoteSetupActivity extends Activity {
             try {
                 NoVpnBackgroundSync.setEnabled(this, enabled);
                 report(enabled
-                        ? "后台待机已启用：联网、重启、更新后尽力恢复配对心跳；"
-                        + "不传输屏幕。至少15分钟的周期可能被系统延迟。"
+                        ? "后台在线维护已启用：进程运行时约30秒心跳，"
+                        + "网络恢复后尽力重连；进程停止后使用系统调度兜底，"
+                        + "后台限制可能延迟；不会采集屏幕。"
                         : "后台待机已关闭，双方配对关系仍保留。");
                 refreshBackgroundState();
             } catch (RuntimeException error) {
@@ -237,6 +238,25 @@ public final class RemoteSetupActivity extends Activity {
         backgroundState.setPadding(0, dp(4), 0, dp(8));
         content.addView(backgroundState);
         refreshBackgroundState();
+        action(content, "后台运行设置（手动授权自启动、电池无限制）", v -> {
+            new AlertDialog.Builder(this)
+                .setTitle("改善后台在线率")
+                .setMessage("请由设备持有人在系统设置里开启 ScreenSync 的"
+                        + "自启动/后台启动，以及电池使用无限制（不同手机名称可能不同）。"
+                        + "\n\n小米：设置 → 应用 → 后台自启动；电池 → 应用省电策略。"
+                        + "\nOPPO：应用管理 → 自启动/允许后台活动。"
+                        + "\nvivo：权限管理 → 自启动；电池 → 后台耗电管理。"
+                        + "\n\n仅改善后台在线率，不能保证永远不断线；"
+                        + "不需要开启普通通知。")
+                .setPositiveButton("打开 ScreenSync 的应用设置", (d,w) -> {
+                    Intent info = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                    info.setData(android.net.Uri.parse("package:" + getPackageName()));
+                    try { startActivity(info); }
+                    catch (RuntimeException e) {
+                        startActivity(new Intent(Settings.ACTION_SETTINGS));
+                    }
+                }).setNegativeButton("取消", null).show();
+        });
         action(content, "刷新状态", v -> {
             refreshBackgroundState();
             refreshStatus();
@@ -463,9 +483,12 @@ public final class RemoteSetupActivity extends Activity {
         long at = NoVpnBackgroundSync.lastSuccess(this);
         String seen = at <= 0 ? "尚无成功心跳"
                 : android.text.format.DateFormat.format("MM-dd HH:mm", at).toString();
-        backgroundState.setText("后台配对待机：已启用；最近成功：" + seen
+        boolean fresh = NoVpnPresencePolicy.recentlyConfirmed(
+                System.currentTimeMillis(), at);
+        backgroundState.setText("后台在线维护：已启用；最近成功：" + seen
+                + "；" + (fresh ? "最近45秒确认连接" : "最近45秒未确认，可能已离线")
                 + "；状态：" + NoVpnBackgroundSync.state(this)
-                + "。后台待机不代表正在共享屏幕。");
+                + "。系统限制时可能断线；不代表正在共享屏幕。");
     }
 
     private void showLocalAdbPairDialog() {
@@ -658,8 +681,8 @@ public final class RemoteSetupActivity extends Activity {
             backgroundToggle.setEnabled(registered
                     && "paired".equals(currentState) && !busy);
             backgroundToggle.setText(NoVpnBackgroundSync.isEnabled(this)
-                    ? "关闭后台定期检查（保留配对）"
-                    : "启用后台定期检查（不显示常驻通知）");
+                    ? "关闭后台在线维护（保留配对）"
+                    : "启用后台在线维护（无需前台服务）");
         }
     }
 

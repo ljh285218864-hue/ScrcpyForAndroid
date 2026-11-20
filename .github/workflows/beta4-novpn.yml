@@ -128,6 +128,18 @@ jobs:
           assert len(receivers) == 1
           assert receivers[0].attrib.get(android + "exported") == "false"
           assert "android.permission.RECEIVE_BOOT_COMPLETED" in permissions
+          # Optional owner-enabled heartbeat loop; no foreground service,
+          # capture, ADB, or automatic viewing on reconnect.
+          presence = (Path("app/src/main/java/org/client/scrcpy")
+                      / "NoVpnPresenceLoop.java").read_text()
+          for forbidden in ("startForeground(", "startService(",
+                            "takeScreenshot(", "MediaProjectionManager",
+                            "startAfterLocalApproval(", "AdbHelper.",
+                            "watch_accept", "watch_request"):
+              assert forbidden not in presence, f"presence loop must not capture: {forbidden}"
+          assert "NoVpnApi.heartbeat(app)" in presence
+          assert "NoVpnPresencePolicy.nextDelayMs" in presence
+          assert "NoVpnBackgroundSync.isEnabled(app)" in presence
           # PiP allows only explicitly started, visible source sharing,
           # and never adds a foreground service or hidden capture loop.
           setup = (Path("app/src/main/java/org/client/scrcpy") / "RemoteSetupActivity.java").read_text()
