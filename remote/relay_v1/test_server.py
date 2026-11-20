@@ -11,6 +11,7 @@ import threading
 import unittest
 from pathlib import Path
 from urllib.error import HTTPError
+from unittest.mock import patch
 from urllib.request import Request, urlopen
 
 path = Path(__file__).with_name("server.py")
@@ -338,6 +339,55 @@ class RelayHTTPTests(unittest.TestCase):
             self.assertEqual(self.post("/v1/self-register", {"name": name})[0], 400)
         with relay.db_connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM groups").fetchone()[0], 0)
+
+    def test_fcm_wake_token_scoped_to_paired_peer_and_rate_limited(self):
+        a, b = self.pair("FCM-A", "FCM-B")
+        c, d = self.pair("FCM-C", "FCM-D")
+        token = "fcmToken_1234567890:ABCDEFGHIJKLMNOP"
+        self.assertEqual(self.post("/v1/push/token", {"token": token})[0], 401)
+        self.assertEqual(self.post("/v1/push/token", {"token": "bad"},
+                                   b["token"])[0], 400)
+        self.assertEqual(self.post("/v1/push/token", {"token": token},
+                                   b["token"])[1]["state"], "registered")
+        with relay.db_connect() as db:
+            self.assertEqual(db.execute(
+                "SELECT device_id,group_id FROM fcm_registrations").fetchone()["device_id"],
+                b["device_id"])
+        with patch.object(relay, "fcm_configured", return_value=True), \\
+                patch.object(relay, "send_fcm_wake", return_value=True) as sender:
+            # Only currently paired identity A can wake B. Another group
+            # never receives B's token and always targets their own peer.
+            self.assertEqual(self.post("/v1/push/wake", {}, c["token"])[1]["state"],
+                             "peer_not_registered")
+            code, result = self.post("/v1/push/wake", {}, a["token"])
+            self.assertEqual(code, 200)
+            self.assertEqual(result, {"state": "sent"})
+            sender.assert_called_once_with(token, a["group_id"], a["device_id"])
+            self.assertNotIn(token, str(result))
+            self.assertEqual(self.post("/v1/push/wake", {},
+                                       a["token"])[1]["state"], "throttled")
+            # Reverse-direction wake requires own token registration.
+            self.assertEqual(self.post("/v1/push/wake", {},
+                                       b["token"])[1]["state"], "peer_not_registered")
+        self.assertEqual(self.post("/v1/push/clear", {},
+                                   b["token"])[1]["state"], "cleared")
+        with patch.object(relay, "fcm_configured", return_value=True):
+            self.assertEqual(self.post("/v1/push/wake", {},
+                                       a["token"])[1]["state"], "peer_not_registered")
+        self.assertEqual(self.post("/v1/push/token", {"token": token},
+                                   b["token"])[0], 200)
+        self.assertEqual(self.post("/v1/revoke", {}, a["token"])[0], 200)
+        with relay.db_connect() as db:
+            self.assertEqual(db.execute(
+                "SELECT count(*) FROM fcm_registrations").fetchone()[0], 0)
+
+    def test_fcm_opt_in_not_configured_does_not_break_pairing(self):
+        a, b = self.pair()
+        with patch.object(relay, "fcm_configured", return_value=False):
+            self.assertEqual(self.post("/v1/push/wake", {},
+                                       a["token"])[1]["state"], "not_configured")
+        self.assertEqual(self.post("/v1/heartbeat", {},
+                                   a["token"])[0], 200)
 
     def test_health_never_claims_video_stream_ready(self):
         with urlopen(self.host + "/health", timeout=3) as resp:

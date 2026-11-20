@@ -45,8 +45,8 @@ LOCK = threading.RLock()
 # FCM is optional: never put service-account keys in Git or in the APK.
 FCM_PROJECT_ID = os.getenv("SS_FCM_PROJECT_ID", "")
 FCM_CREDENTIALS = os.getenv("SS_FCM_SERVICE_ACCOUNT_JSON", "")
-FCM_PROJECT = re.compile(r"[a-z][a-z0-9-]{3,63}\\Z")
-FCM_TOKEN = re.compile(r"[a-zA-Z0-9_:~.%\\-]{30,2048}\\Z")
+FCM_PROJECT = re.compile(r"[a-z][a-z0-9-]{3,63}")
+FCM_TOKEN = re.compile(r"[a-zA-Z0-9_:~.%-]{30,2048}")
 WAKE_COOLDOWN_SECONDS = 15
 WAKE_HOURLY_LIMIT = 60
 
