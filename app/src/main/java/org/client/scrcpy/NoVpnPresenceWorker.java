@@ -9,11 +9,11 @@ import androidx.work.WorkerParameters;
 import org.json.JSONObject;
 
 /**
- * Short, scheduled HTTPS heartbeat only.
+ * Short, scheduled HTTPS heartbeat and best-effort WSS signaling recovery.
  *
- * Does not capture the screen, start a receiver, poll/ACK watch requests,
- * open an ADB connection or call setForegroundAsync(). This worker does not
- * request a foreground-service notification.
+ * Does not capture the screen, approve a request, start a foreground service,
+ * open ADB, or post a persistent notification. WorkManager cannot guarantee
+ * prompt startup after the user removes the app's recent-task card.
  */
 public final class NoVpnPresenceWorker extends Worker {
     public NoVpnPresenceWorker(@NonNull Context context,
@@ -43,6 +43,14 @@ public final class NoVpnPresenceWorker extends Worker {
                 return Result.failure();
             }
             NoVpnBackgroundSync.record(app, "last_heartbeat_sent", true);
+            // WorkManager can recreate the app process on a later scheduled
+            // wake-up. Restore only owner-enabled, already-paired SIGNALING.
+            // Screen capture still requires the source's visible STOP control.
+            if (!isStopped() && NoVpnBackgroundSync.isEnabled(app)) {
+                ScreenSyncMediaKeeper.restoreOptedInSignaling(app);
+                ScreenSyncDiagnostics.record(app, "BACKGROUND_WSS",
+                        "worker_recovery_attempted");
+            }
             return Result.success();
         } catch (SecurityException error) {
             NoVpnBackgroundSync.record(app, "identity_mismatch", false);
