@@ -119,7 +119,7 @@ jobs:
           assert 'session_resume' in reconnect and 'session_resumed' in reconnect
           assert 'AccessibilityJpegStreamer.resendCurrentSetup(this)' in reconnect
           assert 'isSourceTransportReady()' in (source/'AccessibilityJpegStreamer.java').read_text()
-          assert 'isShareStopOverlayVisible()' in reconnect
+          assert 'AccessibilityJpegStreamer.hasVisibleStopControl()' in reconnect
           assert 'takeScreenshot(' not in reconnect
           assert 'SESSION_REJOIN_GRACE_SECONDS = 60' in (Path('remote/relay_v1/media_relay.py')).read_text()
           watch = (source / 'ScreenSyncWatchNotice.java').read_text()
