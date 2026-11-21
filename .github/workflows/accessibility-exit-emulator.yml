@@ -1,0 +1,66 @@
+name: ScreenSync Accessibility Exit Emulator Regression
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/screensync-notifications-isolated]
+    paths:
+      - '.github/workflows/accessibility-exit-emulator.yml'
+      - '.github/scripts/accessibility-exit-emulator.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  accessibility-exit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: 'false'
+      - name: Install Android build tools
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+      - name: Build current ScreenSync APK
+        env:
+          SCREENSYNC_NOVPN_URL: https://relay.privyluxe.com:8443
+          SCREENSYNC_MEDIA_URL: wss://relay.privyluxe.com:8443/media
+          SCREENSYNC_FCM_APP_ID: ${{ secrets.SCREENSYNC_FCM_APP_ID }}
+          SCREENSYNC_FCM_PROJECT_ID: ${{ secrets.SCREENSYNC_FCM_PROJECT_ID }}
+          SCREENSYNC_FCM_SENDER_ID: ${{ secrets.SCREENSYNC_FCM_SENDER_ID }}
+          SCREENSYNC_FCM_API_KEY: ${{ secrets.SCREENSYNC_FCM_API_KEY }}
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleScrcpyDebug --no-daemon
+      - name: Enable KVM
+        run: |
+          if [[ ! -e /dev/kvm ]]; then echo "KVM not present" >&2; exit 1; fi
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run Android 15 emulator permissions and recent-task test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          cores: 2
+          ram-size: 3072M
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash .github/scripts/accessibility-exit-emulator.sh
+      - name: Upload Android emulator test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screensync-accessibility-exit-android15
+          path: accessibility-exit-results/
+          if-no-files-found: warn
+          retention-days: 14
