@@ -33,7 +33,7 @@ adb shell settings put secure accessibility_enabled 1
 for attempt in 1 2 3 4; do
   adb shell settings put --user 0 secure enabled_accessibility_services "$SERVICE"
   sleep 3
-  ACTUAL=$(adb shell settings get --user 0 secure enabled_accessibility_services | tr -d '\\r')
+  ACTUAL=$(adb shell settings get --user 0 secure enabled_accessibility_services | tr -d '\r')
   echo "Accessibility enable attempt $attempt: $ACTUAL"
   if [[ "$ACTUAL" == *"AccessibilityShotService"* ]]; then break; fi
   sleep 5
@@ -78,13 +78,42 @@ WIDTH=${RESOLUTION%x*}
 HEIGHT=${RESOLUTION#*x}
 if [[ -z "$WIDTH" || -z "$HEIGHT" ]]; then WIDTH=1080; HEIGHT=1920; fi
 X=$((WIDTH/2))
-Y1=$((HEIGHT*52/100))
-Y2=$((HEIGHT*13/100))
-echo "Recents screenshot captured; swipe card from ($X,$Y1) to ($X,$Y2)"
-adb shell input swipe "$X" "$Y1" "$X" "$Y2" 480
-sleep 6
-adb exec-out screencap -p > "$RESULTS/recents-after-swipe.png" || true
-adb shell dumpsys activity recents > "$RESULTS/recents-after-swipe.txt" 2>&1 || true
+# Validate that this is the ScreenSync task, not an arbitrary overview item.
+screen_sync_in_recents() {
+  adb shell dumpsys activity recents 2>/dev/null | grep -q 'baseIntent=.*org.client.scrcpy'
+}
+if ! screen_sync_in_recents; then
+  echo "FAIL: ScreenSync was not in recent tasks before swipe"
+  exit 1
+fi
+removed=0
+for attempt in 1 2 3; do
+  if ((attempt > 1)); then
+    adb shell input keyevent KEYCODE_HOME
+    sleep 2
+    adb shell input keyevent KEYCODE_APP_SWITCH
+    sleep 3
+  fi
+  case "$attempt" in
+    1) Y1=$((HEIGHT*38/100)); Y2=5; DURATION=280 ;;
+    2) Y1=$((HEIGHT*52/100)); Y2=5; DURATION=160 ;;
+    3) Y1=$((HEIGHT*26/100)); Y2=5; DURATION=400 ;;
+  esac
+  echo "Swipe attempt $attempt: ($X,$Y1) -> ($X,$Y2) ms=$DURATION"
+  adb shell input touchscreen swipe "$X" "$Y1" "$X" "$Y2" "$DURATION"
+  sleep 5
+  adb exec-out screencap -p > "$RESULTS/recents-after-attempt-$attempt.png" || true
+  if ! screen_sync_in_recents; then
+    removed=1
+    echo "PASS: ScreenSync recent-task card was actually removed on attempt $attempt"
+    break
+  fi
+done
+adb shell dumpsys activity recents > "$RESULTS/recents-after-swipe.txt" 2>&1
+if [[ "$removed" != 1 ]]; then
+  echo "FAIL: ScreenSync recent-task card was NOT removed by touchscreen swipes"
+  exit 1
+fi
 check_enabled after-recents-swipe
 
 echo "--- Simulate ordinary OS reclaim of background process (not force-stop) ---"
@@ -102,6 +131,5 @@ if adb logcat -d -v time | grep -E 'FATAL EXCEPTION: main|Process: org.client.sc
   cat "$RESULTS/crashes.txt"
   exit 1
 fi
-echo "PASS: system accessibility toggle retained after Home, Back, recents UI swipe and am kill."
-echo "LIMIT: the recents gesture may not remove the intended card; inspect before/after screenshots."
+echo "PASS: system accessibility toggle retained after Home, Back, verified recents card removal and am kill."
 echo "LIMIT: Pixel Android emulator cannot reproduce vivo/OPPO/Xiaomi OEM permission revocations."
