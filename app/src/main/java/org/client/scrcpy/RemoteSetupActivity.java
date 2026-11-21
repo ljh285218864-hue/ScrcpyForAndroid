@@ -605,6 +605,7 @@ public final class RemoteSetupActivity extends Activity {
                         + "\n检查：① 电池使用设为不限制；② 允许后台启动；"
                         + "③ 关闭闲置应用自动撤销权限（如有）；"
                         + "④ 避免强制停止或卸载重装。"
+                        + "\n退出软件、返回桌面和划掉后台卡片，不会由 ScreenSync 主动撤销无障碍授权。"
                         + "\n每次重装或不同签名安装后，系统可能需要重新授权。"
                         + "\n无法由应用自行恢复已关闭的系统权限。")
                 .setPositiveButton("无障碍设置", (dialog, which) ->
@@ -685,17 +686,22 @@ public final class RemoteSetupActivity extends Activity {
             ScreenSyncMediaKeeper.stop();
             mediaSocket = null;
         }
+        // Closing an Activity must never revoke Android accessibility
+        // permission; the user controls that toggle in system Settings.
         // Do not terminate a user-approved share or an authenticated WSS
         // connection merely because this Activity is covered or swiped away.
         // This is process-lifetime best effort, NOT a guarantee after
         // Android kills the process, force-stop, or device reboot.
         ScreenSyncDiagnostics.record(this, "APP_PAUSE",
                 "socket_kept=" + (mediaSocket != null)
-                + " sharing=" + AccessibilityJpegStreamer.sharingActive());
+                + " sharing=" + AccessibilityJpegStreamer.sharingActive()
+                + " system_accessibility=" + AccessibilityPermissionHealth.state(this));
         super.onPause();
     }
 
     @Override protected void onDestroy() {
+        // Destroying this UI never invokes disableSelf or edits the OS
+        // accessibility setting. Only UI resources/listeners are released.
         if (viewerLayer != null) viewerLayer.closePicture();
         if (mediaSocket != null && mediaListener != null)
             mediaSocket.clearListenerIf(mediaListener);
@@ -708,7 +714,8 @@ public final class RemoteSetupActivity extends Activity {
         }
         ScreenSyncDiagnostics.record(this, "APP_DESTROY",
                 "socket_kept=" + (ScreenSyncMediaKeeper.current() != null)
-                + " sharing=" + AccessibilityJpegStreamer.sharingActive());
+                + " sharing=" + AccessibilityJpegStreamer.sharingActive()
+                + " system_accessibility=" + AccessibilityPermissionHealth.state(this));
         super.onDestroy();
     }
 

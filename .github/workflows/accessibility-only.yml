@@ -165,7 +165,22 @@ jobs:
           assert 'Settings.Secure.put' not in health
           assert 'system_accessibility=' in ui
           assert 'showAccessibilityHealthHelp()' in ui
+          # Closing or swiping an Activity must never disable the system's
+          # owner-granted accessibility switch. Keep this regression guard.
           acces = (source / 'AccessibilityShotService.java').read_text()
+          assert 'disableSelf()' not in acces
+          assert 'Settings.Secure.put' not in acces
+          assert 'disableSelf()' not in ui
+          assert 'Settings.Secure.put' not in ui
+          pause = ui.split('@Override protected void onPause() {', 1)[1].split(
+              '@Override protected void onDestroy()', 1)[0]
+          destroyed = ui.split('@Override protected void onDestroy() {', 1)[1].split(
+              'private void stopLocalStream()', 1)[0]
+          assert 'stopActiveOnAccessibilityLost' not in pause + destroyed
+          assert 'NoVpnBackgroundSync.setEnabled(this, false)' not in pause + destroyed
+          assert 'system_accessibility=' in pause and 'system_accessibility=' in destroyed
+          assert 'system_switch=' in acces
+          assert '无障碍服务连接已中断' in screenshot
           assert 'TYPE_ACCESSIBILITY_OVERLAY' not in acces
           assert 'longTermReadyOverlay' not in acces
           assert 'incomingWatchOverlay' not in acces

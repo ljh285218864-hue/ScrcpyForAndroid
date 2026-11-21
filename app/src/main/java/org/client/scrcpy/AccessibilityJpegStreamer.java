@@ -377,7 +377,10 @@ public final class AccessibilityJpegStreamer {
     }
 
     static void stopActiveOnAccessibilityLost() {
-        stopFromSourceDevice("无障碍权限已关闭，屏幕共享结束");
+        // This callback means screenshot SERVICE connectivity was lost.
+        // It does not prove the Android accessibility toggle was disabled.
+        // Do not attempt to toggle OS permissions in either direction.
+        stopFromSourceDevice("无障碍服务连接已中断，当前共享结束；系统权限可能仍开启");
     }
 
     private static void stopFromSourceDevice(String reason) {

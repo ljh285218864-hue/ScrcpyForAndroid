@@ -14,6 +14,9 @@ import java.util.concurrent.Executor;
  * User-enabled accessibility screenshot capability.
  * Not a system accessibility tool for disability assistance; retain Android's
  * privacy reminder behavior. Never initiates streaming or peer connections.
+ * Activity exit / recent-task removal is NOT an accessibility opt-out.
+ * The Android accessibility switch is owned by Android and the device user;
+ * this service never calls disableSelf or changes Settings.Secure.
  */
 public final class AccessibilityShotService extends AccessibilityService {
     public interface Callback {
@@ -81,15 +84,24 @@ public final class AccessibilityShotService extends AccessibilityService {
         ScreenSyncDiagnostics.record(this, "ACCESSIBILITY", "service_interrupted");
     }
     @Override public boolean onUnbind(android.content.Intent intent) {
+        // Android has unbound this SERVICE (not the app's Activity).
+        // Release an active screenshot stream because its capture source
+        // is gone. This never disables the system accessibility setting.
         AccessibilityJpegStreamer.stopActiveOnAccessibilityLost();
         if (connected == this) connected = null;
-        ScreenSyncDiagnostics.record(this, "ACCESSIBILITY", "service_unbound");
+        ScreenSyncDiagnostics.record(this, "ACCESSIBILITY",
+                "service_unbound system_switch="
+                + AccessibilityPermissionHealth.systemEnabled(this));
         return super.onUnbind(intent);
     }
     @Override public void onDestroy() {
-        ScreenSyncDiagnostics.record(this, "ACCESSIBILITY", "service_destroyed");
+        // Service destruction does not imply the device owner revoked the
+        // permission; Android may recreate the service without new consent.
         AccessibilityJpegStreamer.stopActiveOnAccessibilityLost();
         if (connected == this) connected = null;
+        ScreenSyncDiagnostics.record(this, "ACCESSIBILITY",
+                "service_destroyed system_switch="
+                + AccessibilityPermissionHealth.systemEnabled(this));
         super.onDestroy();
     }
 }
