@@ -18,15 +18,30 @@ test -s "$APK"
 adb install -r "$APK"
 adb shell pm path "$PKG"
 adb logcat -c
+# Let Android PackageManager/AccessibilityManager register a freshly installed
+# accessibility service before enabling it. On Android 15 an immediate put may
+# be discarded during the package-scan reconciliation.
+echo "--- Detect installed accessibility service ---"
+sleep 10
+adb shell dumpsys accessibility > "$RESULTS/accessibility-before-enable.txt"
+adb shell dumpsys package "$PKG" > "$RESULTS/package-before-enable.txt"
+grep -n "AccessibilityShotService" "$RESULTS/package-before-enable.txt" | head -8 || true
 
-# In a CI emulator, ADB shell acts as the system-settings UI for enabling
-# the accessibility toggle. This is NOT app code and grants no privilege to it.
-adb shell settings put secure enabled_accessibility_services "$SERVICE"
+# ADB shell is a privileged TEST HARNESS on this emulator, not app code.
+# Set the master switch before the per-service list, then verify persistence.
 adb shell settings put secure accessibility_enabled 1
+for attempt in 1 2 3 4; do
+  adb shell settings put --user 0 secure enabled_accessibility_services "$SERVICE"
+  sleep 3
+  ACTUAL=$(adb shell settings get --user 0 secure enabled_accessibility_services | tr -d '\\r')
+  echo "Accessibility enable attempt $attempt: $ACTUAL"
+  if [[ "$ACTUAL" == *"AccessibilityShotService"* ]]; then break; fi
+  sleep 5
+done
 
 check_enabled() {
   local stage="$1" actual
-  actual=$(adb shell settings get secure enabled_accessibility_services | tr -d '\r')
+  actual=$(adb shell settings get --user 0 secure enabled_accessibility_services | tr -d '\r')
   echo "$stage: secure.enabled_accessibility_services=$actual"
   if [[ "$actual" != *"$PKG"* || "$actual" != *"AccessibilityShotService"* ]]; then
     echo "FAIL [$stage]: system accessibility toggle removed the service"
