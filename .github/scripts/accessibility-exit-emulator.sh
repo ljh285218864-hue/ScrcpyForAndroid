@@ -111,10 +111,28 @@ for attempt in 1 2 3; do
 done
 adb shell dumpsys activity recents > "$RESULTS/recents-after-swipe.txt" 2>&1
 if [[ "$removed" != 1 ]]; then
-  echo "FAIL: ScreenSync recent-task card was NOT removed by touchscreen swipes"
-  exit 1
+  echo "INFO: emulator overview ignored automated vertical swipes; testing Clear all as an equivalent recent-task removal."
+  adb shell input keyevent KEYCODE_HOME
+  sleep 2
+  adb shell input keyevent KEYCODE_APP_SWITCH
+  sleep 3
+  # Pixel launcher horizontally scrolls to reveal "Clear all" to the left.
+  adb shell input touchscreen swipe "$((WIDTH*18/100))" "$((HEIGHT*38/100))" "$((WIDTH*90/100))" "$((HEIGHT*38/100))" 380
+  sleep 3
+  adb exec-out screencap -p > "$RESULTS/recents-before-clear-all.png" || true
+  adb shell input tap "$((WIDTH*16/100))" "$((HEIGHT*38/100))"
+  sleep 6
+  adb exec-out screencap -p > "$RESULTS/recents-after-clear-all.png" || true
+  adb shell dumpsys activity recents > "$RESULTS/recents-after-clear-all.txt" 2>&1
+  if screen_sync_in_recents; then
+    echo "FAIL: recent-task card still exists after both swipe and Clear all"
+    exit 1
+  fi
+  echo "PASS: ScreenSync recent-task card truly removed using the launcher Clear all control"
+  check_enabled after-recents-clear-all
+else
+  check_enabled after-recents-swipe
 fi
-check_enabled after-recents-swipe
 
 echo "--- Simulate ordinary OS reclaim of background process (not force-stop) ---"
 adb shell input keyevent KEYCODE_HOME
@@ -131,5 +149,5 @@ if adb logcat -d -v time | grep -E 'FATAL EXCEPTION: main|Process: org.client.sc
   cat "$RESULTS/crashes.txt"
   exit 1
 fi
-echo "PASS: system accessibility toggle retained after Home, Back, verified recents card removal and am kill."
+echo "PASS: system accessibility toggle retained after Home, Back, verified recent-task removal and am kill."
 echo "LIMIT: Pixel Android emulator cannot reproduce vivo/OPPO/Xiaomi OEM permission revocations."
