@@ -724,10 +724,46 @@ public final class RemoteSetupActivity extends Activity {
                 return "共享已结束";
             case "disconnected":
             case "network_unavailable":
-                return "网络暂时断开，请重试";
+                return "网络暂时断开，正在尝试重连";
+            case "server_auth_required":
+                return "服务器拒绝身份认证，请检查配对凭证与中转配置";
+            case "server_connection_replaced":
+                return "本机连接被另一条同身份连接替代，请检查是否重复登录";
             default:
-                if (status.startsWith("server_error:"))
-                    return "服务器拒绝：" + status.substring("server_error:".length());
+                if (status.startsWith("session_end_reason:")) {
+                    String reason = status.substring("session_end_reason:".length());
+                    switch (reason) {
+                        case "viewer_send_timeout":
+                        case "viewer_unreachable":
+                            return "观看端网络暂时无法接收，服务器结束本次共享；配对仍保留";
+                        case "session_expired":
+                            return "断线恢复超时，本次共享已结束；可再次点击观看";
+                        case "pairing_revoked":
+                        case "session_expired_or_revoked":
+                            return "配对权限已失效，本次共享已结束";
+                        case "stopped_by_device":
+                            return "一方已停止本次共享";
+                        default:
+                            return "服务器结束本次共享：" + reason;
+                    }
+                }
+                if (status.startsWith("server_error:")) {
+                    String error = status.substring("server_error:".length());
+                    switch (error) {
+                        case "PEER_OFFLINE":
+                            return "对方屏幕同步连接未在线，可稍后重新观看";
+                        case "DIRECTION_ALREADY_ACTIVE":
+                            return "服务器仍有未结束的同方向观看会话，请确认是否重复请求";
+                        case "SESSION_LIMIT":
+                            return "双方已有最大数量观看会话，请先结束其他观看";
+                        case "VIDEO_SESSION_NOT_ACTIVE":
+                            return "本次视频会话已失效，已停止发送旧画面";
+                        case "RESUME_NOT_ALLOWED":
+                            return "旧会话无法续接，请重新发起观看";
+                        default:
+                            return "服务器拒绝：" + error;
+                    }
+                }
                 if ("protocol_error".equals(status))
                     return "接收协议错误，请查看诊断日志并更新到修复版";
                 if ("session_rejoin_requested".equals(status)
@@ -798,8 +834,10 @@ public final class RemoteSetupActivity extends Activity {
                                 viewerLayer.showWaiting("配对手机暂未连接，请在对方手机打开软件");
                             else if ("disconnected".equals(value)
                                     || "network_unavailable".equals(value))
-                                viewerLayer.showWaiting("网络连接中断，请关闭后重试");
+                                viewerLayer.showWaiting("网络暂时中断，正在尝试恢复连接…");
                             else if ("protocol_error".equals(value)
+                                    || "server_auth_required".equals(value)
+                                    || value.startsWith("session_end_reason:")
                                     || value.startsWith("server_error:"))
                                 viewerLayer.showWaiting(friendlyMediaStatus(value));
                         }
