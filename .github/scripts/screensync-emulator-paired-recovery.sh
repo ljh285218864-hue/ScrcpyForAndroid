@@ -25,6 +25,8 @@ snapshot() {
   adb shell settings get secure enabled_accessibility_services > "$REPORT/$label-enabled.txt" 2>&1 || true
   adb shell pidof "$PACKAGE" > "$REPORT/$label-pid.txt" 2>&1 || true
   diagnostics > "$REPORT/$label-diagnostics.txt" || true
+  adb shell screencap -p "/sdcard/ss-ci-$label.png" >/dev/null 2>&1 &&
+    adb pull "/sdcard/ss-ci-$label.png" "$REPORT/$label.png" >/dev/null 2>&1 || true
 }
 cleanup() {
   local exit_code=$?
@@ -137,18 +139,32 @@ fi
 
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell input keyevent KEYCODE_MENU
+# Ensure a real unlocked foreground before manipulating recent-task cards.
+adb shell input swipe 540 1850 540 400 350
+adb shell input keyevent KEYCODE_HOME
 adb shell am start -W -n "$ACTIVITY" >/dev/null
-sleep 3
+sleep 5
+snapshot after-unlock-app-foreground
+if online 18; then
+  log "PASS: WSS reconnect after unlock and reopening owner app"
+else
+  log "FAIL: WSS still offline after unlock and reopening app"
+  failures=$((failures+1))
+fi
 
 # Home, then remove the actual recent-tasks card; no force-stop.
 adb shell input keyevent KEYCODE_HOME
 sleep 3
 adb shell input keyevent KEYCODE_APP_SWITCH
 sleep 3
+snapshot recents-before-swipe
 removed=0
-for i in 1 2 3; do
-  adb shell input swipe 540 1100 540 170 300
+attempt=0
+for entry in "540 1100 540 150 350" "540 1450 540 120 450" "540 850 540 75 450"; do
+  attempt=$((attempt+1))
+  adb shell input swipe $entry
   sleep 4
+  snapshot "recents-attempt-$attempt"
   if ! adb shell dumpsys activity recents | grep -E 'Recent #[0-9]+: Task.*org[.]client[.]scrcpy' >/dev/null; then
     removed=1
     break
