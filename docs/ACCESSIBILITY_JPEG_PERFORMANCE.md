@@ -33,6 +33,24 @@ and then idled for **1 full second**, reducing video to about 1 FPS.
   protections are unchanged.
 - A unit test covers intervals, too-fast failures and recovery.
 
+## Initial emulator improvement (run 45045812138, attempt 2)
+
+OS-aware pacing completed all paired/background/reboot checks with **51
+full JPEG frames in 26.1 seconds** = **1.91 FPS**, versus the previous
+25 frames / 0.96 FPS. There were **zero** screenshot rate-limit errors
+(code 3), zero JPEG send failures, and no websocket disconnects during the
+26-second session. First frame arrived after 0.09 seconds. 5 visual
+signatures confirmed the screen content changed.
+
+The remaining worst inter-frame gap was **7.04 seconds**. Actual
+`boot-long-view-ended-diagnostics.txt` recorded
+`CAPTURE_TIMEOUT callback_timeout_ms=6000`, proving that a rare OS
+screenshot callback stall, not the network, caused the long freeze. The
+follow-up patch therefore reduces the no-callback watchdog from 6000 to
+1900 ms, and its retry from 850 to 240 ms. Old callbacks are still discarded
+through the serial guard. This follow-up MUST be validated by a subsequent
+26-second emulator run before a final max-gap claim is made.
+
 ## What this CAN and CANNOT deliver
 
 Expected ceiling under public AccessibilityService screenshot API is low
