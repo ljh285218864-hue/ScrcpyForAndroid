@@ -12,8 +12,9 @@ import android.widget.TextView;
 
 /**
  * Dedicated immersive viewing layer inside the same Activity.
- * Closing this layer changes ONLY visibility; it does not end media,
- * revoke consent, disconnect WSS, or unpair devices.
+ * Closing this layer exits only the active viewing session through its
+ * registered owner callback. It never revokes the saved consent, disconnects
+ * the authenticated WSS control channel, or unpairs devices.
  */
 public final class FullscreenViewer extends FrameLayout {
     private final Activity activity;
@@ -39,7 +40,7 @@ public final class FullscreenViewer extends FrameLayout {
                 LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
         waitMessage = new TextView(activity);
-        waitMessage.setText("等待对方同意本次共享…");
+        waitMessage.setText("等待配对手机响应观看请求…");
         waitMessage.setTextColor(Color.WHITE);
         waitMessage.setTextSize(15);
         waitMessage.setGravity(Gravity.CENTER);
@@ -55,7 +56,7 @@ public final class FullscreenViewer extends FrameLayout {
         close.setTextSize(27);
         close.setAllCaps(false);
         close.setTextColor(Color.WHITE);
-        close.setContentDescription("关闭观看画面，保持配对连接");
+        close.setContentDescription("退出本次观看，保留配对及长期授权");
         close.setMinWidth(dp(52));
         close.setMinHeight(dp(52));
         close.setPadding(0, 0, 0, 0);
@@ -96,7 +97,7 @@ public final class FullscreenViewer extends FrameLayout {
         setVisibility(VISIBLE);
         bringToFront();
         if (hasFrame) hideWaiting();
-        else showWaiting("正在连接，等待对方确认屏幕共享…");
+        else showWaiting("正在连接配对手机，等待共享画面…");
         activity.getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                 | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
