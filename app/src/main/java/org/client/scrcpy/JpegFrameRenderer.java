@@ -5,7 +5,6 @@ import android.graphics.BitmapFactory;
 import android.os.Handler;
 import android.os.Looper;
 import android.widget.ImageView;
-import java.util.Arrays;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -71,12 +70,16 @@ public final class JpegFrameRenderer {
             ScreenSyncDiagnostics.record(imageView.getContext(), "JPEG_RX",
                     "frames=" + incoming + " bytes=" + packet.length);
         final int version = generation.get();
-        final byte[] jpeg = Arrays.copyOfRange(packet, 10, packet.length);
+        // The accepted packet is already an owned byte[] from the WSS parser.
+        // Decode its JPEG slice directly, avoiding one full image-data copy.
+        final byte[] jpeg = packet;
+        final int jpegOffset = 10;
+        final int jpegLength = packet.length - jpegOffset;
         try {
             decoder.execute(() -> {
                 BitmapFactory.Options opts = new BitmapFactory.Options();
                 opts.inJustDecodeBounds = true;
-                BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, opts);
+                BitmapFactory.decodeByteArray(jpeg, jpegOffset, jpegLength, opts);
                 if (opts.outWidth < 16 || opts.outHeight < 16
                         || opts.outWidth > 2048 || opts.outHeight > 2048
                         || (long) opts.outWidth * opts.outHeight > 4000000L) {
@@ -85,7 +88,7 @@ public final class JpegFrameRenderer {
                     return;
                 }
                 opts.inJustDecodeBounds = false;
-                Bitmap bitmap = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, opts);
+                Bitmap bitmap = BitmapFactory.decodeByteArray(jpeg, jpegOffset, jpegLength, opts);
                 if (bitmap == null) {
                     ScreenSyncDiagnostics.record(imageView.getContext(), "JPEG_DECODE_FAIL",
                             "bitmap_null");
