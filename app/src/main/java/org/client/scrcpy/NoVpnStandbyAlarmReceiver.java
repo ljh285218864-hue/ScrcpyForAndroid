@@ -13,6 +13,9 @@ public final class NoVpnStandbyAlarmReceiver extends BroadcastReceiver {
                 || !NoVpnApi.isRegistered(context)) return;
         // Re-arm first so a temporary connection failure does not stop checks.
         NoVpnStandbyAlarm.schedule(context);
+        // Health check is read-only. An enabled-but-unbound service is
+        // reported; the app never flips the owner's accessibility switch.
+        AccessibilityServiceHealth.checkAndRecord(context, "standby_alarm");
         NoVpnBackgroundSync.requestOnce(context, "standby_alarm");
         ScreenSyncMediaKeeper.restoreOptedInSignaling(context);
         ScreenSyncDiagnostics.record(context, "STANDBY_ALARM",
