@@ -729,6 +729,8 @@ public final class RemoteSetupActivity extends Activity {
                 return "服务器拒绝身份认证，请检查配对凭证与中转配置";
             case "server_connection_replaced":
                 return "本机连接被另一条同身份连接替代，请检查是否重复登录";
+            case "watch_request_ack_timeout":
+                return "服务器未确认观看请求，请关闭画面后再试";
             default:
                 if (status.startsWith("session_end_reason:")) {
                     String reason = status.substring("session_end_reason:".length());
@@ -837,6 +839,8 @@ public final class RemoteSetupActivity extends Activity {
                                 viewerLayer.showWaiting("网络暂时中断，正在尝试恢复连接…");
                             else if ("protocol_error".equals(value)
                                     || "server_auth_required".equals(value)
+                                    || "server_connection_replaced".equals(value)
+                                    || "watch_request_ack_timeout".equals(value)
                                     || value.startsWith("session_end_reason:")
                                     || value.startsWith("server_error:"))
                                 viewerLayer.showWaiting(friendlyMediaStatus(value));
