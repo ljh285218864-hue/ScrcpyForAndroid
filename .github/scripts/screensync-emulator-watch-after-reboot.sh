@@ -417,10 +417,18 @@ done
 
 # Long-run stress: measure true JPEG FPS and maximum gap (not theoretical 8fps)
 # while the source device has no recent task or foreground Activity.
-python3 "$PYTHON_RELAY" watch --seconds 45 --duration 20 \
-    > "$REPORT/boot-20s-fps.txt" 2>&1 &
+python3 "$PYTHON_RELAY" watch --seconds 60 --duration 26 \
+    > "$REPORT/boot-26s-fps.txt" 2>&1 &
 viewer_pid=$!
-sleep 8
+sleep 5
+# Exercise changing screen contents WITHOUT opening ScreenSync: ordinary
+# Android Settings app then swipe and Home while remote JPEG is streaming.
+adb shell am start -a android.settings.SETTINGS >/dev/null 2>&1 || true
+sleep 3
+adb shell input swipe 520 1820 520 680 450
+sleep 2
+adb shell input keyevent KEYCODE_HOME
+sleep 2
 snapshot boot-long-view-active
 assert_no_app_ui "boot-long-view"
 adb shell dumpsys notification --noredact \
@@ -437,14 +445,20 @@ else
   log "WARN: active sharing status notification not visible in dumpsys"
 fi
 wait "$viewer_pid" && stress_ok=1 || stress_ok=0
-cat "$REPORT/boot-20s-fps.txt" | tee -a "$REPORT/results.txt"
+cat "$REPORT/boot-26s-fps.txt" | tee -a "$REPORT/results.txt"
 if [[ "$stress_ok" == 1 ]]; then
-  log "PASS: uninterrupted authorized 20-second postboot remote JPEG stream"
+  log "PASS: uninterrupted authorized 26-second postboot remote JPEG stream"
 else
-  log "FAIL: 20-second postboot stream dropped, stalled or had no valid frames"
+  log "FAIL: 26-second postboot stream dropped, stalled or had no valid frames"
   failures=$((failures+1))
 fi
 snapshot boot-long-view-ended
+if grep -qE 'unique_visual_frames=([2-9]|[1-9][0-9]+)' "$REPORT/boot-26s-fps.txt"; then
+  log "PASS: remote stream visibly changed as Android Settings/home screen changed"
+else
+  log "FAIL: remote stream contained only visually identical screenshots despite user screen changes"
+  failures=$((failures+1))
+fi
 if task_present; then
   log "FAIL: source recent-task card appeared during repeated/background watching"
   failures=$((failures+1))
