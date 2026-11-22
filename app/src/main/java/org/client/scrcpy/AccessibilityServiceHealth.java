@@ -119,6 +119,9 @@ public final class AccessibilityServiceHealth {
     /** Log transitions only. No automatic permission toggling or capture. */
     public static synchronized void checkAndRecord(Context context, String trigger) {
         AccessibilityStatePolicy.State next = state(context);
+        // Keep the local recovery flag in sync even if the OS state did not
+        // change, e.g. after the owner opted in during the same process.
+        AccessibilityRecoveryFallback.observe(context, next);
         if (next == lastLoggedState) return;
         lastLoggedState = next;
         ScreenSyncDiagnostics.record(context, "ACCESSIBILITY_HEALTH",
