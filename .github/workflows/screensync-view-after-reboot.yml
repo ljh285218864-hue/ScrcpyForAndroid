@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/screensync-persistent-watch-consent-20261122
+      - fix/screensync-steady-jpeg-cadence-20261123
     paths:
       - '.github/workflows/screensync-view-after-reboot.yml'
       - '.github/scripts/screensync-ci-pair-relay.py'
