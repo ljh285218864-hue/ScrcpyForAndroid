@@ -25,6 +25,15 @@ permission and an active *viewing* session.
   is used only after the local user taps it.
 - On a disabled system grant, active screenshot sharing stops; there is
   no silent re-enabling of a user-revoked permission.
+- On Android's **actual** accessibility service rebind, the new
+  `AccessibilityReconnectCoordinator` waits 700ms for the system binding to
+  settle, rechecks that the service is RUNNING, the pair still exists, the
+  user enabled background communication, and their paired long-term viewing
+  approval remains valid. Only then it re-initializes the existing
+  best-effort HTTPS heartbeat/WSS signaling. It never launches a remote watch,
+  sends a screenshot, or flips an accessibility settings switch.
+- A stale service instance's `onUnbind` / `onDestroy` can no longer stop
+  media owned by a newer re-bound instance.
 - Existing reboot and inexact five-minute standby signaling checks also
   inspect and log the current accessibility state, without starting capture.
 - Unit tests cover interpretation of all four states and unknown transitions.
@@ -41,6 +50,9 @@ permission and an active *viewing* session.
 - A terminated app process does not run its Java health watcher. A subsequent
   OS bind, boot event, allowed background job, alarm, or user launch may
   reinstate the process and the observer, but is not guaranteed immediately.
+  **Only Android can bind the actual AccessibilityService.** Our rebind
+  callback is a recovery hook after the OS reconnects the service; it does
+  not itself command Android to rebind or grant that permission.
 - If the system setting is truly disabled, the phone owner must turn it on
   again; background code does not undo that choice.
 - Screenshots still require the actual connected service and an active,
@@ -57,6 +69,9 @@ permission and an active *viewing* session.
    active sharing stops, and software does not flip the switch back.
 5. Re-enable manually: service-bound callback yields RUNNING without
    needing to repeat the software's long-term pairing approval.
+   With local long-term consent + background maintenance still enabled,
+   observe `ACCESSIBILITY_REBIND signal_recovery_requested` in local
+   diagnostics; WSS should later authenticate if the server is reachable.
 6. Force stop and reboot: document OEM behavior honestly; no promise of
    immediate autonomous recovery.
 7. Run GitHub CI and test a real pair of Android devices.
