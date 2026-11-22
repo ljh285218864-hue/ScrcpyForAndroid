@@ -118,7 +118,8 @@ adb shell am start -W -n "$ACTIVITY" >/dev/null
 # production APK itself is healthy. Repair that TEST-ONLY fixture state before
 # evaluating Home, screen-off or recent-tasks behavior. Never do this on a real
 # device and never treat it as an allowed production auto-grant.
-adb shell settings put secure enabled_accessibility_services ""
+adb shell settings put secure accessibility_enabled 0
+adb shell settings delete secure enabled_accessibility_services >/dev/null
 sleep 2
 adb shell settings put secure enabled_accessibility_services "$SERVICE"
 adb shell settings put secure accessibility_enabled 1
