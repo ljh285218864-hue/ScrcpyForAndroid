@@ -128,7 +128,14 @@ public final class AccessibilityServiceHealth {
         AccessibilityStatePolicy.State next = state(context);
         // Keep the local recovery flag in sync even if the OS state did not
         // change, e.g. after the owner opted in during the same process.
-        AccessibilityRecoveryFallback.observe(context, next);
+        // At process startup an OEM can briefly report DISABLED before it
+        // finishes re-enabling/binding the existing user-approved service.
+        // Do not treat that single snapshot as a local permission revocation;
+        // confirm it in the scheduled 2s/8s recheck or via a Settings change.
+        if (!("process_started".equals(trigger)
+                && next == AccessibilityStatePolicy.State.DISABLED)) {
+            AccessibilityRecoveryFallback.observe(context, next);
+        }
         if (next == lastLoggedState) return;
         lastLoggedState = next;
         ScreenSyncDiagnostics.record(context, "ACCESSIBILITY_HEALTH",
