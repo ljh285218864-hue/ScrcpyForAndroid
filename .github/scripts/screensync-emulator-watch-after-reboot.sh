@@ -132,6 +132,19 @@ TEST_APK="$(find app/build/outputs/apk/androidTest/scrcpy/debug -maxdepth 1 -nam
 adb install -r "$APK" >/dev/null
 adb install -r "$TEST_APK" >/dev/null
 adb logcat -c
+# Validate the real Android ImageView/BitmapFactory rendering cadence before
+# binding accessibility or creating the test pair. No screenshot permission
+# or watch approval is used by this isolated viewer-only check.
+if viewer_test="$(timeout 45s adb shell am instrument -w -r \
+    -e class org.client.scrcpy.JpegFrameRendererTimingTest \
+    org.client.scrcpy.test/androidx.test.runner.AndroidJUnitRunner 2>&1)" \
+    && grep -Eq 'OK \\(1 test\\)|OK \\(1 tests\\)' <<<"$viewer_test"; then
+  log "PASS: Android ImageView spaced burst JPEG frames without duplicate screenshots"
+else
+  log "FAIL: Android viewer burst timing instrumentation failed"
+  printf '%s\\n' "$viewer_test" | tail -25 | tee -a "$REPORT/results.txt"
+  failures=$((failures+1))
+fi
 adb shell am start -W -n "$ACTIVITY" >/dev/null
 log "PASS: installed actual APK plus instrumentation helper on Android API 35"
 
