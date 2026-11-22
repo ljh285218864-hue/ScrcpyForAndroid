@@ -268,6 +268,20 @@ class MediaRelay:
                 await self.tell(client.device_id, {"type": "error",
                                                    "code": "RECIPIENT_NOT_AUTHORIZED"})
                 return
+            # A crash/swipe may leave an approved old session inside its
+            # 60-second reconnect grace period, although the re-created app
+            # has no in-memory session ID to resume. A deliberate NEW Watch
+            # request must be able to replace this orphan, rather than be
+            # rejected with DIRECTION_ALREADY_ACTIVE. Discarding the orphan
+            # notifies both phones and ends its old capture before any fresh
+            # approval; the new request never inherits session consent.
+            stale_same_direction = [sid for sid, s in self.sessions.items()
+                                    if s.group_id == client.group_id
+                                    and s.viewer == client.device_id
+                                    and s.source == other
+                                    and s.rejoin_deadline > 0]
+            for sid in stale_same_direction:
+                await self.discard(sid, "stale_session_replaced")
             count = sum(s.group_id == client.group_id for s in self.sessions.values())
             # Within each pair, one A->B and one B->A may coexist, but
             # duplicate viewing requests in the same direction are forbidden.
