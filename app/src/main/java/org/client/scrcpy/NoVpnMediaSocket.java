@@ -725,6 +725,11 @@ public final class NoVpnMediaSocket {
         }
     }
 
+    public long pendingSourceBytes() {
+        WebSocket ws = socket;
+        return ws == null ? 0L : ws.queueSize();
+    }
+
     /** True when sending another screenshot would grow an old-frame queue. */
     public boolean isSourceBackpressured() {
         WebSocket ws = socket;
