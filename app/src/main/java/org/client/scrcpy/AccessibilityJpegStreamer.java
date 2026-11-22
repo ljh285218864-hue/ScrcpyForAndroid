@@ -184,9 +184,7 @@ public final class AccessibilityJpegStreamer {
                 ScreenSyncDiagnostics.record(app, "JPEG_BACKPRESSURE",
                         "skipped=" + congestionSkips
                         + " quality=" + compressionQuality
-                                             + " screenshot_ms=" + screenshotMs
-                                             + " encode_ms=" + encodeMs
-                                             + " queued_bytes=" + socket.pendingSourceBytes());
+                        + " queued_bytes=" + socket.pendingSourceBytes());
             main.postDelayed(tick, JpegStreamTuning.CONGESTION_RETRY_MS);
             return;
         }
@@ -250,7 +248,10 @@ public final class AccessibilityJpegStreamer {
                                     ScreenSyncDiagnostics.record(app, "JPEG_SEND",
                                             "captured=" + screenshotCount + " sent=" + sendCount
                                             + " failed=" + sendFailCount + " bytes=" + data.length
-                                            + " quality=" + compressionQuality);
+                                            + " quality=" + compressionQuality
+                                            + " screenshot_ms=" + screenshotMs
+                                            + " encode_ms=" + encodeMs
+                                            + " queued_bytes=" + socket.pendingSourceBytes());
                                 }
                             } else if (screenshotCount == 1) {
                                 ScreenSyncDiagnostics.record(app, "JPEG_SEND",
