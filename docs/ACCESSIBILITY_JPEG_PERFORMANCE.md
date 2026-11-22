@@ -1,0 +1,60 @@
+# ScreenSync live JPEG performance investigation
+
+## What is measured (Android 15 CI; isolated HTTPS/WSS relay)
+
+The validated 26-second post-boot viewing scenario (run 45044792284)
+received 25 fully decodable JPEG frames, 0.96 FPS, maximum 1.46-second
+inter-frame gap. The source-device log records:
+- `CAPTURE_STOP captured=25 sent=25 send_failed=0 capture_failed=20`
+- Repeated `CAPTURE_OS_FAIL code=3`
+- JPEG encoding only ~8–55 milliseconds at 518x1152 and quality 70
+- OkHttp WebSocket queued bytes only around 28 KiB for representative frames
+
+This proves that a network bitrate or Python relay frame limit was **not**
+the primary bottleneck on this controlled test. Android's documented
+`AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT` (3)
+rejects calls placed too close together. The old capture loop requested the
+next capture 140 ms after completion, frequently caused a rate-limit error,
+and then idled for **1 full second**, reducing video to about 1 FPS.
+
+## Patch
+
+- `JpegCapturePacer` is shared across adjacent watch sessions within a
+  process. It targets a conservative 385-ms request-to-request interval
+  near Android's 333-ms AOSP request-rate limit (but **never bypasses** it).
+- Successful captures schedule their next attempt as soon as the pacing
+  deadline permits, instead of adding an extra fixed 140/265 ms.
+- Error 3 increases the interval by 65 ms up to 1100 ms; 18 successes
+  decrease it by 15 ms back toward baseline to adapt to vendor differences.
+- Other screenshot errors continue to use the longer retry; no emergency
+  busy loop is introduced.
+- Existing media queue/backpressure, pairing checks, screen-share STOP
+  notification, revocation, JPEG size cap and source-side service readiness
+  protections are unchanged.
+- A unit test covers intervals, too-fast failures and recovery.
+
+## What this CAN and CANNOT deliver
+
+Expected ceiling under public AccessibilityService screenshot API is low
+single-digit FPS; this cannot match 25–30 FPS real-time video. Actual FPS
+must be read from the Android emulator/real devices after the patch,
+**not** extrapolated from the relay's 8-FPS acceptance setting.
+
+High-frame-rate Github references:
+- https://github.com/Genymobile/scrcpy — H.264 stream from Android shell
+  via ADB / `app_process` and `MediaCodec`, **not** a normal third-party
+  APK silently obtaining the same capture privilege.
+- https://github.com/magicsih/AndroidScreenCaster — ordinary Android
+  `MediaProjection` + hardware `MediaCodec` approach. This requires the
+  Android user's system recording consent and appropriate foreground
+  service and cannot be silently restarted as an unrelated new projection
+  on Android 14+.
+- Official Android SDK: `AccessibilityService` screenshot error 3
+  https://developer.android.com/reference/android/accessibilityservice/AccessibilityService
+- Official Android screen projection:
+  https://developer.android.com/media/grow/media-projection
+
+To obtain sustained 15–30 FPS, implement a separate **explicitly consented**
+MediaProjection/H.264 transport mode and honor Android's projection session
+rules, foreground status, and STOP control. Do not present it as an invisible
+post-reboot mode or reuse a revoked screen capture token.
