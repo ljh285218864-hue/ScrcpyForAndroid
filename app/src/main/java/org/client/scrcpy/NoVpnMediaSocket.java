@@ -270,8 +270,15 @@ public final class NoVpnMediaSocket {
                 ScreenSyncDiagnostics.record(context, "WSS_CLOSE",
                         "code=" + code + " live_s="
                         + ((android.os.SystemClock.elapsedRealtime() - connectedAtMs) / 1000));
-                status("disconnected");
-                scheduleReconnect();
+                if (code == 4003) {
+                    // Credentials/identity rejected: do not hammer the server
+                    // with indefinite reauthentication. Pairing remains local
+                    // so the owner can inspect and resolve the problem.
+                    status("server_auth_required");
+                } else {
+                    status("disconnected");
+                    scheduleReconnect();
+                }
             }
             @Override public void onFailure(WebSocket ws, Throwable error,
                                             Response response) {
@@ -294,8 +301,13 @@ public final class NoVpnMediaSocket {
                                 + " idle_tx_s=" + (lastSourceFrameAtMs == 0
                                         ? -1 : (android.os.SystemClock.elapsedRealtime()
                                                 - lastSourceFrameAtMs) / 1000));
-                status("network_unavailable");
-                scheduleReconnect();
+                if (response != null
+                        && (response.code() == 401 || response.code() == 403)) {
+                    status("server_auth_required");
+                } else {
+                    status("network_unavailable");
+                    scheduleReconnect();
+                }
             }
         };
         connectedAtMs = android.os.SystemClock.elapsedRealtime();
@@ -563,6 +575,10 @@ public final class NoVpnMediaSocket {
                 ScreenSyncWatchNotice.clear(context);
                 status(sourceEnded ? "source_session_ended"
                         : viewerEnded ? "viewer_session_ended" : "session_ended");
+                if (!"stopped_by_device".equals(reason)
+                        && !"declined_by_source".equals(reason)
+                        && !"unspecified".equals(reason))
+                    status("session_end_reason:" + reason);
                 break;
             case "error": {
                 String code = body.optString("code", "UNKNOWN");
@@ -579,6 +595,17 @@ public final class NoVpnMediaSocket {
                     clearSessions();
                     AccessibilityJpegStreamer.stopActiveWithoutSending();
                     status("session_resume_expired");
+                }
+                if (("VIDEO_SESSION_NOT_ACTIVE".equals(code)
+                        || "MEDIA_CODEC_MISMATCH".equals(code)
+                        || "INVALID_VIDEO_SETUP".equals(code)
+                        || "NON_VIDEO_REJECTED".equals(code))
+                        && ScrcpyRelayWire.validSessionId(sourceSession)
+                        && !rejoinPending) {
+                    // The relay rejects this session's frames; stop sending
+                    // them, but keep pairing and the authenticated socket.
+                    endSourceSession("server_rejected_media");
+                    AccessibilityJpegStreamer.stopActiveWithoutSending();
                 }
                 ScreenSyncDiagnostics.record(context, "WSS_SERVER_ERROR",
                         "code=" + code + " source_active="
