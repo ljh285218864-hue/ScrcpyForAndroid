@@ -183,18 +183,30 @@ snapshot paired-online
 # needed to post a currently visible "正在共享 / 停止" control on each watch.
 adb shell pm grant "$PACKAGE" android.permission.POST_NOTIFICATIONS
 sleep 10
-if tap_ui_text "同意长期观看"; then
-  log "ACTION: local source user tapped first-pair long-term viewing consent"
-elif tap_ui_text "首次同意长期观看授权"; then
+# The Pixel/Quickstep launcher may show a nonresponding-app dialog on the
+# overloaded CI emulator. Its "Wait" button hides our actual consent dialog
+# underneath. UIAutomator itself temporarily unbinds AccessibilityService and
+# can trigger the ANR repeatedly. Use screen coordinates from the saved CI
+# 1080x2400 screenshot, then VERIFY the grant via production diagnostics.
+# No authorization preference is written by this helper.
+consent_granted=0
+for attempt in 1 2 3 4 5; do
+  adb shell input tap 255 1043  # Pixel Launcher "Wait" if ANR obstructs UI
   sleep 2
-  tap_ui_text "我同意长期共享"
-  log "ACTION: local source user tapped the long-term viewing toggle/dialog"
+  adb shell input tap 638 1160  # actual "同意长期观看" button
+  sleep 3
+  if diagnostics | grep -q 'LONG_TERM_SHARE  owner_enabled_for_current_pair'; then
+    consent_granted=1
+    break
+  fi
+done
+snapshot owner-longterm-consent
+if [[ "$consent_granted" == 1 ]]; then
+  log "PASS: local source owner granted long-term access via actual UI button"
 else
-  log "FAIL: couldn't locate local long-term viewing consent UI"
+  log "FAIL: local source consent dialog could not be completed with UI input"
   failures=$((failures+1))
 fi
-sleep 6
-snapshot owner-longterm-consent
 if diagnostics | grep -q 'owner_enabled_for_current_pair'; then
   log "PASS: long-term viewing approved through actual local UI"
 else
