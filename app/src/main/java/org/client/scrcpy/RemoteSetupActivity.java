@@ -955,7 +955,7 @@ public final class RemoteSetupActivity extends Activity {
                 .setMessage("是否允许已配对设备（ID 尾号：" + suffix
                         + "）以后点击「观看」时直接请求本机共享，"
                         + "不再弹出软件内的二次确认？"
-                        + "\\n\\n本机正在被观看时会显示共享状态和停止入口。"
+                        + "\n\n本机正在被观看时会显示共享状态和停止入口。"
                         + "可以在本软件中随时撤销授权；系统无障碍截图权限仍需保持有效。")
                 .setPositiveButton("同意长期观看", (d, w) ->
                         enablePersistentWatchByOwner())
