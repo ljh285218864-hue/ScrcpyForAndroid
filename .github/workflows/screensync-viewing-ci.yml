@@ -46,6 +46,14 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew :app:assembleScrcpyDebug :app:testScrcpyDebugUnitTest --no-daemon --stacktrace
+      - name: Set up Python media relay test environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run relay session, rate-limit and reconnect tests
+        run: |
+          python -m pip install --disable-pip-version-check -r remote/relay_v1/requirements-media.txt
+          python -m unittest discover -s remote/relay_v1 -p 'test_*.py' -v
       - name: Upload configured debug APK
         if: success() && env.RELAY_CONFIGURED == 'true'
         uses: actions/upload-artifact@v4
