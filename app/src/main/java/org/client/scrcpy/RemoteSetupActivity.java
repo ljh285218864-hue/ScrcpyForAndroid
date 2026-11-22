@@ -306,19 +306,8 @@ public final class RemoteSetupActivity extends Activity {
                             + "但关闭后不能后台截图。"
                             + "可以随时在本软件关闭长期授权，并立即停止本机共享。"
                             + "如果系统停止运行或撤销无障碍，仍可能无法连接。")
-                    .setPositiveButton("我同意长期共享", (d, w) -> {
-                        if (!LongTermSharePolicy.enableByOwner(this)) {
-                            report("无障碍服务不可用，无法启用长期授权");
-                            return;
-                        }
-                        NoVpnBackgroundSync.setEnabled(this, true);
-                        ScreenSyncMediaKeeper.restoreOptedInSignaling(this);
-                        ScreenSyncDiagnostics.record(this, "LONG_TERM_SHARE",
-                                "owner_enabled_for_current_pair");
-                        refreshButtons();
-                        report("长期授权已开启，只有真正共享时才显示一条通知，"
-                                + "不会出现悬浮条。");
-                    })
+                    .setPositiveButton("我同意长期共享", (d, w) ->
+                            enablePersistentWatchByOwner())
                     .setNegativeButton("取消", null).show();
         });
         action(content, "后台自启动与电池设置", v -> new AlertDialog.Builder(this)
@@ -929,6 +918,51 @@ public final class RemoteSetupActivity extends Activity {
         return item;
     }
 
+    /** Called only after an explicit action from the phone's local owner. */
+    private void enablePersistentWatchByOwner() {
+        if (!AccessibilityShotService.ready()) {
+            showSourcePrerequisiteDialog("accessibility_not_enabled");
+            return;
+        }
+        if (!LongTermSharePolicy.enableByOwner(this)) {
+            report("长期观看许可保存失败，请重试");
+            return;
+        }
+        NoVpnBackgroundSync.setEnabled(this, true);
+        ScreenSyncMediaKeeper.restoreOptedInSignaling(this);
+        ScreenSyncDiagnostics.record(this, "LONG_TERM_SHARE",
+                "owner_enabled_for_current_pair");
+        refreshButtons();
+        report("本机已同意长期观看。以后不需要重复确认，观看时显示停止入口。");
+    }
+
+    /** Prompt only once per confirmed pair; declining never enables capture. */
+    private void offerLongTermPermissionForNewPair() {
+        if (!active || isFinishing() || LongTermSharePolicy.enabled(this)) return;
+        String peer = NoVpnApi.peerId(this);
+        String group = NoVpnApi.groupId(this);
+        if (peer.isEmpty() || group.isEmpty()) return;
+        String pair = NoVpnApi.deviceId(this) + ":" + group + ":" + peer;
+        android.content.SharedPreferences prompts = getSharedPreferences(
+                "screensync_pair_consent_prompt_v1", MODE_PRIVATE);
+        if (pair.equals(prompts.getString("prompted_pair", ""))) return;
+        prompts.edit().putString("prompted_pair", pair).apply();
+        String suffix = peer.substring(Math.max(0, peer.length() - 6));
+        new AlertDialog.Builder(this)
+                .setTitle("首次配对：是否允许长期观看？")
+                .setMessage("是否允许已配对设备（ID 尾号：" + suffix
+                        + "）以后点击「观看」时直接请求本机共享，"
+                        + "不再弹出软件内的二次确认？"
+                        + "\\n\\n本机正在被观看时会显示共享状态和停止入口。"
+                        + "可以在本软件中随时撤销授权；系统无障碍截图权限仍需保持有效。")
+                .setPositiveButton("同意长期观看", (d, w) ->
+                        enablePersistentWatchByOwner())
+                .setNegativeButton("暂不允许", (d, w) ->
+                        ScreenSyncDiagnostics.record(this, "LONG_TERM_SHARE",
+                                "first_pair_declined"))
+                .show();
+    }
+
     private void refreshButtons() {
         boolean registered = NoVpnApi.isRegistered(this);
         boolean paired = registered && "paired".equals(currentState);
@@ -1084,6 +1118,7 @@ public final class RemoteSetupActivity extends Activity {
             if (active && mediaSocket == null && NoVpnMediaSocket.endpointConfigured()) {
                 connectMediaTest();
             }
+            if (!"paired".equals(previousState)) offerLongTermPermissionForNewPair();
             if (state.has("_cursor")) {
                 try {
                     NoVpnApi.acknowledge(this, state.getLong("_cursor"));
