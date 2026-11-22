@@ -87,6 +87,7 @@ public final class AccessibilityShotService extends AccessibilityService {
         return super.onUnbind(intent);
     }
     @Override public void onDestroy() {
+        ScreenSyncDiagnostics.record(this, "ACCESSIBILITY", "service_destroyed");
         if (connected == this) {
             connected = null;
             AccessibilityReconnectCoordinator.onServiceDisconnected();
