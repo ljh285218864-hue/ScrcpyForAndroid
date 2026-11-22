@@ -40,13 +40,26 @@ public final class ScrcpyRelayWire {
                 || (jpeg[jpeg.length - 2] & 255) != 0xff
                 || (jpeg[jpeg.length - 1] & 255) != 0xd9)
             throw new IllegalArgumentException("INVALID_JPEG_PACKET");
-        byte[] payload = new byte[10 + jpeg.length];
-        payload[0] = 2; // JPEG-only, never ADB or scrcpy CONTROL
-        payload[1] = 0;
+        // Build the whole wire frame once. The former payload + pack path
+        // allocated two full JPEG-sized arrays before OkHttp's own copy.
+        int length = 10 + jpeg.length;
+        byte[] frame = new byte[HEADER_LENGTH + length];
+        for (int i = 0; i < 16; i++) {
+            int offset = i * 2;
+            frame[i] = (byte) Integer.parseInt(
+                    sessionId.substring(offset, offset + 2), 16);
+        }
+        frame[16] = (byte) (length >>> 24);
+        frame[17] = (byte) (length >>> 16);
+        frame[18] = (byte) (length >>> 8);
+        frame[19] = (byte) length;
+        frame[20] = 2; // JPEG-only: no ADB or control payload
+        frame[21] = 0;
         long stamp = System.currentTimeMillis();
-        for (int i = 0; i < 8; ++i) payload[i + 2] = (byte) (stamp >>> (56 - i * 8));
-        System.arraycopy(jpeg, 0, payload, 10, jpeg.length);
-        return pack(sessionId, payload);
+        for (int i = 0; i < 8; ++i)
+            frame[22 + i] = (byte) (stamp >>> (56 - i * 8));
+        System.arraycopy(jpeg, 0, frame, HEADER_LENGTH + 10, jpeg.length);
+        return frame;
     }
 
     private static byte[] pack(String sessionId, byte[] packet) {
