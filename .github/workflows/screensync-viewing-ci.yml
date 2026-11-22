@@ -16,6 +16,12 @@ jobs:
   compile:
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      # Set both as GitHub Actions repository secrets to build a connectable APK.
+      # Without them the build still validates code but never publishes a
+      # misleading APK with relay.invalid placeholders.
+      SCREENSYNC_MEDIA_URL: ${{ secrets.SCREENSYNC_MEDIA_URL }}
+      SCREENSYNC_NOVPN_URL: ${{ secrets.SCREENSYNC_NOVPN_URL }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup Java 17
@@ -24,14 +30,26 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
+      - name: Check relay configuration
+        shell: bash
+        run: |
+          if [[ "$SCREENSYNC_MEDIA_URL" == wss://* &&
+                "$SCREENSYNC_NOVPN_URL" == https://* &&
+                "$SCREENSYNC_MEDIA_URL" != *".invalid"* &&
+                "$SCREENSYNC_NOVPN_URL" != *".invalid"* ]]; then
+            echo "RELAY_CONFIGURED=true" >> "$GITHUB_ENV"
+          else
+            echo "RELAY_CONFIGURED=false" >> "$GITHUB_ENV"
+            echo "::warning::ScreenSync relay URL secrets are missing; compiling for validation only. No usable APK will be published."
+          fi
       - name: Compile and run unit tests
         run: |
           chmod +x gradlew
           ./gradlew :app:assembleScrcpyDebug :app:testScrcpyDebugUnitTest --no-daemon --stacktrace
-      - name: Upload debug APK
-        if: success()
+      - name: Upload configured debug APK
+        if: success() && env.RELAY_CONFIGURED == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: screensync-viewing-debug-apk
+          name: screensync-configured-debug-apk
           path: app/build/outputs/apk/scrcpy/debug/*.apk
           retention-days: 14
