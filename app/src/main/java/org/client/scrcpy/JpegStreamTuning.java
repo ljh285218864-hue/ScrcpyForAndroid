@@ -20,7 +20,10 @@ public final class JpegStreamTuning {
     // Keep this comfortably above normal screenshot callbacks (~50-405ms).
     public static final long SCREENSHOT_CALLBACK_TIMEOUT_MS = 1900L;
     public static final long SCREENSHOT_TIMEOUT_RETRY_MS = 240L;
-    public static final long CONGESTION_RETRY_MS = 450L;
+    // A 450ms backpressure sleep added a visible frame-sized freeze even
+    // after a queued packet had already drained. Poll readiness cheaply;
+    // no screenshots are acquired while the socket is still congested.
+    public static final long CONGESTION_RETRY_MS = 110L;
     public static final long MAX_PENDING_BYTES_BEFORE_CAPTURE = 160L * 1024L;
     public static final long MAX_PENDING_BYTES_BEFORE_SEND = 384L * 1024L;
     private JpegStreamTuning() { }
@@ -34,6 +37,14 @@ public final class JpegStreamTuning {
     public static long captureGapMs(int serverFps) {
         return negotiatedFps(serverFps) == MAX_SERVER_FPS
                 ? FAST_CAPTURE_GAP_MS : CAPTURE_GAP_MS;
+    }
+
+    /** Recover quickly from one isolated Android screenshot failure;
+     * repeated failures back off to avoid hammering a disabled service. */
+    static long captureFailureRetryMs(int consecutiveFailures) {
+        if (consecutiveFailures <= 1) return 170L;
+        if (consecutiveFailures <= 3) return 350L;
+        return 850L;
     }
 
     public static int[] targetSize(int width, int height) {
