@@ -81,14 +81,7 @@ public final class NoVpnMediaSocket {
         status("session_resume_expired");
     };
     private static final long WATCH_ACK_TIMEOUT_MS = 12_000L;
-    private final Runnable expireUnacknowledgedWatch = () -> {
-        if (!watchRequestInFlight || !pendingViewerSession.isEmpty()
-                || !viewerSession.isEmpty()) return;
-        watchRequestInFlight = false;
-        cancelViewerWhenPending = false;
-        ScreenSyncDiagnostics.record(context, "WATCH_REQUEST", "server_ack_timeout");
-        status("watch_request_ack_timeout");
-    };
+    private final Runnable expireUnacknowledgedWatch;
     private final Runnable retryConnection = () -> {
         if (shutdown || socket != null) return;
         try {
@@ -101,6 +94,15 @@ public final class NoVpnMediaSocket {
     public NoVpnMediaSocket(Context context, Listener listener) {
         this.context = context.getApplicationContext();
         this.listener = listener;
+        this.expireUnacknowledgedWatch = () -> {
+            if (!watchRequestInFlight || !pendingViewerSession.isEmpty()
+                    || !viewerSession.isEmpty()) return;
+            watchRequestInFlight = false;
+            cancelViewerWhenPending = false;
+            ScreenSyncDiagnostics.record(this.context, "WATCH_REQUEST",
+                    "server_ack_timeout");
+            status("watch_request_ack_timeout");
+        };
     }
 
     /** Rebind UI callbacks after the Activity is recreated, without replacing
