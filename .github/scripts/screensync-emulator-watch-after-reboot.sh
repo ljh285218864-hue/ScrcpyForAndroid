@@ -138,11 +138,11 @@ adb logcat -c
 if viewer_test="$(timeout 45s adb shell am instrument -w -r \
     -e class org.client.scrcpy.JpegFrameRendererTimingTest \
     org.client.scrcpy.test/androidx.test.runner.AndroidJUnitRunner 2>&1)" \
-    && grep -Eq 'OK \\(1 test\\)|OK \\(1 tests\\)' <<<"$viewer_test"; then
+    && grep -Eq 'OK \(1 test\)|OK \(1 tests\)' <<<"$viewer_test"; then
   log "PASS: Android ImageView spaced burst JPEG frames without duplicate screenshots"
 else
   log "FAIL: Android viewer burst timing instrumentation failed"
-  printf '%s\\n' "$viewer_test" | tail -25 | tee -a "$REPORT/results.txt"
+  printf '%s\n' "$viewer_test" | tail -25 | tee -a "$REPORT/results.txt"
   failures=$((failures+1))
 fi
 adb shell am start -W -n "$ACTIVITY" >/dev/null
