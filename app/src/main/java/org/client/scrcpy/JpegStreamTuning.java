@@ -28,6 +28,16 @@ public final class JpegStreamTuning {
     public static final long MAX_PENDING_BYTES_BEFORE_SEND = 384L * 1024L;
     private JpegStreamTuning() { }
 
+    // Smooth very closely spaced incoming frames rather than flashing through
+    // several screenshots at once after a brief network backlog. Frames that
+    // arrive normally (~385ms apart) display immediately, without buffering.
+    public static final long MIN_VIEW_DISPLAY_GAP_MS = 320L;
+
+    static long nextViewerDisplayAtMs(long nowMs, long previousDisplayAtMs) {
+        if (previousDisplayAtMs <= 0L) return nowMs;
+        return Math.max(nowMs, previousDisplayAtMs + MIN_VIEW_DISPLAY_GAP_MS);
+    }
+
     /** A relay without this optional negotiated field is the older 4 FPS one. */
     public static int negotiatedFps(int advertised) {
         return advertised >= MAX_SERVER_FPS ? MAX_SERVER_FPS : FALLBACK_SERVER_FPS;
