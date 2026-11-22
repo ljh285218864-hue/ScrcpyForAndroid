@@ -15,6 +15,11 @@ public final class JpegStreamTuning {
     // When OS-aware screenshot pacing permits a request, schedule on the
     // next main-loop turn rather than waiting an extra 140-265ms per frame.
     public static final long MIN_CAPTURE_IDLE_MS = 8L;
+    // Rare Android/OEM takeScreenshot callbacks never arrive. The old 6000ms
+    // watchdog created seven-second visible stalls in the Android 15 CI.
+    // Keep this comfortably above normal screenshot callbacks (~50-405ms).
+    public static final long SCREENSHOT_CALLBACK_TIMEOUT_MS = 1900L;
+    public static final long SCREENSHOT_TIMEOUT_RETRY_MS = 240L;
     public static final long CONGESTION_RETRY_MS = 450L;
     public static final long MAX_PENDING_BYTES_BEFORE_CAPTURE = 160L * 1024L;
     public static final long MAX_PENDING_BYTES_BEFORE_SEND = 384L * 1024L;
