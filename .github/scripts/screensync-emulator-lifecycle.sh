@@ -77,14 +77,27 @@ report "PASS: Home did not disable accessibility grant"
 adb shell input keyevent KEYCODE_APP_SWITCH
 sleep 3
 snapshot recents-before-swipe
-adb shell input swipe 540 1630 540 300 450
-sleep 8
+task_removed=0
+for attempt in 1 2 3; do
+  # Start in the card's visual center, not the bottom screenshot/select
+  # controls. The first run only dismissed a tooltip, leaving the task.
+  adb shell input swipe 540 1100 540 170 300
+  sleep 4
+  if ! adb shell dumpsys activity recents | grep -E 'Recent #[0-9]+: Task.*org[.]client[.]scrcpy' >/dev/null; then
+    task_removed=1
+    break
+  fi
+done
 snapshot recents-after-swipe
+[[ "$task_removed" == 1 ]] ||
+  { report "FAIL: swipe gesture did not actually remove ScreenSync task"; exit 1; }
+report "PASS: swipe actually removed ScreenSync task from recent-tasks database"
 enabled="$(adb shell settings get secure enabled_accessibility_services | tr -d '\r')"
 [[ "$enabled" == *"$SERVICE"* ]] ||
-  { report "FAIL: accessibility grant lost after swipe"; exit 1; }
-report "PASS: swipe did not disable accessibility grant"
-report "NOTE: recents screenshots/dumps available to verify actual card removal"
+  { report "FAIL: accessibility grant lost after actual task swipe"; exit 1; }
+adb shell dumpsys accessibility | grep -q 'Bound services:.*ScreenSync' ||
+  { report "FAIL: service is enabled but not bound after removing task"; exit 1; }
+report "PASS: Android kept ScreenSync AccessibilityService both enabled and bound after task removal"
 
 adb shell am start -W -n "$ACTIVITY"
 sleep 10
