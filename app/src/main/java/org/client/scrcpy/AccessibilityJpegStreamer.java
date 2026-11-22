@@ -31,7 +31,6 @@ public final class AccessibilityJpegStreamer {
     private static final int NOTICE_ID = 8413;
     private static final String CHANNEL_ID = "screensync_active_share";
     private static final long OVERLAY_CHECK_INTERVAL_MS = 1000L;
-    private static final long DELAY_MS = JpegStreamTuning.CAPTURE_GAP_MS;
     private static volatile AccessibilityJpegStreamer current;
 
     private final Context app;
@@ -153,7 +152,7 @@ public final class AccessibilityJpegStreamer {
         }
         ScreenSyncDiagnostics.record(app, "CAPTURE_START", "success jpeg_width="
                 + outWidth + " jpeg_height=" + outHeight + " quality=" + compressionQuality
-                + " gap_ms=" + DELAY_MS);
+                + " gap_ms=" + socket.jpegCaptureGapMs());
         main.post(tick);
         return true;
     }
@@ -184,12 +183,16 @@ public final class AccessibilityJpegStreamer {
             if (congestionSkips == 1 || congestionSkips % 10 == 0)
                 ScreenSyncDiagnostics.record(app, "JPEG_BACKPRESSURE",
                         "skipped=" + congestionSkips
-                        + " quality=" + compressionQuality);
+                        + " quality=" + compressionQuality
+                                             + " screenshot_ms=" + screenshotMs
+                                             + " encode_ms=" + encodeMs
+                                             + " queued_bytes=" + socket.pendingSourceBytes());
             main.postDelayed(tick, JpegStreamTuning.CONGESTION_RETRY_MS);
             return;
         }
         busy = true;
         final int serial = ++captureSerial;
+        final long screenshotRequestedAt = now;
         // Some OEMs can leave takeScreenshot without a callback. Recover
         // rather than displaying a permanent black waiting screen.
         final Runnable watchdog = () -> {
@@ -208,18 +211,27 @@ public final class AccessibilityJpegStreamer {
                     screenshot.recycle();
                     return;
                 }
+                final long screenshotMs = android.os.SystemClock.elapsedRealtime()
+                        - screenshotRequestedAt;
                 try {
                 encoder.execute(() -> {
                     try {
                         if (running) {
+                            final long encodeBegin = android.os.SystemClock.elapsedRealtime();
                             Bitmap image = Bitmap.createScaledBitmap(
                                     screenshot, outWidth, outHeight, true);
-                            ByteArrayOutputStream buffer = new ByteArrayOutputStream(131072);
-                            boolean encoded = image.compress(
-                                    Bitmap.CompressFormat.JPEG, compressionQuality, buffer);
-                            if (!encoded) throw new IllegalStateException("jpeg_encode_failed");
-                            if (image != screenshot) image.recycle();
-                            byte[] data = buffer.toByteArray();
+                            byte[] data;
+                            try {
+                                ByteArrayOutputStream buffer = new ByteArrayOutputStream(98304);
+                                boolean encoded = image.compress(
+                                        Bitmap.CompressFormat.JPEG, compressionQuality, buffer);
+                                if (!encoded) throw new IllegalStateException("jpeg_encode_failed");
+                                data = buffer.toByteArray();
+                            } finally {
+                                if (image != screenshot) image.recycle();
+                            }
+                            long encodeMs = android.os.SystemClock.elapsedRealtime()
+                                    - encodeBegin;
                             screenshotCount++;
                             if (running && data.length >= 64 && data.length <= 1024 * 1024) {
                                 boolean sent = socket.sendJpegFrame(data);
@@ -253,7 +265,7 @@ public final class AccessibilityJpegStreamer {
                         main.post(() -> {
                             if (serial != captureSerial) return;
                             busy = false;
-                            if (running) main.postDelayed(tick, DELAY_MS);
+                            if (running) main.postDelayed(tick, socket.jpegCaptureGapMs());
                         });
                     }
                 });
