@@ -44,6 +44,8 @@
 
         <receiver android:name=".AccessibilityShareStopReceiver"
             android:exported="false" />
+        <receiver android:name=".NoVpnStandbyAlarmReceiver"
+            android:enabled="true" android:exported="false" />
         <!-- Only restores owner-enabled presence, never screenshots or viewing. -->
         <receiver
             android:name=".NoVpnStandbyRestoreReceiver"
