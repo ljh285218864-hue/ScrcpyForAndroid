@@ -210,10 +210,14 @@ public final class AccessibilityJpegStreamer {
             captureSerial++;
             busy = false;
             ScreenSyncDiagnostics.record(app, "CAPTURE_TIMEOUT",
-                    "callback_timeout_ms=6000");
-            main.postDelayed(tick, 850);
+                    "callback_timeout_ms=" + JpegStreamTuning.SCREENSHOT_CALLBACK_TIMEOUT_MS
+                    + " next_retry_ms=" + JpegStreamTuning.SCREENSHOT_TIMEOUT_RETRY_MS
+                    + " os_pacing_ms=" + SCREENSHOT_PACER.gapMs());
+            // Any callback arriving from this abandoned serial is ignored or
+            // recycled by its callback, never sent into a new session.
+            main.postDelayed(tick, JpegStreamTuning.SCREENSHOT_TIMEOUT_RETRY_MS);
         };
-        main.postDelayed(watchdog, 6000);
+        main.postDelayed(watchdog, JpegStreamTuning.SCREENSHOT_CALLBACK_TIMEOUT_MS);
         AccessibilityShotService.capture(main::post, new AccessibilityShotService.Callback() {
             @Override public void success(Bitmap screenshot) {
                 main.removeCallbacks(watchdog);
