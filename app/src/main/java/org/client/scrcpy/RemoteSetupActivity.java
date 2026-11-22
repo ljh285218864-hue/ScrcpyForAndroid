@@ -65,6 +65,9 @@ public final class RemoteSetupActivity extends Activity {
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
             if (!active) return;
+            AccessibilityServiceHealth.checkAndRecord(RemoteSetupActivity.this,
+                    "ui_periodic_check");
+            refreshPermissions();
             if (!busy && NoVpnApi.isRegistered(RemoteSetupActivity.this)) {
                 runNetwork(() -> {
                     JSONObject state = NoVpnApi.status(RemoteSetupActivity.this);
@@ -468,16 +471,24 @@ public final class RemoteSetupActivity extends Activity {
     }
 
     private void showSourcePrerequisiteDialog(String issue) {
-        boolean needsAccessibility = "accessibility_not_enabled".equals(issue);
-        String message = needsAccessibility
-                ? "本机没有开启无障碍截图服务。请在本机系统设置里手动开启。"
-                : "当前无法启动截图；请检查是否有可见的共享状态和停止入口。";
+        boolean disabled = "accessibility_not_enabled".equals(issue);
+        boolean disconnected = "accessibility_service_disconnected".equals(issue);
+        boolean accessIssue = disabled || disconnected
+                || "accessibility_state_unknown".equals(issue);
+        String message = disabled
+                ? "本机无障碍开关已关闭，只有手机持有人能再次开启。"
+                : disconnected
+                    ? "本机无障碍开关仍处于开启状态，但服务尚未连接。"
+                    + "软件不会主动关闭服务，可等待系统重新绑定。"
+                    : accessIssue
+                        ? "无法确认当前无障碍服务状态，请检查系统设置。"
+                        : "当前无法启动截图，请检查共享状态及可用的停止入口。";
         new AlertDialog.Builder(this)
                 .setTitle("当前无法共享屏幕")
-                .setMessage(message + "\n\n本次请求已拒绝，不会在后台偷偷启动共享。")
-                .setPositiveButton(needsAccessibility ? "去开启无障碍" : "确定",
+                .setMessage(message + "\n\n本次请求已拒绝，不会绕过系统权限启动截图。")
+                .setPositiveButton(accessIssue ? "查看无障碍设置" : "确定",
                         (dialog, which) -> {
-                            if (needsAccessibility) {
+                            if (accessIssue) {
                                 startActivity(new Intent(
                                         Settings.ACTION_ACCESSIBILITY_SETTINGS));
                             }
@@ -488,9 +499,25 @@ public final class RemoteSetupActivity extends Activity {
 
     private void refreshPermissions() {
         if (accessibilityButton != null) {
-            accessibilityButton.setText(AccessibilityShotService.ready()
-                    ? "✓ 无障碍截图已授权" : "1 · 开启无障碍截图权限");
-            accessibilityButton.setEnabled(!AccessibilityShotService.ready());
+            AccessibilityStatePolicy.State state = AccessibilityServiceHealth.state(this);
+            switch (state) {
+                case RUNNING:
+                    accessibilityButton.setText("✓ 无障碍已开启，服务运行正常");
+                    accessibilityButton.setEnabled(false);
+                    break;
+                case ENABLED_NOT_CONNECTED:
+                    accessibilityButton.setText("无障碍已开启，等待系统重新连接（点此检查）");
+                    accessibilityButton.setEnabled(true);
+                    break;
+                case DISABLED:
+                    accessibilityButton.setText("无障碍已关闭，点此由本机用户开启");
+                    accessibilityButton.setEnabled(true);
+                    break;
+                default:
+                    accessibilityButton.setText("无法核实无障碍状态，点此检查");
+                    accessibilityButton.setEnabled(true);
+                    break;
+            }
         }
         if (notificationsButton != null) {
             boolean appEnabled = ShareNotificationPreference.isEnabled(this);
@@ -621,8 +648,11 @@ public final class RemoteSetupActivity extends Activity {
         if (mediaSocket == null || jpegStreamer != null
                 || AccessibilityJpegStreamer.sharingActive()) return;
         if (!AccessibilityShotService.ready()) {
-            ScreenSyncDiagnostics.record(this, "SOURCE_START", "accessibility_not_ready");
-            mediaState.setText("需要在本机设置中开启无障碍截图权限");
+            String issue = AccessibilityJpegStreamer.readinessIssue(this);
+            ScreenSyncDiagnostics.record(this, "SOURCE_START", "not_ready=" + issue);
+            mediaState.setText("accessibility_service_disconnected".equals(issue)
+                    ? "无障碍开关已开启，等待系统重新绑定服务"
+                    : "无障碍服务不可用，请由本机用户检查系统设置");
             mediaSocket.endSourceSession("source_accessibility_missing");
             return;
         }
