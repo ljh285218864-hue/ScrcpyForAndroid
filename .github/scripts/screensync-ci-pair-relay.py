@@ -94,6 +94,67 @@ async def guest_online(seconds):
         await asyncio.sleep(2)
 
 
+async def guest_watch_frames(timeout_seconds):
+    """True end-to-end media test: remote peer requests a fresh session and
+    validates JPEG bytes are decodable. No legacy session is reused."""
+    from io import BytesIO
+    from PIL import Image
+
+    async with connect(WSS, ssl=tls_client(), open_timeout=6,
+                       close_timeout=2, compression=None, max_size=5_000_000) as ws:
+        await ws.send(json.dumps({"type": "auth", "token": guest_token()}))
+        auth = json.loads(await asyncio.wait_for(ws.recv(), 8))
+        if auth.get("type") != "authenticated":
+            raise RuntimeError("guest WSS auth rejected")
+        await ws.send(json.dumps({"type": "watch_request"}))
+        pending = None
+        active = False
+        dimensions = None
+        frames = 0
+        begin = asyncio.get_running_loop().time()
+        messages = []
+        while asyncio.get_running_loop().time() - begin < timeout_seconds:
+            remaining = max(1.0, timeout_seconds - (asyncio.get_running_loop().time() - begin))
+            try:
+                event = await asyncio.wait_for(ws.recv(), remaining)
+            except asyncio.TimeoutError:
+                break
+            if isinstance(event, bytes):
+                if not active or dimensions is None or pending is None:
+                    raise RuntimeError("video received without valid session approval/setup")
+                packet = media.parse_video_frame(event)
+                if not packet or packet[0] != pending or not media.legal_jpeg_packet(packet[1]):
+                    raise RuntimeError("malformed/unapproved JPEG relay frame")
+                jpeg = packet[1][10:]
+                with Image.open(BytesIO(jpeg)) as frame:
+                    frame.verify()  # decode integrity, not just JPEG markers
+                frames += 1
+                if frames >= 2:
+                    await ws.send(json.dumps({"type": "watch_end", "session_id": pending}))
+                    print(f"WATCH_FRAMES_OK count={frames} dimensions={dimensions} "
+                          "fresh_session=true valid_jpeg=true", flush=True)
+                    return 0
+            else:
+                event = json.loads(event)
+                code = event.get("type", "?")
+                messages.append(code + (":" + event.get("code") if event.get("code") else ""))
+                if code == "watch_pending":
+                    pending = event.get("session_id")
+                elif code == "watch_active":
+                    if event.get("session_id") != pending:
+                        raise RuntimeError("session_id changed before approval")
+                    active = True
+                elif code == "video_setup":
+                    if event.get("session_id") != pending or event.get("codec") != "jpeg":
+                        raise RuntimeError("video setup session/codec mismatch")
+                    dimensions = event.get("dimensions")
+                elif code in ("error", "watch_end"):
+                    break
+        print("WATCH_FRAMES_FAIL frames=" + str(frames)
+              + " messages=" + ",".join(messages[-12:]), flush=True)
+        return 1
+
+
 def guest_status():
     state = post("/v1/status", {}, guest_token())
     assert state["state"] == "paired", state["state"]
@@ -132,7 +193,7 @@ async def run_services():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["serve", "join", "online", "status", "revoke"])
+    parser.add_argument("mode", choices=["serve", "join", "online", "watch", "status", "revoke"])
     parser.add_argument("--seconds", type=int, default=15)
     args = parser.parse_args()
     if args.mode == "serve":
@@ -141,6 +202,8 @@ if __name__ == "__main__":
         guest_join()
     elif args.mode == "online":
         sys.exit(asyncio.run(guest_online(args.seconds)))
+    elif args.mode == "watch":
+        sys.exit(asyncio.run(guest_watch_frames(args.seconds)))
     elif args.mode == "status":
         guest_status()
     else:
