@@ -92,7 +92,7 @@ public final class RemoteSetupActivity extends Activity {
     private Button scanButton, accessibilityButton, notificationsButton,
             systemNotificationSettingsButton, backgroundToggle, longTermToggle;
     private TextView shareVisibleStatus, presenceState;
-    private TextView hint;
+    private TextView accessibilityFallbackHint, hint;
     private LinearLayout permissionsPanel;
 
     @Override public void onCreate(Bundle savedInstanceState) {
@@ -226,6 +226,13 @@ public final class RemoteSetupActivity extends Activity {
         heading(permissionsPanel, "首次使用设置");
         accessibilityButton = action(permissionsPanel, "开启无障碍截图权限",
                 v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        accessibilityFallbackHint = note(permissionsPanel,
+                "此前已开启的无障碍服务现在处于关闭状态。长期观看授权仍保留，"
+                + "但屏幕共享不可用。无法区分是系统自动关闭还是人为关闭；"
+                + "请手机持有人点击上方按钮，在系统设置中确认是否恢复。"
+                + "本软件不会绕过系统开关自动启用。");
+        accessibilityFallbackHint.setPadding(dp(4), dp(4), dp(4), dp(10));
+        accessibilityFallbackHint.setVisibility(View.GONE);
         notificationsButton = action(permissionsPanel, "共享通知：软件内开启", v -> {
             boolean next = !ShareNotificationPreference.isEnabled(this);
             ShareNotificationPreference.setEnabled(this, next);
@@ -498,8 +505,14 @@ public final class RemoteSetupActivity extends Activity {
     }
 
     private void refreshPermissions() {
+        AccessibilityStatePolicy.State state = AccessibilityServiceHealth.state(this);
+        boolean needsLocalAction = AccessibilityRecoveryFallback.needsLocalRecovery(
+                this, state);
+        if (accessibilityFallbackHint != null) {
+            accessibilityFallbackHint.setVisibility(needsLocalAction
+                    ? View.VISIBLE : View.GONE);
+        }
         if (accessibilityButton != null) {
-            AccessibilityStatePolicy.State state = AccessibilityServiceHealth.state(this);
             switch (state) {
                 case RUNNING:
                     accessibilityButton.setText("✓ 无障碍已开启，服务运行正常");
@@ -510,7 +523,9 @@ public final class RemoteSetupActivity extends Activity {
                     accessibilityButton.setEnabled(true);
                     break;
                 case DISABLED:
-                    accessibilityButton.setText("无障碍已关闭，点此由本机用户开启");
+                    accessibilityButton.setText(needsLocalAction
+                            ? "无障碍已关闭 · 点击检查并恢复（需本人确认）"
+                            : "无障碍已关闭，点此由本机用户开启");
                     accessibilityButton.setEnabled(true);
                     break;
                 default:
