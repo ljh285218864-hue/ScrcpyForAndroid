@@ -4,17 +4,29 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public final class JpegStreamTuningTest {
-    @Test public void portraitGetsSharperWithoutExceedingDecoderLimit() {
-        assertArrayEquals(new int[]{648, 1440}, JpegStreamTuning.targetSize(1080, 2400));
-        assertArrayEquals(new int[]{1440, 648}, JpegStreamTuning.targetSize(2400, 1080));
+    @Test public void scaledPortraitUsesLessCpuAndStaysWithinDecoderLimit() {
+        assertArrayEquals(new int[]{518, 1152}, JpegStreamTuning.targetSize(1080, 2400));
+        assertArrayEquals(new int[]{1152, 518}, JpegStreamTuning.targetSize(2400, 1080));
     }
 
     @Test public void smallScreensAreNeverUpscaled() {
         assertArrayEquals(new int[]{360, 800}, JpegStreamTuning.targetSize(360, 800));
     }
 
-    @Test public void profileRespectsFourFpsServerLimit() {
-        assertTrue(JpegStreamTuning.JPEG_QUALITY >= 70);
+    @Test public void oldServerWithoutCapabilityCannotBeOverrun() {
+        assertEquals(4, JpegStreamTuning.negotiatedFps(0));
+        assertEquals(4, JpegStreamTuning.negotiatedFps(4));
+        assertEquals(265L, JpegStreamTuning.captureGapMs(4));
+    }
+
+    @Test public void newServerAdvertisesHigherBoundedFrameRate() {
+        assertEquals(8, JpegStreamTuning.negotiatedFps(8));
+        assertEquals(8, JpegStreamTuning.negotiatedFps(100));
+        assertEquals(140L, JpegStreamTuning.captureGapMs(8));
+    }
+
+    @Test public void profileKeepsBoundedQualityAndWebsocketQueue() {
+        assertTrue(JpegStreamTuning.JPEG_QUALITY >= 65);
         assertTrue(JpegStreamTuning.JPEG_QUALITY <= 82);
         assertTrue(JpegStreamTuning.MAX_LONG_EDGE <= 2048);
         assertTrue(JpegStreamTuning.CAPTURE_GAP_MS >= 250);
