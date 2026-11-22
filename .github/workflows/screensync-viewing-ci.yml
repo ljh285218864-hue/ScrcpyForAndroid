@@ -17,11 +17,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
-      # Set both as GitHub Actions repository secrets to build a connectable APK.
-      # Without them the build still validates code but never publishes a
-      # misleading APK with relay.invalid placeholders.
-      SCREENSYNC_MEDIA_URL: ${{ secrets.SCREENSYNC_MEDIA_URL }}
-      SCREENSYNC_NOVPN_URL: ${{ secrets.SCREENSYNC_NOVPN_URL }}
+      # These are public service URLs, not access tokens or pairing credentials.
+      # Operators can override endpoints via repository Actions secrets.
+      # Match the separately deployed Osaka Nginx TLS listener on port 8443.
+      SCREENSYNC_MEDIA_URL: ${{ secrets.SCREENSYNC_MEDIA_URL || 'wss://relay.privyluxe.com:8443/media' }}
+      SCREENSYNC_NOVPN_URL: ${{ secrets.SCREENSYNC_NOVPN_URL || 'https://relay.privyluxe.com:8443' }}
     steps:
       - uses: actions/checkout@v4
       - name: Setup Java 17
@@ -40,7 +40,7 @@ jobs:
             echo "RELAY_CONFIGURED=true" >> "$GITHUB_ENV"
           else
             echo "RELAY_CONFIGURED=false" >> "$GITHUB_ENV"
-            echo "::warning::ScreenSync relay URL secrets are missing; compiling for validation only. No usable APK will be published."
+            echo "::warning::The configured relay URLs are invalid; APK publication is disabled."
           fi
       - name: Compile and run unit tests
         run: |
@@ -58,6 +58,6 @@ jobs:
         if: success() && env.RELAY_CONFIGURED == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: screensync-configured-debug-apk
+          name: ScreenSync-Osaka-transport-debug-apk
           path: app/build/outputs/apk/scrcpy/debug/*.apk
           retention-days: 14
