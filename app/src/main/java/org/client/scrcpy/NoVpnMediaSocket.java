@@ -70,6 +70,8 @@ public final class NoVpnMediaSocket {
     private volatile long rejoinUntilElapsedMs;
     private volatile boolean rejoinPending;
     private volatile boolean sourceSetupReady = true;
+    // Four FPS until an authenticated relay advertises a higher JPEG cap.
+    private volatile int jpegServerFps = JpegStreamTuning.FALLBACK_SERVER_FPS;
     private final Runnable expireRejoin = () -> {
         if (!rejoinPending || android.os.SystemClock.elapsedRealtime()
                 < rejoinUntilElapsedMs) return;
@@ -106,6 +108,10 @@ public final class NoVpnMediaSocket {
      * auto-start from a separate, still visible source owner grant. */
     public boolean isPersistentSourceStartPending() {
         return persistentSourceStartPending;
+    }
+
+    public long jpegCaptureGapMs() {
+        return JpegStreamTuning.captureGapMs(jpegServerFps);
     }
 
     public boolean hasApprovedSourceSession() {
@@ -328,6 +334,11 @@ public final class NoVpnMediaSocket {
                     throw new SecurityException("服务器返回的设备身份不一致");
                 }
                 authenticated = true;
+                jpegServerFps = JpegStreamTuning.negotiatedFps(
+                        body.optInt("jpeg_max_fps",
+                                JpegStreamTuning.FALLBACK_SERVER_FPS));
+                ScreenSyncDiagnostics.record(context, "WSS_CAPABILITIES",
+                        "jpeg_server_fps=" + jpegServerFps);
                 receivedFrames = 0;
                 sourceFramesSent = 0;
                 lastSourceFrameAtMs = 0;
@@ -553,11 +564,30 @@ public final class NoVpnMediaSocket {
                 status(sourceEnded ? "source_session_ended"
                         : viewerEnded ? "viewer_session_ended" : "session_ended");
                 break;
-            case "error":
-                watchRequestInFlight = false;
-                cancelViewerWhenPending = false;
-                status("server_error:" + body.optString("code", "UNKNOWN"));
+            case "error": {
+                String code = body.optString("code", "UNKNOWN");
+                // Errors unrelated to the current viewer request must not
+                // silently cancel a healthy source or reverse-direction view.
+                if ("PEER_OFFLINE".equals(code)
+                        || "DIRECTION_ALREADY_ACTIVE".equals(code)
+                        || "SESSION_LIMIT".equals(code)
+                        || "RECIPIENT_NOT_AUTHORIZED".equals(code)) {
+                    watchRequestInFlight = false;
+                    cancelViewerWhenPending = false;
+                }
+                if ("RESUME_NOT_ALLOWED".equals(code) && rejoinPending) {
+                    clearSessions();
+                    AccessibilityJpegStreamer.stopActiveWithoutSending();
+                    status("session_resume_expired");
+                }
+                ScreenSyncDiagnostics.record(context, "WSS_SERVER_ERROR",
+                        "code=" + code + " source_active="
+                                + ScrcpyRelayWire.validSessionId(sourceSession)
+                                + " viewer_active="
+                                + ScrcpyRelayWire.validSessionId(viewerSession));
+                status("server_error:" + code);
                 break;
+            }
             default:
                 throw new SecurityException("不允许的中转消息类型");
         }
