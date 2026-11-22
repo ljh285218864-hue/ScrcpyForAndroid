@@ -12,6 +12,8 @@ public final class App extends Application {
     @Override public void onCreate() {
         super.onCreate();
         ScreenSyncWatchNotice.clear(this);
+        // Observe the existing OS grant; never re-enable a revoked service.
+        AccessibilityServiceHealth.start(this);
         NoVpnBackgroundSync.restore(this);
     }
 }
