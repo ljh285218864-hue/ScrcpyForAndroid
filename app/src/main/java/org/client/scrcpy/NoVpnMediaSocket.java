@@ -80,6 +80,15 @@ public final class NoVpnMediaSocket {
         AccessibilityJpegStreamer.stopActiveWithoutSending();
         status("session_resume_expired");
     };
+    private static final long WATCH_ACK_TIMEOUT_MS = 12_000L;
+    private final Runnable expireUnacknowledgedWatch = () -> {
+        if (!watchRequestInFlight || !pendingViewerSession.isEmpty()
+                || !viewerSession.isEmpty()) return;
+        watchRequestInFlight = false;
+        cancelViewerWhenPending = false;
+        ScreenSyncDiagnostics.record(context, "WATCH_REQUEST", "server_ack_timeout");
+        status("watch_request_ack_timeout");
+    };
     private final Runnable retryConnection = () -> {
         if (shutdown || socket != null) return;
         try {
@@ -270,7 +279,9 @@ public final class NoVpnMediaSocket {
                 ScreenSyncDiagnostics.record(context, "WSS_CLOSE",
                         "code=" + code + " live_s="
                         + ((android.os.SystemClock.elapsedRealtime() - connectedAtMs) / 1000));
-                if (code == 4003) {
+                if (code == 4005) {
+                    status("server_connection_replaced");
+                } else if (code == 4003) {
                     // Credentials/identity rejected: do not hammer the server
                     // with indefinite reauthentication. Pairing remains local
                     // so the owner can inspect and resolve the problem.
@@ -462,6 +473,7 @@ public final class NoVpnMediaSocket {
                 if (!ScrcpyRelayWire.validSessionId(body.optString("session_id")))
                     throw new SecurityException("无效观看等待会话");
                 pendingViewerSession = body.optString("session_id");
+                main.removeCallbacks(expireUnacknowledgedWatch);
                 watchRequestInFlight = true;
                 if (cancelViewerWhenPending) {
                     endViewingSession();
@@ -476,6 +488,7 @@ public final class NoVpnMediaSocket {
                 if (!sid.equals(pendingViewerSession))
                     throw new SecurityException("不是本机发起的观看会话");
                 pendingViewerSession = "";
+                main.removeCallbacks(expireUnacknowledgedWatch);
                 watchRequestInFlight = false;
                 viewerSession = sid;
                 viewerHasVideoSetup = false;
@@ -590,6 +603,7 @@ public final class NoVpnMediaSocket {
                         || "RECIPIENT_NOT_AUTHORIZED".equals(code)) {
                     watchRequestInFlight = false;
                     cancelViewerWhenPending = false;
+                    main.removeCallbacks(expireUnacknowledgedWatch);
                 }
                 if ("RESUME_NOT_ALLOWED".equals(code) && rejoinPending) {
                     clearSessions();
@@ -644,6 +658,10 @@ public final class NoVpnMediaSocket {
             boolean sent = send(new JSONObject().put("type", "watch_request")
                     .put("to_device_id", peer));
             if (!sent) watchRequestInFlight = false;
+            else {
+                main.removeCallbacks(expireUnacknowledgedWatch);
+                main.postDelayed(expireUnacknowledgedWatch, WATCH_ACK_TIMEOUT_MS);
+            }
             ScreenSyncDiagnostics.record(context, "WATCH_REQUEST", "sent=" + sent);
             return sent;
         } catch (JSONException error) {
@@ -710,6 +728,7 @@ public final class NoVpnMediaSocket {
         viewerSession = "";
         pendingViewerSession = "";
         watchRequestInFlight = false;
+        main.removeCallbacks(expireUnacknowledgedWatch);
         cancelViewerWhenPending = false;
         viewerHasVideoSetup = false;
         String[] ids = {active, pending};
@@ -790,6 +809,7 @@ public final class NoVpnMediaSocket {
         ScreenSyncWatchNotice.clear(context);
         receivedFrames = 0;
         watchRequestInFlight = false;
+        main.removeCallbacks(expireUnacknowledgedWatch);
         cancelViewerWhenPending = false;
         viewerHasVideoSetup = false;
         viewerSession = "";
@@ -841,6 +861,7 @@ public final class NoVpnMediaSocket {
         endSession();
         shutdown = true;
         main.removeCallbacks(retryConnection);
+        main.removeCallbacks(expireUnacknowledgedWatch);
         main.removeCallbacks(expireRejoin);
         WebSocket ws = socket;
         socket = null;
