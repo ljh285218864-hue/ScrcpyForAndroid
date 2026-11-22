@@ -179,13 +179,21 @@ async def guest_watch_frames(timeout_seconds, duration=0):
             await ws.send(json.dumps({"type": "watch_end", "session_id": pending}))
         elapsed = (frame_times[-1] - frame_times[0]) if len(frame_times) > 1 else 0
         fps = (len(frame_times) - 1) / elapsed if elapsed > 0 else 0
-        max_gap = max((b - a for a, b in zip(frame_times, frame_times[1:])), default=0)
+        gaps = sorted(b - a for a, b in zip(frame_times, frame_times[1:]))
+        max_gap = gaps[-1] if gaps else 0
+        # Jitter is as important as average FPS for screenshot-based video:
+        # a steady 2-3 FPS stream looks better than bursts plus frozen frames.
+        p95_gap = gaps[min(len(gaps) - 1, int((len(gaps) - 1) * .95))] if gaps else 0
+        median_gap = gaps[len(gaps) // 2] if gaps else 0
+        pauses_over_750ms = sum(g > .75 for g in gaps)
         observed_duration = (asyncio.get_running_loop().time() - first_frame_at) if first_frame_at else 0
         # For long sessions, report measurable rate without falsely claiming
         # a guaranteed 25-30 FPS: JPEG relay is capped at 8 fps by design.
         first_frame_s = (first_frame_at - begin) if first_frame_at else 0
         stats = (f"count={frames} fully_decoded_jpeg=true fresh_session=true "
                  f"fps={fps:.2f} max_gap_s={max_gap:.2f} "
+                 f"p95_gap_s={p95_gap:.2f} median_gap_s={median_gap:.2f} "
+                 f"pauses_over_750ms={pauses_over_750ms} "
                  f"first_frame_s={first_frame_s:.2f} "
                  f"unique_visual_frames={len(visual_signatures)} "
                  f"observed_s={observed_duration:.1f} "
