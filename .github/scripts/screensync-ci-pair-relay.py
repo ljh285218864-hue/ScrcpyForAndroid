@@ -100,6 +100,7 @@ async def guest_watch_frames(timeout_seconds, duration=0):
     Do not store the screenshot bytes or any private screen contents.
     """
     from io import BytesIO
+    import hashlib
     from PIL import Image
 
     async with connect(WSS, ssl=tls_client(), open_timeout=6,
@@ -116,6 +117,7 @@ async def guest_watch_frames(timeout_seconds, duration=0):
         begin = asyncio.get_running_loop().time()
         first_frame_at = None
         frame_times = []
+        visual_signatures = set()
         messages = []
         disconnected = False
         while asyncio.get_running_loop().time() - begin < timeout_seconds:
@@ -141,7 +143,14 @@ async def guest_watch_frames(timeout_seconds, duration=0):
                     raise RuntimeError("invalid JPEG relay frame/session")
                 jpeg = packet[1][10:]
                 with Image.open(BytesIO(jpeg)) as frame:
-                    frame.verify()
+                    # Decode ALL pixels, not only validate JPEG structure.
+                    frame.load()
+                    if frame.width < 16 or frame.height < 16:
+                        raise RuntimeError("decoded screenshot too small")
+                    # A privacy-safe hash of thumbnail pixels detects whether
+                    # actual screen content changed during the long session.
+                    thumb = frame.convert("RGB").resize((24, 48))
+                    visual_signatures.add(hashlib.sha256(thumb.tobytes()).hexdigest()[:16])
                 recorded_at = asyncio.get_running_loop().time()
                 if first_frame_at is None:
                     first_frame_at = recorded_at
@@ -174,8 +183,11 @@ async def guest_watch_frames(timeout_seconds, duration=0):
         observed_duration = (asyncio.get_running_loop().time() - first_frame_at) if first_frame_at else 0
         # For long sessions, report measurable rate without falsely claiming
         # a guaranteed 25-30 FPS: JPEG relay is capped at 8 fps by design.
-        stats = (f"count={frames} valid_jpeg=true fresh_session=true "
+        first_frame_s = (first_frame_at - begin) if first_frame_at else 0
+        stats = (f"count={frames} fully_decoded_jpeg=true fresh_session=true "
                  f"fps={fps:.2f} max_gap_s={max_gap:.2f} "
+                 f"first_frame_s={first_frame_s:.2f} "
+                 f"unique_visual_frames={len(visual_signatures)} "
                  f"observed_s={observed_duration:.1f} "
                  f"dimensions={dimensions} disconnected={disconnected}")
         if frames >= 2 and not disconnected and (
