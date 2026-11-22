@@ -94,9 +94,11 @@ async def guest_online(seconds):
         await asyncio.sleep(2)
 
 
-async def guest_watch_frames(timeout_seconds):
-    """True end-to-end media test: remote peer requests a fresh session and
-    validates JPEG bytes are decodable. No legacy session is reused."""
+async def guest_watch_frames(timeout_seconds, duration=0):
+    """Require a fresh authorized session, actual decodable JPEG packets and
+    optionally collect a long-running frame timing sample for stutter analysis.
+    Do not store the screenshot bytes or any private screen contents.
+    """
     from io import BytesIO
     from PIL import Image
 
@@ -112,46 +114,76 @@ async def guest_watch_frames(timeout_seconds):
         dimensions = None
         frames = 0
         begin = asyncio.get_running_loop().time()
+        first_frame_at = None
+        frame_times = []
         messages = []
+        disconnected = False
         while asyncio.get_running_loop().time() - begin < timeout_seconds:
-            remaining = max(1.0, timeout_seconds - (asyncio.get_running_loop().time() - begin))
+            now = asyncio.get_running_loop().time()
+            if duration and first_frame_at is not None and now - first_frame_at >= duration:
+                break
+            remaining = max(.5, timeout_seconds - (now - begin))
+            if duration and first_frame_at is not None:
+                remaining = min(remaining, max(.5, duration - (now - first_frame_at)))
             try:
                 event = await asyncio.wait_for(ws.recv(), remaining)
             except asyncio.TimeoutError:
+                if duration and first_frame_at is not None:
+                    if asyncio.get_running_loop().time() - first_frame_at >= duration - .3:
+                        break
+                    continue
                 break
             if isinstance(event, bytes):
                 if not active or dimensions is None or pending is None:
-                    raise RuntimeError("video received without valid session approval/setup")
+                    raise RuntimeError("video without active authenticated session/setup")
                 packet = media.parse_video_frame(event)
                 if not packet or packet[0] != pending or not media.legal_jpeg_packet(packet[1]):
-                    raise RuntimeError("malformed/unapproved JPEG relay frame")
+                    raise RuntimeError("invalid JPEG relay frame/session")
                 jpeg = packet[1][10:]
                 with Image.open(BytesIO(jpeg)) as frame:
-                    frame.verify()  # decode integrity, not just JPEG markers
+                    frame.verify()
+                recorded_at = asyncio.get_running_loop().time()
+                if first_frame_at is None:
+                    first_frame_at = recorded_at
+                frame_times.append(recorded_at)
                 frames += 1
-                if frames >= 2:
-                    await ws.send(json.dumps({"type": "watch_end", "session_id": pending}))
-                    print(f"WATCH_FRAMES_OK count={frames} dimensions={dimensions} "
-                          "fresh_session=true valid_jpeg=true", flush=True)
-                    return 0
+                if duration == 0 and frames >= 2:
+                    break
             else:
-                event = json.loads(event)
-                code = event.get("type", "?")
-                messages.append(code + (":" + event.get("code") if event.get("code") else ""))
+                msg = json.loads(event)
+                code = msg.get("type", "?")
+                messages.append(code + (":" + msg.get("code", "") if msg.get("code") else ""))
                 if code == "watch_pending":
-                    pending = event.get("session_id")
+                    pending = msg.get("session_id")
                 elif code == "watch_active":
-                    if event.get("session_id") != pending:
-                        raise RuntimeError("session_id changed before approval")
+                    if msg.get("session_id") != pending:
+                        raise RuntimeError("watch session id changed without approval")
                     active = True
                 elif code == "video_setup":
-                    if event.get("session_id") != pending or event.get("codec") != "jpeg":
-                        raise RuntimeError("video setup session/codec mismatch")
-                    dimensions = event.get("dimensions")
+                    if msg.get("session_id") != pending or msg.get("codec") != "jpeg":
+                        raise RuntimeError("bad video setup")
+                    dimensions = msg.get("dimensions")
                 elif code in ("error", "watch_end"):
+                    disconnected = True
                     break
-        print("WATCH_FRAMES_FAIL frames=" + str(frames)
-              + " messages=" + ",".join(messages[-12:]), flush=True)
+        if pending is not None and active:
+            await ws.send(json.dumps({"type": "watch_end", "session_id": pending}))
+        elapsed = (frame_times[-1] - frame_times[0]) if len(frame_times) > 1 else 0
+        fps = (len(frame_times) - 1) / elapsed if elapsed > 0 else 0
+        max_gap = max((b - a for a, b in zip(frame_times, frame_times[1:])), default=0)
+        observed_duration = (asyncio.get_running_loop().time() - first_frame_at) if first_frame_at else 0
+        # For long sessions, report measurable rate without falsely claiming
+        # a guaranteed 25-30 FPS: JPEG relay is capped at 8 fps by design.
+        stats = (f"count={frames} valid_jpeg=true fresh_session=true "
+                 f"fps={fps:.2f} max_gap_s={max_gap:.2f} "
+                 f"observed_s={observed_duration:.1f} "
+                 f"dimensions={dimensions} disconnected={disconnected}")
+        if frames >= 2 and not disconnected and (
+                duration == 0 or observed_duration >= duration - 1):
+            print("WATCH_FRAMES_OK " + stats, flush=True)
+            return 0
+        print("WATCH_FRAMES_FAIL " + stats + " messages=" + ",".join(messages[-12:]),
+              flush=True)
         return 1
 
 
@@ -195,6 +227,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["serve", "join", "online", "watch", "status", "revoke"])
     parser.add_argument("--seconds", type=int, default=15)
+    parser.add_argument("--duration", type=int, default=0)
     args = parser.parse_args()
     if args.mode == "serve":
         asyncio.run(run_services())
@@ -203,7 +236,7 @@ if __name__ == "__main__":
     elif args.mode == "online":
         sys.exit(asyncio.run(guest_online(args.seconds)))
     elif args.mode == "watch":
-        sys.exit(asyncio.run(guest_watch_frames(args.seconds)))
+        sys.exit(asyncio.run(guest_watch_frames(args.seconds, duration=args.duration)))
     elif args.mode == "status":
         guest_status()
     else:
