@@ -32,6 +32,8 @@ public final class AccessibilityJpegStreamer {
     private static final String CHANNEL_ID = "screensync_active_share";
     private static final long OVERLAY_CHECK_INTERVAL_MS = 1000L;
     private static volatile AccessibilityJpegStreamer current;
+    // OS screenshot rate limit applies per bound service, across watch sessions.
+    private static final JpegCapturePacer SCREENSHOT_PACER = new JpegCapturePacer();
 
     private final Context app;
     private final NoVpnMediaSocket socket;
@@ -152,7 +154,8 @@ public final class AccessibilityJpegStreamer {
         }
         ScreenSyncDiagnostics.record(app, "CAPTURE_START", "success jpeg_width="
                 + outWidth + " jpeg_height=" + outHeight + " quality=" + compressionQuality
-                + " gap_ms=" + socket.jpegCaptureGapMs());
+                + " os_pacing_ms=" + SCREENSHOT_PACER.gapMs()
+                + " server_capture_gap_ms=" + socket.jpegCaptureGapMs());
         main.post(tick);
         return true;
     }
@@ -188,9 +191,15 @@ public final class AccessibilityJpegStreamer {
             main.postDelayed(tick, JpegStreamTuning.CONGESTION_RETRY_MS);
             return;
         }
+        long osWait = SCREENSHOT_PACER.delayUntilAllowed(now);
+        if (osWait > 0) {
+            main.postDelayed(tick, osWait);
+            return;
+        }
         busy = true;
         final int serial = ++captureSerial;
         final long screenshotRequestedAt = now;
+        SCREENSHOT_PACER.recordRequest(screenshotRequestedAt);
         // Some OEMs can leave takeScreenshot without a callback. Recover
         // rather than displaying a permanent black waiting screen.
         final Runnable watchdog = () -> {
@@ -211,6 +220,7 @@ public final class AccessibilityJpegStreamer {
                 }
                 final long screenshotMs = android.os.SystemClock.elapsedRealtime()
                         - screenshotRequestedAt;
+                SCREENSHOT_PACER.recordSuccess();
                 try {
                 encoder.execute(() -> {
                     try {
@@ -251,7 +261,9 @@ public final class AccessibilityJpegStreamer {
                                             + " quality=" + compressionQuality
                                             + " screenshot_ms=" + screenshotMs
                                             + " encode_ms=" + encodeMs
-                                            + " queued_bytes=" + socket.pendingSourceBytes());
+                                            + " queued_bytes=" + socket.pendingSourceBytes()
+                                            + " os_pacing_ms=" + SCREENSHOT_PACER.gapMs()
+                                            + " os_rate_limited_total=" + SCREENSHOT_PACER.rateFailures());
                                 }
                             } else if (screenshotCount == 1) {
                                 ScreenSyncDiagnostics.record(app, "JPEG_SEND",
@@ -266,7 +278,12 @@ public final class AccessibilityJpegStreamer {
                         main.post(() -> {
                             if (serial != captureSerial) return;
                             busy = false;
-                            if (running) main.postDelayed(tick, socket.jpegCaptureGapMs());
+                            if (running) {
+                                long currentMs = android.os.SystemClock.elapsedRealtime();
+                                long waitMs = Math.max(SCREENSHOT_PACER.delayUntilAllowed(currentMs),
+                                        JpegStreamTuning.MIN_CAPTURE_IDLE_MS);
+                                main.postDelayed(tick, waitMs);
+                            }
                         });
                     }
                 });
@@ -285,7 +302,20 @@ public final class AccessibilityJpegStreamer {
                             "count=" + captureFailCount + " code=" + reason);
                 }
                 busy = false;
-                if (running) main.postDelayed(tick, 1000);
+                if (reason == android.accessibilityservice.AccessibilityService
+                        .ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) {
+                    SCREENSHOT_PACER.recordRateLimited();
+                    if (captureFailCount == 1 || captureFailCount % 5 == 0)
+                        ScreenSyncDiagnostics.record(app, "CAPTURE_OS_PACING",
+                                "gap_ms=" + SCREENSHOT_PACER.gapMs()
+                                + " throttled_total=" + SCREENSHOT_PACER.rateFailures());
+                    if (running) main.postDelayed(tick, Math.max(
+                            JpegStreamTuning.MIN_CAPTURE_IDLE_MS,
+                            SCREENSHOT_PACER.delayUntilAllowed(
+                                    android.os.SystemClock.elapsedRealtime())));
+                } else if (running) {
+                    main.postDelayed(tick, 1000);
+                }
             }
         });
     }
@@ -297,7 +327,9 @@ public final class AccessibilityJpegStreamer {
         ScreenSyncDiagnostics.record(app, "CAPTURE_STOP",
                 "captured=" + screenshotCount + " sent=" + sendCount
                 + " send_failed=" + sendFailCount + " capture_failed=" + captureFailCount
-                + " congestion_skips=" + congestionSkips);
+                + " congestion_skips=" + congestionSkips
+                + " os_pacing_ms=" + SCREENSHOT_PACER.gapMs()
+                + " os_rate_limited_total=" + SCREENSHOT_PACER.rateFailures());
         main.removeCallbacks(tick);
         encoder.shutdownNow();
         if (current == this) current = null;
