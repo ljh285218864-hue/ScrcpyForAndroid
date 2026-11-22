@@ -24,6 +24,10 @@ public final class JpegFrameRenderer {
             new ThreadPoolExecutor.DiscardOldestPolicy());
     private final Object uiFrameGuard = new Object();
     private Bitmap pendingUiBitmap;
+    // Only touched on the main thread. The previous displayed bitmap must
+    // not accumulate until delayed GC during a long watching session.
+    private Bitmap displayedBitmap;
+    private static final long RETIRED_FRAME_GRACE_MS = 350L;
     private String pendingUiSession = "";
     private int pendingUiVersion;
     private boolean uiFrameScheduled;
@@ -51,7 +55,7 @@ public final class JpegFrameRenderer {
         decoder.getQueue().clear();
         clearPendingUiFrame();
         ui.post(() -> {
-            if (version == generation.get()) imageView.setImageDrawable(null);
+            if (version == generation.get()) clearDisplayedFrame();
         });
     }
 
@@ -126,7 +130,10 @@ public final class JpegFrameRenderer {
         }
         if (bitmap == null) return;
         if (version == generation.get() && sessionId.equals(session)) {
+            Bitmap previous = displayedBitmap;
             imageView.setImageBitmap(bitmap);
+            displayedBitmap = bitmap;
+            retireDisplayedFrame(previous);
             decoded++;
             if (decoded == 1 && firstFrameCallback != null)
                 firstFrameCallback.run();
@@ -136,6 +143,22 @@ public final class JpegFrameRenderer {
         } else {
             bitmap.recycle();
         }
+    }
+
+    /** Main-thread only. Give RenderThread time to finish any in-flight draw
+     * before releasing the old native bitmap allocation. */
+    private void retireDisplayedFrame(Bitmap previous) {
+        if (previous == null) return;
+        ui.postDelayed(() -> {
+            if (previous != displayedBitmap && !previous.isRecycled()) previous.recycle();
+        }, RETIRED_FRAME_GRACE_MS);
+    }
+
+    private void clearDisplayedFrame() {
+        imageView.setImageDrawable(null);
+        Bitmap previous = displayedBitmap;
+        displayedBitmap = null;
+        retireDisplayedFrame(previous);
     }
 
     private void clearPendingUiFrame() {
@@ -157,7 +180,7 @@ public final class JpegFrameRenderer {
         decoder.getQueue().clear();
         clearPendingUiFrame();
         ui.post(() -> {
-            if (version == generation.get()) imageView.setImageDrawable(null);
+            if (version == generation.get()) clearDisplayedFrame();
         });
     }
 
