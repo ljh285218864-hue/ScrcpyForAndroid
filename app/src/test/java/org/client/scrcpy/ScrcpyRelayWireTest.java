@@ -64,6 +64,26 @@ public final class ScrcpyRelayWireTest {
         } catch (IllegalArgumentException expected) { }
     }
 
+    @Test public void largeJpegFrameKeepsExactBytesAndPayloadLength() {
+        // A full, detail-heavy phone screenshot can be hundreds of KB.
+        byte[] jpeg = new byte[384 * 1024];
+        for (int i = 2; i < jpeg.length - 2; i++) jpeg[i] = (byte) (i * 31);
+        jpeg[0] = (byte) 0xff;
+        jpeg[1] = (byte) 0xd8;
+        jpeg[jpeg.length - 2] = (byte) 0xff;
+        jpeg[jpeg.length - 1] = (byte) 0xd9;
+        byte[] wire = ScrcpyRelayWire.encodeJpeg(SESSION, jpeg);
+        assertEquals(jpeg.length + 30, wire.length);
+        assertEquals(jpeg.length + 10, (wire[16] & 255) << 24
+                | (wire[17] & 255) << 16
+                | (wire[18] & 255) << 8 | (wire[19] & 255));
+        ScrcpyRelayWire.Frame decoded = ScrcpyRelayWire.decode(wire);
+        assertEquals(SESSION, decoded.sessionId);
+        assertTrue(ScrcpyRelayPacketPolicy.allowedJpegPayload(decoded.videoPacket));
+        assertArrayEquals(jpeg, Arrays.copyOfRange(decoded.videoPacket,
+                10, decoded.videoPacket.length));
+    }
+
     @Test public void cannotRelayCommandControlAudioOrMalformedFrames() {
         for (int type : new int[]{0, 2, 3, 255}) {
             try {
