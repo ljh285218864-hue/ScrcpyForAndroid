@@ -34,6 +34,19 @@ public final class JpegStreamTuningTest {
                 + JpegStreamTuning.SCREENSHOT_TIMEOUT_RETRY_MS < 3000L);
     }
 
+    @Test public void congestionPollingRecoversWithoutAnExtraHalfSecondFreeze() {
+        assertTrue(JpegStreamTuning.CONGESTION_RETRY_MS >= 75L);
+        assertTrue(JpegStreamTuning.CONGESTION_RETRY_MS <= 150L);
+    }
+
+    @Test public void isolatedScreenshotFailureRetriesQuicklyButRepeatedFailuresBackOff() {
+        assertEquals(170L, JpegStreamTuning.captureFailureRetryMs(1));
+        assertEquals(350L, JpegStreamTuning.captureFailureRetryMs(2));
+        assertEquals(350L, JpegStreamTuning.captureFailureRetryMs(3));
+        assertEquals(850L, JpegStreamTuning.captureFailureRetryMs(4));
+        assertEquals(850L, JpegStreamTuning.captureFailureRetryMs(1000));
+    }
+
     @Test public void profileKeepsBoundedQualityAndWebsocketQueue() {
         assertTrue(JpegStreamTuning.JPEG_QUALITY >= 65);
         assertTrue(JpegStreamTuning.JPEG_QUALITY <= 82);
