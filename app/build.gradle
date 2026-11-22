@@ -18,8 +18,8 @@ android {
     defaultConfig {
         minSdk = 24
         targetSdk = 36
-        versionCode = 39
-        versionName = '1.8.1-jpeg-only'
+        versionCode = 40
+        versionName = '1.8.2-vivo-recovery-diag'
         buildConfigField 'String', 'SCREENSYNC_MEDIA_URL', '"' +
             (System.getenv('SCREENSYNC_MEDIA_URL') ?: 'wss://relay.invalid/media') + '"'
         buildConfigField 'String', 'SCREENSYNC_NOVPN_URL', '"' +
