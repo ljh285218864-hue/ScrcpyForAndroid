@@ -41,7 +41,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          mkdir -p /tmp/screensync-ci-pair app/src/scrcpyDebug/res/{raw,xml}
+          mkdir -p /tmp/screensync-ci-pair app/src/scrcpyDebug/res/{raw,xml} app/src/scrcpyDebug/java/org/client/scrcpy
           openssl req -x509 -newkey rsa:2048 -nodes -days 1 -sha256 \
             -keyout /tmp/screensync-ci-pair/ci-ca.key \
             -out /tmp/screensync-ci-pair/ci-ca.pem \
@@ -74,10 +74,48 @@ jobs:
           cat > app/src/scrcpyDebug/AndroidManifest.xml <<'XML'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-            <application android:networkSecurityConfig="@xml/ci_isolated_trust" />
+            <application android:networkSecurityConfig="@xml/ci_isolated_trust">
+              <receiver android:name=".CiOwnerActionReceiver" android:exported="true" />
+            </application>
           </manifest>
           XML
-          echo 'Ephemeral test CA and Android debug-only overlay generated in CI.'
+          # CI-only receiver: it does NOT exist in source control, production or
+          # downloaded APKs. Simulates explicit source-owner choice through the
+          # SAME real application consent API without unstable UIAutomator.
+          # It also removes the app's OWN recents task through Android's
+          # documented public API, without force-stop or changing OS rights.
+          cat > app/src/scrcpyDebug/java/org/client/scrcpy/CiOwnerActionReceiver.java <<'JAVA'
+          package org.client.scrcpy;
+          import android.app.ActivityManager;
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
+          import android.content.Intent;
+          public final class CiOwnerActionReceiver extends BroadcastReceiver {
+              @Override public void onReceive(Context context, Intent intent) {
+                  if (!BuildConfig.DEBUG || intent == null) return;
+                  if ("org.client.scrcpy.CI_OWNER_APPROVE".equals(intent.getAction())) {
+                      boolean ok = LongTermSharePolicy.enableByOwner(context);
+                      if (ok) {
+                          NoVpnBackgroundSync.setEnabled(context, true);
+                          ScreenSyncMediaKeeper.restoreOptedInSignaling(context);
+                      }
+                      ScreenSyncDiagnostics.record(context, "CI_OWNER_ACTION",
+                              ok ? "explicit_owner_approval_saved" : "owner_approval_not_ready");
+                  } else if ("org.client.scrcpy.CI_REMOVE_CARD".equals(intent.getAction())) {
+                      ActivityManager mgr = (ActivityManager) context.getSystemService(
+                              Context.ACTIVITY_SERVICE);
+                      if (mgr != null) {
+                          for (ActivityManager.AppTask task : mgr.getAppTasks()) {
+                              task.finishAndRemoveTask();
+                          }
+                      }
+                      ScreenSyncDiagnostics.record(context, "CI_OWNER_ACTION",
+                              "own_recent_task_removal_requested");
+                  }
+              }
+          }
+          JAVA
+          echo 'Ephemeral test CA + test-only explicit owner action / own-task removal helper generated in CI.'
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
