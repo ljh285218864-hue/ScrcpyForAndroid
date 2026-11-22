@@ -90,6 +90,13 @@ public final class AccessibilityServiceHealth {
             Log.w(TAG, "Unable to observe accessibility settings", error);
         }
         checkAndRecord(app, "process_started");
+        // Some OEM builds briefly report DISABLED while the framework is
+        // restoring a previously granted service. These scheduled read-only
+        // observations help distinguish a transient state from a persistent
+        // off/unbound state; neither one flips the system permission.
+        Handler main = new Handler(Looper.getMainLooper());
+        main.postDelayed(() -> checkAndRecord(app, "startup_recheck_2s"), 2_000L);
+        main.postDelayed(() -> checkAndRecord(app, "startup_recheck_8s"), 8_000L);
     }
 
     static void onServiceConnected(Context context) {
