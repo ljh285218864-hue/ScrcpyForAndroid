@@ -456,6 +456,10 @@ public final class NoVpnMediaSocket {
                 watchRequestInFlight = false;
                 viewerSession = sid;
                 viewerHasVideoSetup = false;
+                if (cancelViewerWhenPending) {
+                    endViewingSession();
+                    break;
+                }
                 status("viewer_session_active");
                 break;
             }
@@ -551,6 +555,7 @@ public final class NoVpnMediaSocket {
                 break;
             case "error":
                 watchRequestInFlight = false;
+                cancelViewerWhenPending = false;
                 status("server_error:" + body.optString("code", "UNKNOWN"));
                 break;
             default:
@@ -576,6 +581,7 @@ public final class NoVpnMediaSocket {
         if (peer.isEmpty() || !authenticated || shutdown || watchRequestInFlight
                 || !viewerSession.isEmpty() || !pendingViewerSession.isEmpty())
             return false;
+        cancelViewerWhenPending = false;
         watchRequestInFlight = true;
         try {
             boolean sent = send(new JSONObject().put("type", "watch_request")
@@ -603,7 +609,8 @@ public final class NoVpnMediaSocket {
     }
 
 
-    /** Call only from a real acceptance in the local user interface. */
+    /** Call only from direct local approval or an existing, explicit,
+     * identity-matched owner grant for this paired peer. */
     public boolean acceptRequest(String sid) {
         if (!ScrcpyRelayWire.validSessionId(sid) || !sid.equals(waitingRequest))
             return false;
@@ -656,7 +663,7 @@ public final class NoVpnMediaSocket {
                         .put("session_id", sid));
             } catch (JSONException ignored) { }
         }
-        status("viewer_session_ended");
+        status("viewer_exited");
     }
 
     /** Used by a separately user-approved scrcpy capture bridge, not by UI. */
