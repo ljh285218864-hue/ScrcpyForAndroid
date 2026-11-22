@@ -42,6 +42,9 @@ SESSION_TTL_SECONDS = 20 * 60
 SESSION_REJOIN_GRACE_SECONDS = 60
 MAX_FRAMES_PER_SECOND = 90
 MAX_BYTES_PER_SECOND = 8 * 1024 * 1024
+# Older clients assume 4 FPS; the relay advertises this higher cap during
+# authentication. Excess JPEG frames are dropped, never treated as revocation.
+JPEG_MAX_FPS = 8
 SESSION_ID = re.compile(r"[a-f0-9]{32}\Z")
 
 
@@ -114,6 +117,7 @@ class Session:
     window_at: float = 0.
     frames_in_window: int = 0
     bytes_in_window: int = 0
+    viewer_send_timeouts: int = 0
     # A resumed session must be revalidated by BOTH device identities.
     # No server restart or Android process reboot can reconstruct approval.
     rejoin_deadline: float = 0.
@@ -264,6 +268,20 @@ class MediaRelay:
                 await self.tell(client.device_id, {"type": "error",
                                                    "code": "RECIPIENT_NOT_AUTHORIZED"})
                 return
+            # A crash/swipe may leave an approved old session inside its
+            # 60-second reconnect grace period, although the re-created app
+            # has no in-memory session ID to resume. A deliberate NEW Watch
+            # request must be able to replace this orphan, rather than be
+            # rejected with DIRECTION_ALREADY_ACTIVE. Discarding the orphan
+            # notifies both phones and ends its old capture before any fresh
+            # approval; the new request never inherits session consent.
+            stale_same_direction = [sid for sid, s in self.sessions.items()
+                                    if s.group_id == client.group_id
+                                    and s.viewer == client.device_id
+                                    and s.source == other
+                                    and s.rejoin_deadline > 0]
+            for sid in stale_same_direction:
+                await self.discard(sid, "stale_session_replaced")
             count = sum(s.group_id == client.group_id for s in self.sessions.values())
             # Within each pair, one A->B and one B->A may coexist, but
             # duplicate viewing requests in the same direction are forbidden.
@@ -392,8 +410,10 @@ class MediaRelay:
             session.bytes_in_window = 0
         session.frames_in_window += 1
         session.bytes_in_window += len(data)
-        if payload[0] == 2 and session.frames_in_window > 4:
-            await self.discard(session_id, "jpeg_rate_limit")
+        if payload[0] == 2 and session.frames_in_window > JPEG_MAX_FPS:
+            # A source's in-flight frames may arrive together after cellular
+            # buffering. Drop excess images rather than killing the owner's
+            # approved session. The general media cap still bounds abuse.
             return
         if session.frames_in_window > MAX_FRAMES_PER_SECOND \
                 or session.bytes_in_window > MAX_BYTES_PER_SECOND:
@@ -407,8 +427,16 @@ class MediaRelay:
             # frames arrive for SESSION_TTL_SECONDS. A fixed lifetime wrongly
             # ended long-running user-approved sessions after 20 minutes.
             if self.sessions.get(session_id) is session:
+                session.viewer_send_timeouts = 0
                 session.expires = time.monotonic() + SESSION_TTL_SECONDS
-        except (ConnectionClosed, asyncio.TimeoutError, OSError):
+        except asyncio.TimeoutError:
+            # One congested frame must not terminate an otherwise authorized
+            # session. Still bound the number of consecutive send failures.
+            if self.sessions.get(session_id) is session:
+                session.viewer_send_timeouts += 1
+                if session.viewer_send_timeouts >= 2:
+                    await self.discard(session_id, "viewer_send_timeout")
+        except (ConnectionClosed, OSError):
             await self.discard(session_id, "viewer_unreachable")
 
     async def handle(self, socket) -> None:
@@ -449,7 +477,8 @@ class MediaRelay:
                 return
             await self.tell(client.device_id, {"type": "authenticated",
                                               "device_id": client.device_id,
-                                              "group_id": client.group_id})
+                                              "group_id": client.group_id,
+                                              "jpeg_max_fps": JPEG_MAX_FPS})
             async for packet in socket:
                 if self.online.get(client.device_id) is not client:
                     break

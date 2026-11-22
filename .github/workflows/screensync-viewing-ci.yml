@@ -1,0 +1,63 @@
+name: ScreenSync viewing integration CI
+
+on:
+  push:
+    branches:
+      - feature/screensync-persistent-watch-consent-20261122
+  pull_request:
+    branches:
+      - feature/screensync-accessibility-only
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      # These are public service URLs, not access tokens or pairing credentials.
+      # Operators can override endpoints via repository Actions secrets.
+      # Match the separately deployed Osaka Nginx TLS listener on port 8443.
+      SCREENSYNC_MEDIA_URL: ${{ secrets.SCREENSYNC_MEDIA_URL || 'wss://relay.privyluxe.com:8443/media' }}
+      SCREENSYNC_NOVPN_URL: ${{ secrets.SCREENSYNC_NOVPN_URL || 'https://relay.privyluxe.com:8443' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Check relay configuration
+        shell: bash
+        run: |
+          if [[ "$SCREENSYNC_MEDIA_URL" == wss://* &&
+                "$SCREENSYNC_NOVPN_URL" == https://* &&
+                "$SCREENSYNC_MEDIA_URL" != *".invalid"* &&
+                "$SCREENSYNC_NOVPN_URL" != *".invalid"* ]]; then
+            echo "RELAY_CONFIGURED=true" >> "$GITHUB_ENV"
+          else
+            echo "RELAY_CONFIGURED=false" >> "$GITHUB_ENV"
+            echo "::warning::The configured relay URLs are invalid; APK publication is disabled."
+          fi
+      - name: Compile and run unit tests
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleScrcpyDebug :app:testScrcpyDebugUnitTest --no-daemon --stacktrace
+      - name: Set up Python media relay test environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run relay session, rate-limit and reconnect tests
+        run: |
+          python -m pip install --disable-pip-version-check -r remote/relay_v1/requirements-media.txt
+          python -m unittest discover -s remote/relay_v1 -p 'test_*.py' -v
+      - name: Upload configured debug APK
+        if: success() && env.RELAY_CONFIGURED == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScreenSync-Osaka-transport-debug-apk
+          path: app/build/outputs/apk/scrcpy/debug/*.apk
+          retention-days: 14

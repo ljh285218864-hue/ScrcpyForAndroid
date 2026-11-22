@@ -528,6 +528,115 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.read(third))["type"], "watch_pending")
 
 
+    async def test_new_watch_replaces_disconnected_old_session_without_reusing_consent(self):
+        viewer_id, source_id = self.ids["a"]
+        viewer = await self.login(viewer_id)
+        source = await self.login(source_id)
+        old_sid = await self.open_session(viewer, source)
+        await source.send(json.dumps({"type": "watch_accept", "session_id": old_sid}))
+        self.assertEqual((await self.read(viewer))["type"], "watch_active")
+        self.assertEqual((await self.read(source))["type"], "stream_allowed")
+
+        await viewer.close()
+        self.assertEqual((await self.read(source))["type"], "session_interrupted")
+        replacement = await self.login(viewer_id)
+        await replacement.send(json.dumps({"type": "watch_request"}))
+        old_end_source = await self.read(source)
+        old_end_viewer = await self.read(replacement)
+        self.assertEqual(old_end_source["type"], "watch_end")
+        self.assertEqual(old_end_viewer["reason"], "stale_session_replaced")
+        self.assertEqual(old_end_source["session_id"], old_sid)
+
+        fresh_request = await self.read(source)
+        fresh_pending = await self.read(replacement)
+        self.assertEqual(fresh_request["type"], "watch_request")
+        self.assertEqual(fresh_pending["type"], "watch_pending")
+        new_sid = fresh_request["session_id"]
+        self.assertNotEqual(new_sid, old_sid)
+        self.assertEqual(fresh_pending["session_id"], new_sid)
+        self.assertNotIn(old_sid, self.relay.sessions)
+        self.assertFalse(self.relay.sessions[new_sid].approved)
+
+        # This fresh request must still require source approval.
+        await source.send(json.dumps({"type": "watch_accept", "session_id": new_sid}))
+        self.assertEqual((await self.read(replacement))["type"], "watch_active")
+        self.assertEqual((await self.read(source))["type"], "stream_allowed")
+        await source.send(json.dumps({"type": "watch_end", "session_id": new_sid}))
+        self.assertEqual((await self.read(replacement))["type"], "watch_end")
+        self.assertEqual((await self.read(source))["type"], "watch_end")
+
+    async def test_jpeg_burst_drops_old_frames_without_ending_consent(self):
+        viewer_id, source_id = self.ids["a"]
+        viewer = await self.login(viewer_id)
+        source = await self.login(source_id)
+        sid = await self.open_session(viewer, source)
+        await source.send(json.dumps({"type": "watch_accept", "session_id": sid}))
+        self.assertEqual((await self.read(viewer))["type"], "watch_active")
+        self.assertEqual((await self.read(source))["type"], "stream_allowed")
+        await source.send(json.dumps({"type": "video_setup", "session_id": sid,
+                                      "dimensions": [1080, 2400, 518, 1152],
+                                      "codec": "jpeg"}))
+        self.assertEqual((await self.read(viewer))["codec"], "jpeg")
+        packet = bytes([2, 0]) + bytes(8) + bytes.fromhex("ffd8") + bytes(68) + bytes.fromhex("ffd9")
+        frame = media.video_frame(sid, packet)
+        for _ in range(25):
+            await source.send(frame)
+        await asyncio.sleep(0.15)
+        self.assertIn(sid, self.relay.sessions)
+        await source.send(json.dumps({"type": "watch_end", "session_id": sid}))
+        images = 0
+        for _ in range(30):
+            item = await asyncio.wait_for(self.read(viewer), 2)
+            if isinstance(item, bytes):
+                images += 1
+            else:
+                self.assertEqual(item["type"], "watch_end")
+                break
+        else:
+            self.fail("watch_end was not delivered after JPEG burst")
+        self.assertGreater(images, 0)
+        self.assertLess(images, 25)
+        self.assertEqual((await self.read(source))["type"], "watch_end")
+
+    async def test_one_viewer_send_timeout_does_not_revoke_approved_session(self):
+        viewer_id, source_id = self.ids["a"]
+        viewer = await self.login(viewer_id)
+        source = await self.login(source_id)
+        sid = await self.open_session(viewer, source)
+        await source.send(json.dumps({"type": "watch_accept", "session_id": sid}))
+        await self.read(viewer)
+        await self.read(source)
+        await source.send(json.dumps({"type": "video_setup", "session_id": sid,
+                                      "dimensions": [1080, 2400, 518, 1152],
+                                      "codec": "jpeg"}))
+        await self.read(viewer)
+        client = self.relay.online[viewer_id]
+        original = client.socket
+
+        class FailOnce:
+            def __init__(self):
+                self.failed = False
+
+            async def send(self, value):
+                if isinstance(value, bytes) and not self.failed:
+                    self.failed = True
+                    raise asyncio.TimeoutError()
+                await original.send(value)
+
+        client.socket = FailOnce()
+        packet = bytes([2, 0]) + bytes(8) + bytes.fromhex("ffd8") + bytes(68) + bytes.fromhex("ffd9")
+        frame = media.video_frame(sid, packet)
+        await source.send(frame)
+        await asyncio.sleep(0.1)
+        self.assertIn(sid, self.relay.sessions)
+        self.assertEqual(self.relay.sessions[sid].viewer_send_timeouts, 1)
+        await source.send(frame)
+        self.assertEqual(await asyncio.wait_for(self.read(viewer), 2), frame)
+        self.assertEqual(self.relay.sessions[sid].viewer_send_timeouts, 0)
+        await source.send(json.dumps({"type": "watch_end", "session_id": sid}))
+        self.assertEqual((await self.read(viewer))["type"], "watch_end")
+
+
 if __name__ == "__main__":
     unittest.main()
 

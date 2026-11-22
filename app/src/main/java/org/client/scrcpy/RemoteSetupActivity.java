@@ -65,6 +65,9 @@ public final class RemoteSetupActivity extends Activity {
     private final Runnable refresh = new Runnable() {
         @Override public void run() {
             if (!active) return;
+            AccessibilityServiceHealth.checkAndRecord(RemoteSetupActivity.this,
+                    "ui_periodic_check");
+            refreshPermissions();
             if (!busy && NoVpnApi.isRegistered(RemoteSetupActivity.this)) {
                 runNetwork(() -> {
                     JSONObject state = NoVpnApi.status(RemoteSetupActivity.this);
@@ -89,7 +92,7 @@ public final class RemoteSetupActivity extends Activity {
     private Button scanButton, accessibilityButton, notificationsButton,
             systemNotificationSettingsButton, backgroundToggle, longTermToggle;
     private TextView shareVisibleStatus, presenceState;
-    private TextView hint;
+    private TextView accessibilityFallbackHint, hint;
     private LinearLayout permissionsPanel;
 
     @Override public void onCreate(Bundle savedInstanceState) {
@@ -161,7 +164,8 @@ public final class RemoteSetupActivity extends Activity {
                     .setTitle("核对配对码")
                     .setMessage("请与另一台手机核对这六位数字是否一致：\n\n"
                             + code + "\n\n确认后两台手机建立长期配对关系。"
-                            + "以后观看屏幕仍需被观看方同意本次共享。")
+                            + "被观看手机可在配对成功后明确开启一次长期观看授权；"
+                            + "开启后后续观看不再要求软件内重复同意。")
                     .setPositiveButton("数字一致，确认配对", (d, w) ->
                             runNetwork(() -> NoVpnApi.approve(this, id),
                                     done -> refreshStatus(), false))
@@ -192,7 +196,7 @@ public final class RemoteSetupActivity extends Activity {
             }
             if (mediaSocket != null && mediaSocket.hasViewerRequestOutstanding()) {
                 if (viewerLayer != null)
-                    viewerLayer.showWaiting("等待对方手机确认本次共享…");
+                    viewerLayer.showWaiting("等待配对手机响应观看请求…");
                 return;
             }
             requestAfterConnect = true;
@@ -200,9 +204,9 @@ public final class RemoteSetupActivity extends Activity {
                 connectMediaTest();
             } else if (mediaSocket.requestWatch()) {
                 requestAfterConnect = false;
-                mediaState.setText("已发送观看请求，等待对方手机同意");
+                mediaState.setText("已发送观看请求，正在连接配对手机");
                 if (viewerLayer != null)
-                    viewerLayer.showWaiting("已发送请求，等待对方手机同意…");
+                    viewerLayer.showWaiting("已发送请求，等待配对手机响应…");
             } else {
                 mediaState.setText("连接服务器中…");
                 if (viewerLayer != null)
@@ -211,22 +215,24 @@ public final class RemoteSetupActivity extends Activity {
         });
         primary(mediaRequestButton);
 
-        mediaEndButton = action(content, "结束本次观看 / 共享", v -> {
-            ScreenSyncDiagnostics.record(this, "USER_ACTION", "stop_pressed");
-            LongTermSharePolicy.disable(this);
-            requestAfterConnect = false;
-            stopLocalStream();
-            if (jpegRenderer != null) jpegRenderer.stopSession();
-            if (mediaSocket != null) mediaSocket.endSession();
-            if (viewerLayer != null) viewerLayer.closePicture();
-            mediaState.setText("本次共享已结束，配对仍然有效");
-            refreshSharingStatus();
+        mediaEndButton = action(content, "退出观看（保留配对）", v -> {
+            ScreenSyncDiagnostics.record(this, "USER_ACTION", "viewer_exit");
+            if (viewerLayer != null && viewerLayer.isShowing())
+                viewerLayer.closePicture();
+            else exitViewingOnly();
         });
 
         permissionsPanel = panel(content);
         heading(permissionsPanel, "首次使用设置");
         accessibilityButton = action(permissionsPanel, "开启无障碍截图权限",
                 v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        accessibilityFallbackHint = note(permissionsPanel,
+                "此前已开启的无障碍服务现在处于关闭状态。长期观看授权仍保留，"
+                + "但屏幕共享不可用。无法区分是系统自动关闭还是人为关闭；"
+                + "请手机持有人点击上方按钮，在系统设置中确认是否恢复。"
+                + "本软件不会绕过系统开关自动启用。");
+        accessibilityFallbackHint.setPadding(dp(4), dp(4), dp(4), dp(10));
+        accessibilityFallbackHint.setVisibility(View.GONE);
         notificationsButton = action(permissionsPanel, "共享通知：软件内开启", v -> {
             boolean next = !ShareNotificationPreference.isEnabled(this);
             ShareNotificationPreference.setEnabled(this, next);
@@ -280,6 +286,10 @@ public final class RemoteSetupActivity extends Activity {
                         .setMessage("以后新的观看申请将重新要求本机确认；配对和服务器连接保持不变。")
                         .setPositiveButton("关闭授权", (d, w) -> {
                             LongTermSharePolicy.disable(this);
+                            NoVpnMediaSocket live = ScreenSyncMediaKeeper.current();
+                            if (live != null) live.endSourceSession("owner_revoked");
+                            AccessibilityJpegStreamer.stopActiveWithoutSending();
+                            refreshSharingStatus();
                             refreshButtons();
                         }).setNegativeButton("取消", null).show();
                 return;
@@ -304,21 +314,10 @@ public final class RemoteSetupActivity extends Activity {
                             + "正在共享时只显示通知栏一条带停止按钮的状态。"
                             + "关闭普通通知权限不会影响配对和后台连接，"
                             + "但关闭后不能后台截图。"
-                            + "可以随时在本软件关闭长期授权。"
+                            + "可以随时在本软件关闭长期授权，并立即停止本机共享。"
                             + "如果系统停止运行或撤销无障碍，仍可能无法连接。")
-                    .setPositiveButton("我同意长期共享", (d, w) -> {
-                        if (!LongTermSharePolicy.enableByOwner(this)) {
-                            report("无障碍服务不可用，无法启用长期授权");
-                            return;
-                        }
-                        NoVpnBackgroundSync.setEnabled(this, true);
-                        ScreenSyncMediaKeeper.restoreOptedInSignaling(this);
-                        ScreenSyncDiagnostics.record(this, "LONG_TERM_SHARE",
-                                "owner_enabled_for_current_pair");
-                        refreshButtons();
-                        report("长期授权已开启，只有真正共享时才显示一条通知，"
-                                + "不会出现悬浮条。");
-                    })
+                    .setPositiveButton("我同意长期共享", (d, w) ->
+                            enablePersistentWatchByOwner())
                     .setNegativeButton("取消", null).show();
         });
         action(content, "后台自启动与电池设置", v -> new AlertDialog.Builder(this)
@@ -360,11 +359,7 @@ public final class RemoteSetupActivity extends Activity {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT));
         viewerLayer = new FullscreenViewer(this);
-        viewerLayer.setOnClosedListener(() -> {
-            // Closing a picture does not close WSS, but a request that has
-            // not yet been transmitted must not auto-start while hidden.
-            requestAfterConnect = false;
-        });
+        viewerLayer.setOnClosedListener(this::exitViewingOnly);
         root.addView(viewerLayer, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT));
@@ -483,16 +478,24 @@ public final class RemoteSetupActivity extends Activity {
     }
 
     private void showSourcePrerequisiteDialog(String issue) {
-        boolean needsAccessibility = "accessibility_not_enabled".equals(issue);
-        String message = needsAccessibility
-                ? "本机没有开启无障碍截图服务。请在本机系统设置里手动开启。"
-                : "当前无法启动截图；请检查是否有可见的共享状态和停止入口。";
+        boolean disabled = "accessibility_not_enabled".equals(issue);
+        boolean disconnected = "accessibility_service_disconnected".equals(issue);
+        boolean accessIssue = disabled || disconnected
+                || "accessibility_state_unknown".equals(issue);
+        String message = disabled
+                ? "本机无障碍开关已关闭，只有手机持有人能再次开启。"
+                : disconnected
+                    ? "本机无障碍开关仍处于开启状态，但服务尚未连接。"
+                    + "软件不会主动关闭服务，可等待系统重新绑定。"
+                    : accessIssue
+                        ? "无法确认当前无障碍服务状态，请检查系统设置。"
+                        : "当前无法启动截图，请检查共享状态及可用的停止入口。";
         new AlertDialog.Builder(this)
                 .setTitle("当前无法共享屏幕")
-                .setMessage(message + "\n\n本次请求已拒绝，不会在后台偷偷启动共享。")
-                .setPositiveButton(needsAccessibility ? "去开启无障碍" : "确定",
+                .setMessage(message + "\n\n本次请求已拒绝，不会绕过系统权限启动截图。")
+                .setPositiveButton(accessIssue ? "查看无障碍设置" : "确定",
                         (dialog, which) -> {
-                            if (needsAccessibility) {
+                            if (accessIssue) {
                                 startActivity(new Intent(
                                         Settings.ACTION_ACCESSIBILITY_SETTINGS));
                             }
@@ -502,10 +505,34 @@ public final class RemoteSetupActivity extends Activity {
     }
 
     private void refreshPermissions() {
+        AccessibilityStatePolicy.State state = AccessibilityServiceHealth.state(this);
+        boolean needsLocalAction = AccessibilityRecoveryFallback.needsLocalRecovery(
+                this, state);
+        if (accessibilityFallbackHint != null) {
+            accessibilityFallbackHint.setVisibility(needsLocalAction
+                    ? View.VISIBLE : View.GONE);
+        }
         if (accessibilityButton != null) {
-            accessibilityButton.setText(AccessibilityShotService.ready()
-                    ? "✓ 无障碍截图已授权" : "1 · 开启无障碍截图权限");
-            accessibilityButton.setEnabled(!AccessibilityShotService.ready());
+            switch (state) {
+                case RUNNING:
+                    accessibilityButton.setText("✓ 无障碍已开启，服务运行正常");
+                    accessibilityButton.setEnabled(false);
+                    break;
+                case ENABLED_NOT_CONNECTED:
+                    accessibilityButton.setText("无障碍已开启，等待系统重新连接（点此检查）");
+                    accessibilityButton.setEnabled(true);
+                    break;
+                case DISABLED:
+                    accessibilityButton.setText(needsLocalAction
+                            ? "无障碍已关闭 · 点击检查并恢复（需本人确认）"
+                            : "无障碍已关闭，点此由本机用户开启");
+                    accessibilityButton.setEnabled(true);
+                    break;
+                default:
+                    accessibilityButton.setText("无法核实无障碍状态，点此检查");
+                    accessibilityButton.setEnabled(true);
+                    break;
+            }
         }
         if (notificationsButton != null) {
             boolean appEnabled = ShareNotificationPreference.isEnabled(this);
@@ -593,6 +620,16 @@ public final class RemoteSetupActivity extends Activity {
         super.onDestroy();
     }
 
+    /** Exit the viewer only: retain the peer identity, consent, and WSS. */
+    private void exitViewingOnly() {
+        requestAfterConnect = false;
+        if (mediaSocket != null) mediaSocket.endViewingSession();
+        if (jpegRenderer != null) jpegRenderer.stopSession();
+        receivedVideoFrames = 0;
+        if (mediaState != null) mediaState.setText("已退出观看，配对及连接保持");
+        ScreenSyncDiagnostics.record(this, "VIEW_EXIT", "media_only");
+    }
+
     private void stopLocalStream() {
         AccessibilityJpegStreamer shot = jpegStreamer;
         jpegStreamer = null;
@@ -604,7 +641,7 @@ public final class RemoteSetupActivity extends Activity {
     private void refreshSharingStatus() {
         if (shareVisibleStatus == null) return;
         shareVisibleStatus.setText(AccessibilityJpegStreamer.sharingActive()
-                ? "本机正在共享屏幕 · 可在其他应用上点击悬浮条「停止共享」"
+                ? "本机正在共享屏幕 · 可在共享状态通知中点击「停止共享」"
                 : "本机未共享屏幕。配对在线不代表正在共享。");
     }
 
@@ -626,8 +663,11 @@ public final class RemoteSetupActivity extends Activity {
         if (mediaSocket == null || jpegStreamer != null
                 || AccessibilityJpegStreamer.sharingActive()) return;
         if (!AccessibilityShotService.ready()) {
-            ScreenSyncDiagnostics.record(this, "SOURCE_START", "accessibility_not_ready");
-            mediaState.setText("需要在本机设置中开启无障碍截图权限");
+            String issue = AccessibilityJpegStreamer.readinessIssue(this);
+            ScreenSyncDiagnostics.record(this, "SOURCE_START", "not_ready=" + issue);
+            mediaState.setText("accessibility_service_disconnected".equals(issue)
+                    ? "无障碍开关已开启，等待系统重新绑定服务"
+                    : "无障碍服务不可用，请由本机用户检查系统设置");
             mediaSocket.endSourceSession("source_accessibility_missing");
             return;
         }
@@ -665,12 +705,14 @@ public final class RemoteSetupActivity extends Activity {
                 return "正在安全连接服务器…";
             case "authenticated":
                 return "已连接，等待观看";
+            case "viewer_exited":
+                return "已退出观看，配对和服务器连接保持";
             case "peer_online":
                 return "配对手机已连接";
             case "peer_offline":
                 return "对方暂时未打开软件";
             case "awaiting_peer_approval":
-                return "等待另一台手机确认共享";
+                return "等待配对手机响应观看请求";
             case "viewer_session_active":
                 return "连接成功，等待对方画面";
             case "video_source_permitted":
@@ -682,10 +724,48 @@ public final class RemoteSetupActivity extends Activity {
                 return "共享已结束";
             case "disconnected":
             case "network_unavailable":
-                return "网络暂时断开，请重试";
+                return "网络暂时断开，正在尝试重连";
+            case "server_auth_required":
+                return "服务器拒绝身份认证，请检查配对凭证与中转配置";
+            case "server_connection_replaced":
+                return "本机连接被另一条同身份连接替代，请检查是否重复登录";
+            case "watch_request_ack_timeout":
+                return "服务器未确认观看请求，请关闭画面后再试";
             default:
-                if (status.startsWith("server_error:"))
-                    return "服务器拒绝：" + status.substring("server_error:".length());
+                if (status.startsWith("session_end_reason:")) {
+                    String reason = status.substring("session_end_reason:".length());
+                    switch (reason) {
+                        case "viewer_send_timeout":
+                        case "viewer_unreachable":
+                            return "观看端网络暂时无法接收，服务器结束本次共享；配对仍保留";
+                        case "session_expired":
+                            return "断线恢复超时，本次共享已结束；可再次点击观看";
+                        case "pairing_revoked":
+                        case "session_expired_or_revoked":
+                            return "配对权限已失效，本次共享已结束";
+                        case "stopped_by_device":
+                            return "一方已停止本次共享";
+                        default:
+                            return "服务器结束本次共享：" + reason;
+                    }
+                }
+                if (status.startsWith("server_error:")) {
+                    String error = status.substring("server_error:".length());
+                    switch (error) {
+                        case "PEER_OFFLINE":
+                            return "对方屏幕同步连接未在线，可稍后重新观看";
+                        case "DIRECTION_ALREADY_ACTIVE":
+                            return "服务器仍有未结束的同方向观看会话，请确认是否重复请求";
+                        case "SESSION_LIMIT":
+                            return "双方已有最大数量观看会话，请先结束其他观看";
+                        case "VIDEO_SESSION_NOT_ACTIVE":
+                            return "本次视频会话已失效，已停止发送旧画面";
+                        case "RESUME_NOT_ALLOWED":
+                            return "旧会话无法续接，请重新发起观看";
+                        default:
+                            return "服务器拒绝：" + error;
+                    }
+                }
                 if ("protocol_error".equals(status))
                     return "接收协议错误，请查看诊断日志并更新到修复版";
                 if ("session_rejoin_requested".equals(status)
@@ -738,9 +818,9 @@ public final class RemoteSetupActivity extends Activity {
                                 : friendlyMediaStatus(value));
                         if (viewerLayer != null && viewerLayer.isShowing()) {
                             if ("awaiting_peer_approval".equals(value))
-                                viewerLayer.showWaiting("正在等待对方确认共享…");
+                                viewerLayer.showWaiting("正在等待配对手机响应…");
                             else if ("viewer_session_active".equals(value))
-                                viewerLayer.showWaiting("对方已同意，等待画面…");
+                                viewerLayer.showWaiting("已建立共享会话，等待画面…");
                             else if ("viewer_session_ended".equals(value)
                                     || "session_stopped_by_user".equals(value)) {
                                 if ("viewer_session_ended".equals(value)
@@ -756,15 +836,19 @@ public final class RemoteSetupActivity extends Activity {
                                 viewerLayer.showWaiting("配对手机暂未连接，请在对方手机打开软件");
                             else if ("disconnected".equals(value)
                                     || "network_unavailable".equals(value))
-                                viewerLayer.showWaiting("网络连接中断，请关闭后重试");
+                                viewerLayer.showWaiting("网络暂时中断，正在尝试恢复连接…");
                             else if ("protocol_error".equals(value)
+                                    || "server_auth_required".equals(value)
+                                    || "server_connection_replaced".equals(value)
+                                    || "watch_request_ack_timeout".equals(value)
+                                    || value.startsWith("session_end_reason:")
                                     || value.startsWith("server_error:"))
                                 viewerLayer.showWaiting(friendlyMediaStatus(value));
                         }
                         if ("authenticated".equals(value) && requestAfterConnect) {
                             if (mediaSocket != null && mediaSocket.requestWatch()) {
                                 requestAfterConnect = false;
-                                mediaState.setText("已请求观看，等待对方同意本次屏幕共享");
+                                mediaState.setText("已请求观看，等待配对手机响应");
                             }
                         }
                         if ("source_session_ended".equals(value)
@@ -923,6 +1007,51 @@ public final class RemoteSetupActivity extends Activity {
         return item;
     }
 
+    /** Called only after an explicit action from the phone's local owner. */
+    private void enablePersistentWatchByOwner() {
+        if (!AccessibilityShotService.ready()) {
+            showSourcePrerequisiteDialog("accessibility_not_enabled");
+            return;
+        }
+        if (!LongTermSharePolicy.enableByOwner(this)) {
+            report("长期观看许可保存失败，请重试");
+            return;
+        }
+        NoVpnBackgroundSync.setEnabled(this, true);
+        ScreenSyncMediaKeeper.restoreOptedInSignaling(this);
+        ScreenSyncDiagnostics.record(this, "LONG_TERM_SHARE",
+                "owner_enabled_for_current_pair");
+        refreshButtons();
+        report("本机已同意长期观看。以后不需要重复确认，观看时显示停止入口。");
+    }
+
+    /** Prompt only once per confirmed pair; declining never enables capture. */
+    private void offerLongTermPermissionForNewPair() {
+        if (!active || isFinishing() || LongTermSharePolicy.enabled(this)) return;
+        String peer = NoVpnApi.peerId(this);
+        String group = NoVpnApi.groupId(this);
+        if (peer.isEmpty() || group.isEmpty()) return;
+        String pair = NoVpnApi.deviceId(this) + ":" + group + ":" + peer;
+        android.content.SharedPreferences prompts = getSharedPreferences(
+                "screensync_pair_consent_prompt_v1", MODE_PRIVATE);
+        if (pair.equals(prompts.getString("prompted_pair", ""))) return;
+        prompts.edit().putString("prompted_pair", pair).apply();
+        String suffix = peer.substring(Math.max(0, peer.length() - 6));
+        new AlertDialog.Builder(this)
+                .setTitle("首次配对：是否允许长期观看？")
+                .setMessage("是否允许已配对设备（ID 尾号：" + suffix
+                        + "）以后点击「观看」时直接请求本机共享，"
+                        + "不再弹出软件内的二次确认？"
+                        + "\n\n本机正在被观看时会显示共享状态和停止入口。"
+                        + "可以在本软件中随时撤销授权；系统无障碍截图权限仍需保持有效。")
+                .setPositiveButton("同意长期观看", (d, w) ->
+                        enablePersistentWatchByOwner())
+                .setNegativeButton("暂不允许", (d, w) ->
+                        ScreenSyncDiagnostics.record(this, "LONG_TERM_SHARE",
+                                "first_pair_declined"))
+                .show();
+    }
+
     private void refreshButtons() {
         boolean registered = NoVpnApi.isRegistered(this);
         boolean paired = registered && "paired".equals(currentState);
@@ -965,8 +1094,8 @@ public final class RemoteSetupActivity extends Activity {
             longTermToggle.setVisibility(paired
                     ? android.view.View.VISIBLE : android.view.View.GONE);
             longTermToggle.setText(LongTermSharePolicy.enabled(this)
-                    ? "关闭长期共享授权（当前已开启）"
-                    : "开启长期共享授权（需明确同意）");
+                    ? "终止本机长期观看授权（已开启）"
+                    : "首次同意长期观看授权（以后免重复同意）");
         }
         if (backgroundToggle != null) {
             backgroundToggle.setVisibility(paired
@@ -991,8 +1120,8 @@ public final class RemoteSetupActivity extends Activity {
             } else if ("pending".equals(currentState)) {
                 hint.setText("请让另一台手机检查六位配对码并点击确认。");
             } else if (paired) {
-                hint.setText("配对已完成。被观看方可在软件内启用长期共享授权；"
-                        + "未开启时需要每次在软件内确认。");
+                hint.setText("配对已完成。被观看方首次明确开启长期观看授权后，"
+                        + "每次观看无需重复确认；退出观看不解除授权。");
             } else {
                 hint.setText("正在连接服务器…");
             }
@@ -1078,6 +1207,7 @@ public final class RemoteSetupActivity extends Activity {
             if (active && mediaSocket == null && NoVpnMediaSocket.endpointConfigured()) {
                 connectMediaTest();
             }
+            if (!"paired".equals(previousState)) offerLongTermPermissionForNewPair();
             if (state.has("_cursor")) {
                 try {
                     NoVpnApi.acknowledge(this, state.getLong("_cursor"));

@@ -22,19 +22,27 @@ public final class LongTermSharePolicy {
         return p.getBoolean("enabled", false)
                 && source.equals(p.getString("source", ""))
                 && peer.equals(p.getString("peer", ""))
-                && group.equals(p.getString("group", ""));
+                && group.equals(p.getString("group", ""))
+                && PersistentWatchConsent.permitsWatch(ctx, peer);
     }
     /** Invoke ONLY following affirmative consent in the local owner's UI. */
     public static boolean enableByOwner(Context ctx) {
         if (!NoVpnApi.isRegistered(ctx) || NoVpnApi.peerId(ctx).isEmpty()
                 || !AccessibilityShotService.ready()) return false;
-        return prefs(ctx).edit().putBoolean("enabled", true)
+        String peer = NoVpnApi.peerId(ctx);
+        if (!PersistentWatchConsent.grantAfterExplicitLocalApproval(ctx, peer))
+            return false;
+        boolean saved = prefs(ctx).edit().putBoolean("enabled", true)
                 .putString("source", NoVpnApi.deviceId(ctx))
-                .putString("peer", NoVpnApi.peerId(ctx))
+                .putString("peer", peer)
                 .putString("group", NoVpnApi.groupId(ctx)).commit();
+        if (!saved) PersistentWatchConsent.revokeFromLocalUserAction(ctx);
+        return saved;
     }
     public static void disable(Context ctx) {
         prefs(ctx).edit().clear().commit();
+        PersistentWatchConsent.revokeFromLocalUserAction(ctx);
+        AccessibilityRecoveryFallback.clearOnOwnerRevocation(ctx);
     }
     /** Only the still-paired, explicitly owner-enabled grant may approve.
      * Its corresponding JPEG source must show its live STOP indicator before

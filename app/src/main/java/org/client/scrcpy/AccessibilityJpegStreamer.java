@@ -31,14 +31,18 @@ public final class AccessibilityJpegStreamer {
     private static final int NOTICE_ID = 8413;
     private static final String CHANNEL_ID = "screensync_active_share";
     private static final long OVERLAY_CHECK_INTERVAL_MS = 1000L;
-    private static final long DELAY_MS = JpegStreamTuning.CAPTURE_GAP_MS;
     private static volatile AccessibilityJpegStreamer current;
+    // OS screenshot rate limit applies per bound service, across watch sessions.
+    private static final JpegCapturePacer SCREENSHOT_PACER = new JpegCapturePacer();
 
     private final Context app;
     private final NoVpnMediaSocket socket;
     private final Listener listener;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService encoder = Executors.newSingleThreadExecutor();
+    // Accessed only by the single encoder worker. Reuse its backing array
+    // instead of allocating a large temporary JPEG output buffer per frame.
+    private final ByteArrayOutputStream jpegBuffer = new ByteArrayOutputStream(131072);
     private volatile boolean running;
     private volatile boolean busy;
     private long lastOverlayCheckMs;
@@ -58,7 +62,13 @@ public final class AccessibilityJpegStreamer {
 
     /** Device-owner accessibility permission, never ordinary notifications. */
     public static String readinessIssue(Context context) {
-        return AccessibilityShotService.ready() ? "" : "accessibility_not_enabled";
+        if (AccessibilityShotService.ready()) return "";
+        AccessibilityStatePolicy.State state = AccessibilityServiceHealth.state(context);
+        if (state == AccessibilityStatePolicy.State.ENABLED_NOT_CONNECTED)
+            return "accessibility_service_disconnected";
+        if (state == AccessibilityStatePolicy.State.UNKNOWN)
+            return "accessibility_state_unknown";
+        return "accessibility_not_enabled";
     }
 
     /** Ordinary sharing notification is optional, not a capture prerequisite. */
@@ -147,7 +157,8 @@ public final class AccessibilityJpegStreamer {
         }
         ScreenSyncDiagnostics.record(app, "CAPTURE_START", "success jpeg_width="
                 + outWidth + " jpeg_height=" + outHeight + " quality=" + compressionQuality
-                + " gap_ms=" + DELAY_MS);
+                + " os_pacing_ms=" + SCREENSHOT_PACER.gapMs()
+                + " server_capture_gap_ms=" + socket.jpegCaptureGapMs());
         main.post(tick);
         return true;
     }
@@ -178,12 +189,20 @@ public final class AccessibilityJpegStreamer {
             if (congestionSkips == 1 || congestionSkips % 10 == 0)
                 ScreenSyncDiagnostics.record(app, "JPEG_BACKPRESSURE",
                         "skipped=" + congestionSkips
-                        + " quality=" + compressionQuality);
+                        + " quality=" + compressionQuality
+                        + " queued_bytes=" + socket.pendingSourceBytes());
             main.postDelayed(tick, JpegStreamTuning.CONGESTION_RETRY_MS);
+            return;
+        }
+        long osWait = SCREENSHOT_PACER.delayUntilAllowed(now);
+        if (osWait > 0) {
+            main.postDelayed(tick, osWait);
             return;
         }
         busy = true;
         final int serial = ++captureSerial;
+        final long screenshotRequestedAt = now;
+        SCREENSHOT_PACER.recordRequest(screenshotRequestedAt);
         // Some OEMs can leave takeScreenshot without a callback. Recover
         // rather than displaying a permanent black waiting screen.
         final Runnable watchdog = () -> {
@@ -191,10 +210,14 @@ public final class AccessibilityJpegStreamer {
             captureSerial++;
             busy = false;
             ScreenSyncDiagnostics.record(app, "CAPTURE_TIMEOUT",
-                    "callback_timeout_ms=6000");
-            main.postDelayed(tick, 850);
+                    "callback_timeout_ms=" + JpegStreamTuning.SCREENSHOT_CALLBACK_TIMEOUT_MS
+                    + " next_retry_ms=" + JpegStreamTuning.SCREENSHOT_TIMEOUT_RETRY_MS
+                    + " os_pacing_ms=" + SCREENSHOT_PACER.gapMs());
+            // Any callback arriving from this abandoned serial is ignored or
+            // recycled by its callback, never sent into a new session.
+            main.postDelayed(tick, JpegStreamTuning.SCREENSHOT_TIMEOUT_RETRY_MS);
         };
-        main.postDelayed(watchdog, 6000);
+        main.postDelayed(watchdog, JpegStreamTuning.SCREENSHOT_CALLBACK_TIMEOUT_MS);
         AccessibilityShotService.capture(main::post, new AccessibilityShotService.Callback() {
             @Override public void success(Bitmap screenshot) {
                 main.removeCallbacks(watchdog);
@@ -202,18 +225,28 @@ public final class AccessibilityJpegStreamer {
                     screenshot.recycle();
                     return;
                 }
+                final long screenshotMs = android.os.SystemClock.elapsedRealtime()
+                        - screenshotRequestedAt;
+                SCREENSHOT_PACER.recordSuccess();
                 try {
                 encoder.execute(() -> {
                     try {
                         if (running) {
+                            final long encodeBegin = android.os.SystemClock.elapsedRealtime();
                             Bitmap image = Bitmap.createScaledBitmap(
                                     screenshot, outWidth, outHeight, true);
-                            ByteArrayOutputStream buffer = new ByteArrayOutputStream(131072);
-                            boolean encoded = image.compress(
-                                    Bitmap.CompressFormat.JPEG, compressionQuality, buffer);
-                            if (!encoded) throw new IllegalStateException("jpeg_encode_failed");
-                            if (image != screenshot) image.recycle();
-                            byte[] data = buffer.toByteArray();
+                            byte[] data;
+                            try {
+                                jpegBuffer.reset();
+                                boolean encoded = image.compress(
+                                        Bitmap.CompressFormat.JPEG, compressionQuality, jpegBuffer);
+                                if (!encoded) throw new IllegalStateException("jpeg_encode_failed");
+                                data = jpegBuffer.toByteArray();
+                            } finally {
+                                if (image != screenshot) image.recycle();
+                            }
+                            long encodeMs = android.os.SystemClock.elapsedRealtime()
+                                    - encodeBegin;
                             screenshotCount++;
                             if (running && data.length >= 64 && data.length <= 1024 * 1024) {
                                 boolean sent = socket.sendJpegFrame(data);
@@ -232,7 +265,12 @@ public final class AccessibilityJpegStreamer {
                                     ScreenSyncDiagnostics.record(app, "JPEG_SEND",
                                             "captured=" + screenshotCount + " sent=" + sendCount
                                             + " failed=" + sendFailCount + " bytes=" + data.length
-                                            + " quality=" + compressionQuality);
+                                            + " quality=" + compressionQuality
+                                            + " screenshot_ms=" + screenshotMs
+                                            + " encode_ms=" + encodeMs
+                                            + " queued_bytes=" + socket.pendingSourceBytes()
+                                            + " os_pacing_ms=" + SCREENSHOT_PACER.gapMs()
+                                            + " os_rate_limited_total=" + SCREENSHOT_PACER.rateFailures());
                                 }
                             } else if (screenshotCount == 1) {
                                 ScreenSyncDiagnostics.record(app, "JPEG_SEND",
@@ -247,7 +285,12 @@ public final class AccessibilityJpegStreamer {
                         main.post(() -> {
                             if (serial != captureSerial) return;
                             busy = false;
-                            if (running) main.postDelayed(tick, DELAY_MS);
+                            if (running) {
+                                long currentMs = android.os.SystemClock.elapsedRealtime();
+                                long waitMs = Math.max(SCREENSHOT_PACER.delayUntilAllowed(currentMs),
+                                        JpegStreamTuning.MIN_CAPTURE_IDLE_MS);
+                                main.postDelayed(tick, waitMs);
+                            }
                         });
                     }
                 });
@@ -266,7 +309,20 @@ public final class AccessibilityJpegStreamer {
                             "count=" + captureFailCount + " code=" + reason);
                 }
                 busy = false;
-                if (running) main.postDelayed(tick, 1000);
+                if (reason == android.accessibilityservice.AccessibilityService
+                        .ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) {
+                    SCREENSHOT_PACER.recordRateLimited();
+                    if (captureFailCount == 1 || captureFailCount % 5 == 0)
+                        ScreenSyncDiagnostics.record(app, "CAPTURE_OS_PACING",
+                                "gap_ms=" + SCREENSHOT_PACER.gapMs()
+                                + " throttled_total=" + SCREENSHOT_PACER.rateFailures());
+                    if (running) main.postDelayed(tick, Math.max(
+                            JpegStreamTuning.MIN_CAPTURE_IDLE_MS,
+                            SCREENSHOT_PACER.delayUntilAllowed(
+                                    android.os.SystemClock.elapsedRealtime())));
+                } else if (running) {
+                    main.postDelayed(tick, 1000);
+                }
             }
         });
     }
@@ -278,7 +334,9 @@ public final class AccessibilityJpegStreamer {
         ScreenSyncDiagnostics.record(app, "CAPTURE_STOP",
                 "captured=" + screenshotCount + " sent=" + sendCount
                 + " send_failed=" + sendFailCount + " capture_failed=" + captureFailCount
-                + " congestion_skips=" + congestionSkips);
+                + " congestion_skips=" + congestionSkips
+                + " os_pacing_ms=" + SCREENSHOT_PACER.gapMs()
+                + " os_rate_limited_total=" + SCREENSHOT_PACER.rateFailures());
         main.removeCallbacks(tick);
         encoder.shutdownNow();
         if (current == this) current = null;

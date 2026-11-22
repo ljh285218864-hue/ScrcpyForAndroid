@@ -84,6 +84,7 @@ public final class NoVpnBackgroundSync {
     static void restore(Context context) {
         if (!isEnabled(context) || !NoVpnApi.isRegistered(context)) return;
         schedule(context);
+        NoVpnStandbyAlarm.schedule(context);
         ensureNetworkListener(context);
         NoVpnPresenceLoop.start(context);
         ScreenSyncMediaKeeper.restoreOptedInSignaling(context);
@@ -95,6 +96,7 @@ public final class NoVpnBackgroundSync {
                 .putString(STATE, enabled ? "scheduled" : "disabled").commit();
         if (enabled && NoVpnApi.isRegistered(context)) {
             schedule(context);
+            NoVpnStandbyAlarm.schedule(context);
             ensureNetworkListener(context);
             NoVpnPresenceLoop.start(context);
             ScreenSyncMediaKeeper.restoreOptedInSignaling(context);
@@ -103,6 +105,7 @@ public final class NoVpnBackgroundSync {
             WorkManager manager = WorkManager.getInstance(context);
             manager.cancelUniqueWork(UNIQUE_PERIODIC);
             manager.cancelUniqueWork(UNIQUE_ONCE);
+            NoVpnStandbyAlarm.cancel(context);
             stopNetworkListener(context);
             NoVpnPresenceLoop.stop();
         }

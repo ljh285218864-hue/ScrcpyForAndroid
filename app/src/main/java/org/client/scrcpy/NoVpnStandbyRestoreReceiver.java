@@ -26,6 +26,8 @@ public final class NoVpnStandbyRestoreReceiver extends BroadcastReceiver {
             // Scheduler is idempotent. This does not connect to the remote
             // peer or authorize sharing; it only sends a short HTTPS heartbeat.
             NoVpnBackgroundSync.schedule(context);
+            NoVpnStandbyAlarm.schedule(context);
+            AccessibilityServiceHealth.checkAndRecord(context, "boot_or_update");
             // Best effort: signaling only; never starts a screenshot session.
             ScreenSyncMediaKeeper.restoreOptedInSignaling(context);
             NoVpnBackgroundSync.requestOnce(context,

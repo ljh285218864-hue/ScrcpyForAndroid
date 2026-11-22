@@ -59,6 +59,7 @@ public final class NoVpnMediaSocket {
     private volatile String sourceSession = "";
     private volatile String viewerSession = "";
     private volatile boolean watchRequestInFlight;
+    private volatile boolean cancelViewerWhenPending;
     private volatile boolean viewerHasVideoSetup;
     private int reconnectAttempts;
     private int receivedFrames;
@@ -69,6 +70,8 @@ public final class NoVpnMediaSocket {
     private volatile long rejoinUntilElapsedMs;
     private volatile boolean rejoinPending;
     private volatile boolean sourceSetupReady = true;
+    // Four FPS until an authenticated relay advertises a higher JPEG cap.
+    private volatile int jpegServerFps = JpegStreamTuning.FALLBACK_SERVER_FPS;
     private final Runnable expireRejoin = () -> {
         if (!rejoinPending || android.os.SystemClock.elapsedRealtime()
                 < rejoinUntilElapsedMs) return;
@@ -77,6 +80,8 @@ public final class NoVpnMediaSocket {
         AccessibilityJpegStreamer.stopActiveWithoutSending();
         status("session_resume_expired");
     };
+    private static final long WATCH_ACK_TIMEOUT_MS = 12_000L;
+    private final Runnable expireUnacknowledgedWatch;
     private final Runnable retryConnection = () -> {
         if (shutdown || socket != null) return;
         try {
@@ -89,6 +94,15 @@ public final class NoVpnMediaSocket {
     public NoVpnMediaSocket(Context context, Listener listener) {
         this.context = context.getApplicationContext();
         this.listener = listener;
+        this.expireUnacknowledgedWatch = () -> {
+            if (!watchRequestInFlight || !pendingViewerSession.isEmpty()
+                    || !viewerSession.isEmpty()) return;
+            watchRequestInFlight = false;
+            cancelViewerWhenPending = false;
+            ScreenSyncDiagnostics.record(this.context, "WATCH_REQUEST",
+                    "server_ack_timeout");
+            status("watch_request_ack_timeout");
+        };
     }
 
     /** Rebind UI callbacks after the Activity is recreated, without replacing
@@ -105,6 +119,10 @@ public final class NoVpnMediaSocket {
      * auto-start from a separate, still visible source owner grant. */
     public boolean isPersistentSourceStartPending() {
         return persistentSourceStartPending;
+    }
+
+    public long jpegCaptureGapMs() {
+        return JpegStreamTuning.captureGapMs(jpegServerFps);
     }
 
     public boolean hasApprovedSourceSession() {
@@ -263,8 +281,17 @@ public final class NoVpnMediaSocket {
                 ScreenSyncDiagnostics.record(context, "WSS_CLOSE",
                         "code=" + code + " live_s="
                         + ((android.os.SystemClock.elapsedRealtime() - connectedAtMs) / 1000));
-                status("disconnected");
-                scheduleReconnect();
+                if (code == 4005) {
+                    status("server_connection_replaced");
+                } else if (code == 4003) {
+                    // Credentials/identity rejected: do not hammer the server
+                    // with indefinite reauthentication. Pairing remains local
+                    // so the owner can inspect and resolve the problem.
+                    status("server_auth_required");
+                } else {
+                    status("disconnected");
+                    scheduleReconnect();
+                }
             }
             @Override public void onFailure(WebSocket ws, Throwable error,
                                             Response response) {
@@ -287,8 +314,13 @@ public final class NoVpnMediaSocket {
                                 + " idle_tx_s=" + (lastSourceFrameAtMs == 0
                                         ? -1 : (android.os.SystemClock.elapsedRealtime()
                                                 - lastSourceFrameAtMs) / 1000));
-                status("network_unavailable");
-                scheduleReconnect();
+                if (response != null
+                        && (response.code() == 401 || response.code() == 403)) {
+                    status("server_auth_required");
+                } else {
+                    status("network_unavailable");
+                    scheduleReconnect();
+                }
             }
         };
         connectedAtMs = android.os.SystemClock.elapsedRealtime();
@@ -327,6 +359,11 @@ public final class NoVpnMediaSocket {
                     throw new SecurityException("服务器返回的设备身份不一致");
                 }
                 authenticated = true;
+                jpegServerFps = JpegStreamTuning.negotiatedFps(
+                        body.optInt("jpeg_max_fps",
+                                JpegStreamTuning.FALLBACK_SERVER_FPS));
+                ScreenSyncDiagnostics.record(context, "WSS_CAPABILITIES",
+                        "jpeg_server_fps=" + jpegServerFps);
                 receivedFrames = 0;
                 sourceFramesSent = 0;
                 lastSourceFrameAtMs = 0;
@@ -419,7 +456,8 @@ public final class NoVpnMediaSocket {
                     // The explicit opt-in remains in the owner's app only.
                     // Before the first JPEG frame, source.start() must display
                     // one currently visible, immediate STOP control.
-                    if (LongTermSharePolicy.mayAutoApprove(context)) {
+                    if (LongTermSharePolicy.mayAutoApprove(context)
+                            && PersistentWatchConsent.permitsWatch(context, from)) {
                         persistentApprovedRequest = sid;
                         if (acceptRequest(sid)) {
                             status("long_term_auto_approved_from_app_setting");
@@ -437,7 +475,12 @@ public final class NoVpnMediaSocket {
                 if (!ScrcpyRelayWire.validSessionId(body.optString("session_id")))
                     throw new SecurityException("无效观看等待会话");
                 pendingViewerSession = body.optString("session_id");
+                main.removeCallbacks(expireUnacknowledgedWatch);
                 watchRequestInFlight = true;
+                if (cancelViewerWhenPending) {
+                    endViewingSession();
+                    break;
+                }
                 status("awaiting_peer_approval");
                 break;
             case "watch_active": {
@@ -447,9 +490,14 @@ public final class NoVpnMediaSocket {
                 if (!sid.equals(pendingViewerSession))
                     throw new SecurityException("不是本机发起的观看会话");
                 pendingViewerSession = "";
+                main.removeCallbacks(expireUnacknowledgedWatch);
                 watchRequestInFlight = false;
                 viewerSession = sid;
                 viewerHasVideoSetup = false;
+                if (cancelViewerWhenPending) {
+                    endViewingSession();
+                    break;
+                }
                 status("viewer_session_active");
                 break;
             }
@@ -473,13 +521,10 @@ public final class NoVpnMediaSocket {
                     }
                     if (persistent) {
                         // Source user can revoke between approval and start.
-                        if (LongTermSharePolicy.enabled(context)
-                                && AccessibilityShotService.ready()
-                                && AccessibilityShotService.ready()) {
-                            AccessibilityJpegStreamer.startPreviouslyApprovedWithoutUi(
-                                    context, NoVpnMediaSocket.this);
-                        } else {
-                            endSourceSession("long_term_permission_revoked");
+                        if (!LongTermSharePolicy.mayAutoApprove(context)
+                                || !ScreenSyncMediaKeeper.startPersistentlyApprovedViewing(
+                                    context, NoVpnMediaSocket.this)) {
+                            endSourceSession("long_term_capture_unavailable");
                         }
                         persistentSourceStartPending = false;
                     } else if (listener == null) {
@@ -538,16 +583,54 @@ public final class NoVpnMediaSocket {
                 if (id.equals(sourceSession)) sourceSession = "";
                 if (id.equals(waitingRequest)) waitingRequest = "";
                 if (id.equals(locallyApprovedRequest)) locallyApprovedRequest = "";
-                if (sourceEnded)
+                if (sourceEnded) {
+                    ScreenSyncMediaKeeper.stopPersistentlyApprovedViewing(this);
                     AccessibilityJpegStreamer.stopActiveWithoutSending();
+                }
                 ScreenSyncWatchNotice.clear(context);
                 status(sourceEnded ? "source_session_ended"
                         : viewerEnded ? "viewer_session_ended" : "session_ended");
+                if (!"stopped_by_device".equals(reason)
+                        && !"declined_by_source".equals(reason)
+                        && !"unspecified".equals(reason))
+                    status("session_end_reason:" + reason);
                 break;
-            case "error":
-                watchRequestInFlight = false;
-                status("server_error:" + body.optString("code", "UNKNOWN"));
+            case "error": {
+                String code = body.optString("code", "UNKNOWN");
+                // Errors unrelated to the current viewer request must not
+                // silently cancel a healthy source or reverse-direction view.
+                if ("PEER_OFFLINE".equals(code)
+                        || "DIRECTION_ALREADY_ACTIVE".equals(code)
+                        || "SESSION_LIMIT".equals(code)
+                        || "RECIPIENT_NOT_AUTHORIZED".equals(code)) {
+                    watchRequestInFlight = false;
+                    cancelViewerWhenPending = false;
+                    main.removeCallbacks(expireUnacknowledgedWatch);
+                }
+                if ("RESUME_NOT_ALLOWED".equals(code) && rejoinPending) {
+                    clearSessions();
+                    AccessibilityJpegStreamer.stopActiveWithoutSending();
+                    status("session_resume_expired");
+                }
+                if (("VIDEO_SESSION_NOT_ACTIVE".equals(code)
+                        || "MEDIA_CODEC_MISMATCH".equals(code)
+                        || "INVALID_VIDEO_SETUP".equals(code)
+                        || "NON_VIDEO_REJECTED".equals(code))
+                        && ScrcpyRelayWire.validSessionId(sourceSession)
+                        && !rejoinPending) {
+                    // The relay rejects this session's frames; stop sending
+                    // them, but keep pairing and the authenticated socket.
+                    endSourceSession("server_rejected_media");
+                    AccessibilityJpegStreamer.stopActiveWithoutSending();
+                }
+                ScreenSyncDiagnostics.record(context, "WSS_SERVER_ERROR",
+                        "code=" + code + " source_active="
+                                + ScrcpyRelayWire.validSessionId(sourceSession)
+                                + " viewer_active="
+                                + ScrcpyRelayWire.validSessionId(viewerSession));
+                status("server_error:" + code);
                 break;
+            }
             default:
                 throw new SecurityException("不允许的中转消息类型");
         }
@@ -571,11 +654,16 @@ public final class NoVpnMediaSocket {
         if (peer.isEmpty() || !authenticated || shutdown || watchRequestInFlight
                 || !viewerSession.isEmpty() || !pendingViewerSession.isEmpty())
             return false;
+        cancelViewerWhenPending = false;
         watchRequestInFlight = true;
         try {
             boolean sent = send(new JSONObject().put("type", "watch_request")
                     .put("to_device_id", peer));
             if (!sent) watchRequestInFlight = false;
+            else {
+                main.removeCallbacks(expireUnacknowledgedWatch);
+                main.postDelayed(expireUnacknowledgedWatch, WATCH_ACK_TIMEOUT_MS);
+            }
             ScreenSyncDiagnostics.record(context, "WATCH_REQUEST", "sent=" + sent);
             return sent;
         } catch (JSONException error) {
@@ -598,7 +686,8 @@ public final class NoVpnMediaSocket {
     }
 
 
-    /** Call only from a real acceptance in the local user interface. */
+    /** Call only from direct local approval or an existing, explicit,
+     * identity-matched owner grant for this paired peer. */
     public boolean acceptRequest(String sid) {
         if (!ScrcpyRelayWire.validSessionId(sid) || !sid.equals(waitingRequest))
             return false;
@@ -628,6 +717,33 @@ public final class NoVpnMediaSocket {
         } catch (JSONException error) { return false; }
     }
 
+    /** Viewer-only Exit: keep WSS and any reverse-direction source share intact. */
+    public void endViewingSession() {
+        if (watchRequestInFlight && pendingViewerSession.isEmpty()
+                && viewerSession.isEmpty()) {
+            // Wait for the server-assigned session ID, then cancel it.
+            cancelViewerWhenPending = true;
+            return;
+        }
+        String active = viewerSession;
+        String pending = pendingViewerSession;
+        viewerSession = "";
+        pendingViewerSession = "";
+        watchRequestInFlight = false;
+        main.removeCallbacks(expireUnacknowledgedWatch);
+        cancelViewerWhenPending = false;
+        viewerHasVideoSetup = false;
+        String[] ids = {active, pending};
+        for (String sid : ids) {
+            if (!ScrcpyRelayWire.validSessionId(sid)) continue;
+            try {
+                send(new JSONObject().put("type", "watch_end")
+                        .put("session_id", sid));
+            } catch (JSONException ignored) { }
+        }
+        status("viewer_exited");
+    }
+
     /** Used by a separately user-approved scrcpy capture bridge, not by UI. */
     public boolean sendVideoSetup(int[] dims, String codec) {
         if (dims == null || dims.length != 4 || sourceSession.isEmpty()
@@ -655,6 +771,11 @@ public final class NoVpnMediaSocket {
         } catch (IllegalArgumentException error) {
             return false;
         }
+    }
+
+    public long pendingSourceBytes() {
+        WebSocket ws = socket;
+        return ws == null ? 0L : ws.queueSize();
     }
 
     /** True when sending another screenshot would grow an old-frame queue. */
@@ -690,6 +811,8 @@ public final class NoVpnMediaSocket {
         ScreenSyncWatchNotice.clear(context);
         receivedFrames = 0;
         watchRequestInFlight = false;
+        main.removeCallbacks(expireUnacknowledgedWatch);
+        cancelViewerWhenPending = false;
         viewerHasVideoSetup = false;
         viewerSession = "";
         pendingViewerSession = "";
@@ -705,6 +828,7 @@ public final class NoVpnMediaSocket {
     }
 
     public void endSourceSession(String reason) {
+        ScreenSyncMediaKeeper.stopPersistentlyApprovedViewing(this);
         String source = sourceSession;
         sourceSession = "";
         persistentApprovedRequest = "";
@@ -735,9 +859,11 @@ public final class NoVpnMediaSocket {
 
     /** Closing the Activity releases the connection. No hidden background media. */
     public synchronized void close() {
+        ScreenSyncMediaKeeper.stopPersistentlyApprovedViewing(this);
         endSession();
         shutdown = true;
         main.removeCallbacks(retryConnection);
+        main.removeCallbacks(expireUnacknowledgedWatch);
         main.removeCallbacks(expireRejoin);
         WebSocket ws = socket;
         socket = null;

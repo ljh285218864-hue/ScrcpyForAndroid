@@ -18,8 +18,8 @@ android {
     defaultConfig {
         minSdk = 24
         targetSdk = 36
-        versionCode = 39
-        versionName = '1.8.1-jpeg-only'
+        versionCode = 41
+        versionName = '1.8.3-jpeg-os-pacing'
         buildConfigField 'String', 'SCREENSYNC_MEDIA_URL', '"' +
             (System.getenv('SCREENSYNC_MEDIA_URL') ?: 'wss://relay.invalid/media') + '"'
         buildConfigField 'String', 'SCREENSYNC_NOVPN_URL', '"' +
@@ -61,6 +61,6 @@ dependencies {
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.3'
     testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
     androidTestImplementation 'androidx.test:runner:1.6.2'
-    androidTestImplementation 'androidx.test.espresso:espresso-core:3.6.1'
 }
