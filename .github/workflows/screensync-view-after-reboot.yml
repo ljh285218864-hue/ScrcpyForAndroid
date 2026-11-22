@@ -1,0 +1,107 @@
+name: ScreenSync Android 15 approved JPEG viewing after reboot
+
+on:
+  push:
+    branches:
+      - feature/screensync-persistent-watch-consent-20261122
+    paths:
+      - '.github/workflows/screensync-view-after-reboot.yml'
+      - '.github/scripts/screensync-ci-pair-relay.py'
+      - '.github/scripts/screensync-emulator-watch-after-reboot.sh'
+      - 'app/src/androidTest/java/org/client/scrcpy/ScreenSyncPairedLifecycleTest.java'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paired-emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Only the disposable host-side TLS server is used. Never production VPS.
+      SCREENSYNC_NOVPN_URL: https://10.0.2.2:18443
+      SCREENSYNC_MEDIA_URL: wss://10.0.2.2:18444/media
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable Android KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install isolated relay dependencies
+        run: |
+          python -m pip install -r remote/relay_v1/requirements-media.txt pillow
+      - name: Prepare ephemeral CA for local emulator ONLY
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/screensync-ci-pair app/src/scrcpyDebug/res/{raw,xml}
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -sha256 \
+            -keyout /tmp/screensync-ci-pair/ci-ca.key \
+            -out /tmp/screensync-ci-pair/ci-ca.pem \
+            -subj '/CN=ScreenSync-CI-Disposable-Test-CA' >/dev/null 2>&1
+          openssl req -newkey rsa:2048 -nodes -sha256 \
+            -keyout /tmp/screensync-ci-pair/ci-server.key \
+            -out /tmp/screensync-ci-pair/ci-server.csr \
+            -subj '/CN=10.0.2.2' >/dev/null 2>&1
+          printf 'subjectAltName=IP:10.0.2.2,IP:127.0.0.1\nextendedKeyUsage=serverAuth\n' \
+            > /tmp/screensync-ci-pair/ci-server-ext.txt
+          openssl x509 -req \
+            -in /tmp/screensync-ci-pair/ci-server.csr \
+            -CA /tmp/screensync-ci-pair/ci-ca.pem \
+            -CAkey /tmp/screensync-ci-pair/ci-ca.key \
+            -CAcreateserial -days 1 -sha256 \
+            -extfile /tmp/screensync-ci-pair/ci-server-ext.txt \
+            -out /tmp/screensync-ci-pair/ci-server.crt >/dev/null 2>&1
+          cp /tmp/screensync-ci-pair/ci-ca.pem app/src/scrcpyDebug/res/raw/ci_test_ca.pem
+          cat > app/src/scrcpyDebug/res/xml/ci_isolated_trust.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+            <base-config cleartextTrafficPermitted="false">
+              <trust-anchors>
+                <certificates src="system" />
+                <certificates src="@raw/ci_test_ca" />
+              </trust-anchors>
+            </base-config>
+          </network-security-config>
+          XML
+          cat > app/src/scrcpyDebug/AndroidManifest.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            <application android:networkSecurityConfig="@xml/ci_isolated_trust" />
+          </manifest>
+          XML
+          echo 'Ephemeral test CA and Android debug-only overlay generated in CI.'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - name: Build actual ScreenSync and test-only instrumented APK
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleScrcpyDebug :app:assembleScrcpyDebugAndroidTest --no-daemon --stacktrace
+      - name: Test first approved JPEG watch, recents removal, cold reboot and second JPEG watch
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          emulator-boot-timeout: 600
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none
+          script: bash .github/scripts/screensync-emulator-watch-after-reboot.sh
+      - name: Upload non-secret lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScreenSync-Actual-JPEG-Viewing-After-Reboot
+          path: emulator-watch-after-reboot-results/**
+          if-no-files-found: warn
+          retention-days: 14
