@@ -70,18 +70,23 @@ public final class AccessibilityShotService extends AccessibilityService {
         super.onServiceConnected();
         connected = this;
         ScreenSyncDiagnostics.record(this, "ACCESSIBILITY", "service_connected");
+        AccessibilityServiceHealth.onServiceConnected(this);
     }
     @Override public void onAccessibilityEvent(AccessibilityEvent event) { }
     @Override public void onInterrupt() { }
     @Override public boolean onUnbind(android.content.Intent intent) {
         AccessibilityJpegStreamer.stopActiveOnAccessibilityLost();
         if (connected == this) connected = null;
+        AccessibilityServiceHealth.onServiceDisconnected(this);
         ScreenSyncDiagnostics.record(this, "ACCESSIBILITY", "service_unbound");
         return super.onUnbind(intent);
     }
     @Override public void onDestroy() {
         AccessibilityJpegStreamer.stopActiveOnAccessibilityLost();
-        if (connected == this) connected = null;
+        if (connected == this) {
+            connected = null;
+            AccessibilityServiceHealth.onServiceDisconnected(this);
+        }
         super.onDestroy();
     }
 }
