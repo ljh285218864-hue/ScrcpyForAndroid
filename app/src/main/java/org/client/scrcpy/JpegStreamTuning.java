@@ -12,6 +12,9 @@ public final class JpegStreamTuning {
     public static final int MAX_SERVER_FPS = 8;
     public static final long CAPTURE_GAP_MS = 265L;
     public static final long FAST_CAPTURE_GAP_MS = 140L;
+    // When OS-aware screenshot pacing permits a request, schedule on the
+    // next main-loop turn rather than waiting an extra 140-265ms per frame.
+    public static final long MIN_CAPTURE_IDLE_MS = 8L;
     public static final long CONGESTION_RETRY_MS = 450L;
     public static final long MAX_PENDING_BYTES_BEFORE_CAPTURE = 160L * 1024L;
     public static final long MAX_PENDING_BYTES_BEFORE_SEND = 384L * 1024L;
