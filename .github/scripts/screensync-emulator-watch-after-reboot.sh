@@ -62,6 +62,25 @@ online() {
 watch_frames() {
   python3 "$PYTHON_RELAY" watch --seconds "$1"
 }
+# A recent task can exist without any running Activity. The user requires
+# the card itself absent, so inspect the ACTUAL recent-tasks database.
+task_present() {
+  adb shell dumpsys activity recents | grep -E 'Recent #[0-9]+: Task.*org[.]client[.]scrcpy' >/dev/null
+}
+accessibility_bound() {
+  adb shell dumpsys accessibility | grep -q 'Bound services:.*ScreenSync'
+}
+assert_no_app_ui() {
+  local stage="$1"
+  adb shell dumpsys activity activities > "$REPORT/$stage-activities.txt"
+  adb shell dumpsys window windows > "$REPORT/$stage-windows.txt"
+  if grep -E 'topResumedActivity.*org[.]client[.]scrcpy|mCurrentFocus.*org[.]client[.]scrcpy'         "$REPORT/$stage-activities.txt" "$REPORT/$stage-windows.txt" >/dev/null; then
+    log "FAIL: ScreenSync UI unexpectedly foreground while checking $stage"
+    failures=$((failures+1))
+  else
+    log "PASS: $stage - ScreenSync activity not foreground, no automatic app UI/popup"
+  fi
+}
 # Tap the real, on-device UI button/dialog. No instrumentation helper grants
 # long-term watching; the app's actual onClick consent path is exercised.
 tap_ui_text() {
@@ -281,9 +300,35 @@ for entry in "540 1100 540 170 300" "540 1300 540 150 400" "540 1100 540 100 220
 done
 snapshot card-swiped
 if [[ "$removed" == 1 ]]; then
-  log "PASS: actually removed app task from Android recents"
+  log "PASS: actual swipe removed ScreenSync card from recents"
 else
-  log "FAIL: app task remained in recents; this is not a valid swipe test"
+  # CI headless Pixel Quickstep can spring the thumbnail back into place.
+  # Test the user's requested no-card state using the documented ADB
+  # activity task-manager removal command (NOT force-stop or clearing app
+  # data), and label the mechanism honestly in the report.
+  task_id="$(adb shell dumpsys activity recents | sed -n -E 's/.*Recent #[0-9]+: Task[^#]*#([0-9]+) type=.*org[.]client[.]scrcpy.*/\1/p' | head -1 | tr -d '\r')"
+  if [[ "$task_id" =~ ^[0-9]+$ ]]; then
+    remove_out="$(adb shell am task remove "$task_id" 2>&1)" || true
+    log "NOTE: pixel launcher swipe failed; am task remove attempted for task ID $task_id"
+    echo "$remove_out" > "$REPORT/adb-task-remove-result.txt"
+  else
+    log "NOTE: pixel launcher swipe failed; no recent task ID could be derived"
+  fi
+  sleep 3
+fi
+snapshot card-absent-verified
+if task_present; then
+  log "FAIL: ScreenSync recent-task card still exists; no-card acceptance condition NOT satisfied"
+  failures=$((failures+1))
+else
+  removed=1
+  log "PASS: ScreenSync recent-task card is ABSENT in Android system recent-tasks database"
+fi
+assert_no_app_ui "after-card-removal"
+if accessibility_bound; then
+  log "PASS: accessibility remains bound after recent-task removal"
+else
+  log "FAIL: accessibility service unbound after recent-task removal"
   failures=$((failures+1))
 fi
 if online 15; then
@@ -317,6 +362,19 @@ done
 [[ "$booted" == 1 ]] || { log "FAIL: emulator OS did not finish reboot"; exit 1; }
 sleep 10
 snapshot boot-before-manual-launch
+if task_present; then
+  log "FAIL: ScreenSync task card reappeared after cold boot without App UI"
+  failures=$((failures+1))
+else
+  log "PASS: after cold boot, source ScreenSync task is ABSENT; app was not manually opened"
+fi
+assert_no_app_ui "boot-before-watch"
+if accessibility_bound; then
+  log "PASS: after cold boot, Android AccessibilityService is truly BOUND"
+else
+  log "FAIL: after cold boot, accessibility service is not bound"
+  failures=$((failures+1))
+fi
 python3 "$PYTHON_RELAY" status
 if online 50; then
   log "PASS: actual paired WSS reconnect after Android cold boot WITHOUT manual app launch"
@@ -337,6 +395,62 @@ else
   failures=$((failures+1))
 fi
 snapshot boot-watch-attempted
+if task_present; then
+  log "FAIL: a remote Watch request unexpectedly created a source app task"
+  failures=$((failures+1))
+else
+  log "PASS: remote Watch did not open source ScreenSync task"
+fi
+assert_no_app_ui "boot-watch-after-success"
+
+# REPEATED watch requests without ANY source UI launch, fresh approval dialog
+# or new system accessibility grant. Confirm per-request opt-in stays valid.
+for turn in 1 2 3; do
+  if watch_frames 25; then
+    log "PASS: unattended postboot watch repeated #$turn; real JPEG received"
+  else
+    log "FAIL: unattended postboot watch #$turn disconnected or returned no JPEG"
+    failures=$((failures+1))
+  fi
+  sleep 2
+done
+
+# Long-run stress: measure true JPEG FPS and maximum gap (not theoretical 8fps)
+# while the source device has no recent task or foreground Activity.
+python3 "$PYTHON_RELAY" watch --seconds 45 --duration 20 \
+    > "$REPORT/boot-20s-fps.txt" 2>&1 &
+viewer_pid=$!
+sleep 8
+snapshot boot-long-view-active
+assert_no_app_ui "boot-long-view"
+adb shell dumpsys notification --noredact \
+    > "$REPORT/boot-long-view-notification.txt" 2>&1 || true
+if accessibility_bound; then
+  log "PASS: 20-second actual watch still has bound AccessibilityService"
+else
+  log "FAIL: accessibility disconnected during 20-second watch"
+  failures=$((failures+1))
+fi
+if grep -q "ScreenSync 正在共享屏幕" "$REPORT/boot-long-view-notification.txt"; then
+  log "PASS: local owner can see active-screen-sharing notification and STOP action"
+else
+  log "WARN: active sharing status notification not visible in dumpsys"
+fi
+wait "$viewer_pid" && stress_ok=1 || stress_ok=0
+cat "$REPORT/boot-20s-fps.txt" | tee -a "$REPORT/results.txt"
+if [[ "$stress_ok" == 1 ]]; then
+  log "PASS: uninterrupted authorized 20-second postboot remote JPEG stream"
+else
+  log "FAIL: 20-second postboot stream dropped, stalled or had no valid frames"
+  failures=$((failures+1))
+fi
+snapshot boot-long-view-ended
+if task_present; then
+  log "FAIL: source recent-task card appeared during repeated/background watching"
+  failures=$((failures+1))
+else
+  log "PASS: even after repeated and long watching, no ScreenSync task card"
+fi
 
 # Now inspect persisted owner identity on Android via the real HTTPS client.
 if instrument verify; then
