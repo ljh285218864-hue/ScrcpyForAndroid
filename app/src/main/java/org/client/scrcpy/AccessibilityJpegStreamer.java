@@ -16,6 +16,7 @@ import android.util.DisplayMetrics;
 import java.io.ByteArrayOutputStream;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * User-initiated screenshot sharing, without foreground service, ADB,
@@ -44,7 +45,13 @@ public final class AccessibilityJpegStreamer {
     // instead of allocating a large temporary JPEG output buffer per frame.
     private final ByteArrayOutputStream jpegBuffer = new ByteArrayOutputStream(131072);
     private volatile boolean running;
+    // 'busy' only covers the OS screenshot request, not JPEG encoding.
+    // Keeping these independent prevents JPEG compression hiccups from
+    // delaying the next screenshot request and making the video stutter.
     private volatile boolean busy;
+    private final AtomicBoolean encodingBusy = new AtomicBoolean();
+    private int encoderDropCount;
+    private int consecutiveCaptureFailures;
     private long lastOverlayCheckMs;
     private volatile boolean noticePosted;
     private int captureSerial;
@@ -184,7 +191,9 @@ public final class AccessibilityJpegStreamer {
         // would arrive late. Drop a frame rather than delay subsequent frames.
         if (socket.isSourceBackpressured()) {
             congestionSkips++;
-            if (congestionSkips % 3 == 0)
+            // Retry is now shorter, so decrease quality no more than once
+            // per ~1 second of sustained queue congestion.
+            if (congestionSkips % 9 == 0)
                 compressionQuality = Math.max(58, compressionQuality - 2);
             if (congestionSkips == 1 || congestionSkips % 10 == 0)
                 ScreenSyncDiagnostics.record(app, "JPEG_BACKPRESSURE",
@@ -228,6 +237,23 @@ public final class AccessibilityJpegStreamer {
                 final long screenshotMs = android.os.SystemClock.elapsedRealtime()
                         - screenshotRequestedAt;
                 SCREENSHOT_PACER.recordSuccess();
+                consecutiveCaptureFailures = 0;
+                // Schedule from request-to-request pacing, not JPEG completion.
+                // Capture and encode may overlap, but never accumulate an
+                // unbounded queue of stale images if encoding is slow.
+                busy = false;
+                long nextDelay = Math.max(SCREENSHOT_PACER.delayUntilAllowed(
+                        android.os.SystemClock.elapsedRealtime()),
+                        JpegStreamTuning.MIN_CAPTURE_IDLE_MS);
+                main.postDelayed(tick, nextDelay);
+                if (!encodingBusy.compareAndSet(false, true)) {
+                    screenshot.recycle();
+                    encoderDropCount++;
+                    if (encoderDropCount == 1 || encoderDropCount % 10 == 0)
+                        ScreenSyncDiagnostics.record(app, "JPEG_ENCODER_BUSY",
+                                "dropped=" + encoderDropCount);
+                    return;
+                }
                 try {
                 encoder.execute(() -> {
                     try {
@@ -282,28 +308,20 @@ public final class AccessibilityJpegStreamer {
                                 "error=" + error.getClass().getSimpleName());
                     } finally {
                         screenshot.recycle();
-                        main.post(() -> {
-                            if (serial != captureSerial) return;
-                            busy = false;
-                            if (running) {
-                                long currentMs = android.os.SystemClock.elapsedRealtime();
-                                long waitMs = Math.max(SCREENSHOT_PACER.delayUntilAllowed(currentMs),
-                                        JpegStreamTuning.MIN_CAPTURE_IDLE_MS);
-                                main.postDelayed(tick, waitMs);
-                            }
-                        });
+                        encodingBusy.set(false);
                     }
                 });
                 } catch (java.util.concurrent.RejectedExecutionException stopped) {
                     ScreenSyncDiagnostics.record(app, "JPEG_ENCODE_FAIL", "executor_stopped");
                     screenshot.recycle();
-                    if (serial == captureSerial) busy = false;
+                    encodingBusy.set(false);
                 }
             }
             @Override public void failure(int reason) {
                 main.removeCallbacks(watchdog);
                 if (!running || serial != captureSerial) return;
                 captureFailCount++;
+                consecutiveCaptureFailures++;
                 if (captureFailCount == 1 || captureFailCount % 5 == 0) {
                     ScreenSyncDiagnostics.record(app, "CAPTURE_FAIL",
                             "count=" + captureFailCount + " code=" + reason);
@@ -321,7 +339,10 @@ public final class AccessibilityJpegStreamer {
                             SCREENSHOT_PACER.delayUntilAllowed(
                                     android.os.SystemClock.elapsedRealtime())));
                 } else if (running) {
-                    main.postDelayed(tick, 1000);
+                    // A single transient screenshot error must not add a whole
+                    // second of frozen picture. Repeated errors back off.
+                    main.postDelayed(tick, JpegStreamTuning.captureFailureRetryMs(
+                            consecutiveCaptureFailures));
                 }
             }
         });
@@ -335,6 +356,7 @@ public final class AccessibilityJpegStreamer {
                 "captured=" + screenshotCount + " sent=" + sendCount
                 + " send_failed=" + sendFailCount + " capture_failed=" + captureFailCount
                 + " congestion_skips=" + congestionSkips
+                + " encoder_busy_drops=" + encoderDropCount
                 + " os_pacing_ms=" + SCREENSHOT_PACER.gapMs()
                 + " os_rate_limited_total=" + SCREENSHOT_PACER.rateFailures());
         main.removeCallbacks(tick);
