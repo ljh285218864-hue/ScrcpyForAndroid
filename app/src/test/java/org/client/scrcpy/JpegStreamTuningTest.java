@@ -47,6 +47,15 @@ public final class JpegStreamTuningTest {
         assertEquals(850L, JpegStreamTuning.captureFailureRetryMs(1000));
     }
 
+    @Test public void viewerBurstsAreSpacedButNormalFramesStayRealTime() {
+        assertEquals(1000L, JpegStreamTuning.nextViewerDisplayAtMs(1000, 0));
+        assertEquals(1320L, JpegStreamTuning.nextViewerDisplayAtMs(1050, 1000));
+        assertEquals(1385L, JpegStreamTuning.nextViewerDisplayAtMs(1385, 1000));
+        assertEquals(1800L, JpegStreamTuning.nextViewerDisplayAtMs(1800, 1000));
+        assertTrue(JpegStreamTuning.MIN_VIEW_DISPLAY_GAP_MS >= 250L);
+        assertTrue(JpegStreamTuning.MIN_VIEW_DISPLAY_GAP_MS <= 340L);
+    }
+
     @Test public void profileKeepsBoundedQualityAndWebsocketQueue() {
         assertTrue(JpegStreamTuning.JPEG_QUALITY >= 65);
         assertTrue(JpegStreamTuning.JPEG_QUALITY <= 82);
