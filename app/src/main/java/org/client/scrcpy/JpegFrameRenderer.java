@@ -4,6 +4,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.widget.ImageView;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -30,6 +31,8 @@ public final class JpegFrameRenderer {
     private String pendingUiSession = "";
     private int pendingUiVersion;
     private boolean uiFrameScheduled;
+    private final Runnable drawNewest = this::displayNewestFrame;
+    private volatile long lastDisplayedUptimeMs;
     private volatile String session = "";
     private int incoming, decoded, dropped;
     private Runnable firstFrameCallback;
@@ -49,6 +52,7 @@ public final class JpegFrameRenderer {
         session = sessionId;
         final int version = generation.incrementAndGet();
         incoming = decoded = dropped = 0;
+        lastDisplayedUptimeMs = 0L;
         ScreenSyncDiagnostics.record(imageView.getContext(), "JPEG_VIEW",
                 "session_started");
         decoder.getQueue().clear();
@@ -110,7 +114,11 @@ public final class JpegFrameRenderer {
                     pendingUiSession = sessionId;
                     if (!uiFrameScheduled) {
                         uiFrameScheduled = true;
-                        ui.post(this::displayNewestFrame);
+                        // Space bursts by at least 320ms; do not delay ordinary
+                        // 2-3 FPS frames that already arrive at that cadence.
+                        ui.postAtTime(drawNewest,
+                                JpegStreamTuning.nextViewerDisplayAtMs(
+                                        SystemClock.uptimeMillis(), lastDisplayedUptimeMs));
                     }
                 }
             });
@@ -136,6 +144,7 @@ public final class JpegFrameRenderer {
             Bitmap previous = displayedBitmap;
             imageView.setImageBitmap(bitmap);
             displayedBitmap = bitmap;
+            lastDisplayedUptimeMs = SystemClock.uptimeMillis();
             retireDisplayedFrame(previous);
             decoded++;
             if (decoded == 1 && firstFrameCallback != null)
@@ -169,6 +178,8 @@ public final class JpegFrameRenderer {
             if (pendingUiBitmap != null) pendingUiBitmap.recycle();
             pendingUiBitmap = null;
             pendingUiSession = "";
+            uiFrameScheduled = false;
+            ui.removeCallbacks(drawNewest);
         }
     }
 
@@ -179,6 +190,7 @@ public final class JpegFrameRenderer {
                     + " dropped=" + dropped);
         session = "";
         decoded = 0;
+        lastDisplayedUptimeMs = 0L;
         final int version = generation.incrementAndGet();
         decoder.getQueue().clear();
         clearPendingUiFrame();
