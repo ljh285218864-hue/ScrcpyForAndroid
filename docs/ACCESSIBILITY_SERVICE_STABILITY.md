@@ -41,6 +41,27 @@ permission and an active *viewing* session.
   simulated Accessibility Settings taps, or forced toggle/re-enable loops
   are part of this change.
 
+## Accessibility switch off: local-only fallback
+
+- `AccessibilityRecoveryFallback` remembers that the source device's
+  accessibility service had previously reached RUNNING.
+- If a current pairing still has the owner's long-term viewing approval
+  but Android later reports DISABLED, the app records the need for local
+  attention. It does **not** infer whether this was caused by the owner or
+  the phone manufacturer's background policy.
+- The source device's setup UI shows a short explanation and a direct,
+  user-tapped shortcut to Android Accessibility settings. It does not
+  launch this UI from a background receiver.
+- On the next legitimate RUNNING state, it clears the reminder and the
+  already implemented OS service rebind handler can recover opted-in WSS
+  signaling; it does not initiate any unrequested screenshot session.
+- Revoking long-term permission clears the reminder. No extra persistent
+  notification is created.
+- This deliberately does **not** request WRITE_SECURE_SETTINGS or toggle
+  Settings.Secure, because a system-disabled service and a user-revoked
+  service can appear identical. Overriding that switch could reinstate
+  access that the device owner deliberately removed.
+
 ## Platform boundaries
 
 - Android controls binding/rebinding a user-enabled AccessibilityService.
