@@ -10,6 +10,7 @@ on:
       - '.github/scripts/screensync-ci-pair-relay.py'
       - '.github/scripts/screensync-emulator-watch-after-reboot.sh'
       - 'app/src/androidTest/java/org/client/scrcpy/ScreenSyncPairedLifecycleTest.java'
+      - 'app/src/androidTest/java/org/client/scrcpy/JpegFrameRendererTimingTest.java'
       - 'app/build.gradle'
       - 'app/src/main/java/org/client/scrcpy/AccessibilityJpegStreamer.java'
       - 'app/src/main/java/org/client/scrcpy/AccessibilityShotService.java'
