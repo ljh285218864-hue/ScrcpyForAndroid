@@ -28,9 +28,9 @@ public final class WatchSessionController {
      */
     public interface CaptureBridge {
         boolean hasSystemCaptureAccess();
-        boolean showWatchingStateAndStopControl();
+        /** Starts capture AND makes the live stop control visible atomically. */
+        boolean startCaptureWithVisibleStopControl();
         boolean isWatchingStateAndStopControlAvailable();
-        boolean startCaptureForCurrentSession();
         void stopCaptureForCurrentSession();
         void hideWatchingStateAndStopControl();
     }
@@ -58,11 +58,9 @@ public final class WatchSessionController {
 
         boolean started = false;
         try {
-            if (!bridge.showWatchingStateAndStopControl()
-                    || !bridge.isWatchingStateAndStopControlAvailable()) {
-                return StartResult.VISIBLE_STOP_UNAVAILABLE;
-            }
-            if (!bridge.startCaptureForCurrentSession()) {
+            // The capture implementation must show a real live STOP control
+            // before it can deliver its first screenshot frame.
+            if (!bridge.startCaptureWithVisibleStopControl()) {
                 return StartResult.CAPTURE_FAILED;
             }
             if (!bridge.isWatchingStateAndStopControlAvailable()) {
