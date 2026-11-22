@@ -660,6 +660,8 @@ public final class RemoteSetupActivity extends Activity {
                 return "正在安全连接服务器…";
             case "authenticated":
                 return "已连接，等待观看";
+            case "viewer_exited":
+                return "已退出观看，配对和服务器连接保持";
             case "peer_online":
                 return "配对手机已连接";
             case "peer_offline":
