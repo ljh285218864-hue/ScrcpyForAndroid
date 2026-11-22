@@ -540,7 +540,7 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
                                       "dimensions": [1080, 2400, 518, 1152],
                                       "codec": "jpeg"}))
         self.assertEqual((await self.read(viewer))["codec"], "jpeg")
-        packet = bytes([2, 0]) + bytes(8) + b"\\xff\\xd8" + bytes(68) + b"\\xff\\xd9"
+        packet = bytes([2, 0]) + bytes(8) + bytes.fromhex("ffd8") + bytes(68) + bytes.fromhex("ffd9")
         frame = media.video_frame(sid, packet)
         for _ in range(25):
             await source.send(frame)
@@ -587,7 +587,7 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
                 await original.send(value)
 
         client.socket = FailOnce()
-        packet = bytes([2, 0]) + bytes(8) + b"\\xff\\xd8" + bytes(68) + b"\\xff\\xd9"
+        packet = bytes([2, 0]) + bytes(8) + bytes.fromhex("ffd8") + bytes(68) + bytes.fromhex("ffd9")
         frame = media.video_frame(sid, packet)
         await source.send(frame)
         await asyncio.sleep(0.1)
