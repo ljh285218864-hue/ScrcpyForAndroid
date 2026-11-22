@@ -51,6 +51,27 @@ follow-up patch therefore reduces the no-callback watchdog from 6000 to
 through the serial guard. This follow-up MUST be validated by a subsequent
 26-second emulator run before a final max-gap claim is made.
 
+## Verified shorter watchdog performance (CI run 45046808144)
+
+The Android 15 emulator's full pairing, source-owner consent, no-recent-task,
+reboot without launching the app, renewed authentic WSS connection and real
+JPEG-viewing assertions all passed (zero failures).
+
+**26.3-second continuous stream: 69 fully decoded JPEG frames = 2.58 FPS,
+maximum inter-frame gap 0.83 seconds, first frame 0.11 seconds, 12 unique
+screen-image signatures, no disconnect.** On the same CI test class, before
+both fixes there were 25 frames / 0.96 FPS / 1.46s maximum gap; with pacing
+alone there were 51 frames / 1.91 FPS but one 7.04-second OS callback stall.
+The watchdog adjustment eliminated that long stall in this measurement.
+
+This is about 2.7x more frames than the original test, with no new server
+changes, permissions, or user prompts. **2.58 FPS remains low for smooth
+real-time screen casting**; a true 15–30 FPS mode needs a consent-compliant
+video screen source such as MediaProjection + MediaCodec (Android 14+ needs
+new user consent per capture session), or an explicitly administered device.
+The CI emulator is not a vivo/OPPO/Xiaomi device, and cannot predict OEM
+battery killing and actual wide-area cellular delay.
+
 ## What this CAN and CANNOT deliver
 
 Expected ceiling under public AccessibilityService screenshot API is low
