@@ -10,6 +10,10 @@ on:
       - '.github/scripts/screensync-emulator-watch-after-reboot.sh'
       - 'app/src/androidTest/java/org/client/scrcpy/ScreenSyncPairedLifecycleTest.java'
       - 'app/build.gradle'
+      - 'app/src/main/java/org/client/scrcpy/AccessibilityJpegStreamer.java'
+      - 'app/src/main/java/org/client/scrcpy/JpegCapturePacer.java'
+      - 'app/src/main/java/org/client/scrcpy/JpegStreamTuning.java'
+      - 'app/src/test/java/org/client/scrcpy/JpegCapturePacerTest.java'
   workflow_dispatch:
 
 permissions:
