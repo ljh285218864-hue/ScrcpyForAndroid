@@ -58,7 +58,13 @@ public final class AccessibilityJpegStreamer {
 
     /** Device-owner accessibility permission, never ordinary notifications. */
     public static String readinessIssue(Context context) {
-        return AccessibilityShotService.ready() ? "" : "accessibility_not_enabled";
+        if (AccessibilityShotService.ready()) return "";
+        AccessibilityStatePolicy.State state = AccessibilityServiceHealth.state(context);
+        if (state == AccessibilityStatePolicy.State.ENABLED_NOT_CONNECTED)
+            return "accessibility_service_disconnected";
+        if (state == AccessibilityStatePolicy.State.UNKNOWN)
+            return "accessibility_state_unknown";
+        return "accessibility_not_enabled";
     }
 
     /** Ordinary sharing notification is optional, not a capture prerequisite. */
