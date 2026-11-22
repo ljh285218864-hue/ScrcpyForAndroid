@@ -71,20 +71,26 @@ public final class AccessibilityShotService extends AccessibilityService {
         connected = this;
         ScreenSyncDiagnostics.record(this, "ACCESSIBILITY", "service_connected");
         AccessibilityServiceHealth.onServiceConnected(this);
+        AccessibilityReconnectCoordinator.onServiceConnected(this);
     }
     @Override public void onAccessibilityEvent(AccessibilityEvent event) { }
     @Override public void onInterrupt() { }
     @Override public boolean onUnbind(android.content.Intent intent) {
-        AccessibilityJpegStreamer.stopActiveOnAccessibilityLost();
-        if (connected == this) connected = null;
-        AccessibilityServiceHealth.onServiceDisconnected(this);
+        // A stale old instance must never stop a newer, re-bound service.
+        if (connected == this) {
+            connected = null;
+            AccessibilityReconnectCoordinator.onServiceDisconnected();
+            AccessibilityJpegStreamer.stopActiveOnAccessibilityLost();
+            AccessibilityServiceHealth.onServiceDisconnected(this);
+        }
         ScreenSyncDiagnostics.record(this, "ACCESSIBILITY", "service_unbound");
         return super.onUnbind(intent);
     }
     @Override public void onDestroy() {
-        AccessibilityJpegStreamer.stopActiveOnAccessibilityLost();
         if (connected == this) {
             connected = null;
+            AccessibilityReconnectCoordinator.onServiceDisconnected();
+            AccessibilityJpegStreamer.stopActiveOnAccessibilityLost();
             AccessibilityServiceHealth.onServiceDisconnected(this);
         }
         super.onDestroy();
