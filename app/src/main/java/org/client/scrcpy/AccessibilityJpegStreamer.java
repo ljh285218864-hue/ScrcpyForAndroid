@@ -40,6 +40,9 @@ public final class AccessibilityJpegStreamer {
     private final Listener listener;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService encoder = Executors.newSingleThreadExecutor();
+    // Accessed only by the single encoder worker. Reuse its backing array
+    // instead of allocating a large temporary JPEG output buffer per frame.
+    private final ByteArrayOutputStream jpegBuffer = new ByteArrayOutputStream(131072);
     private volatile boolean running;
     private volatile boolean busy;
     private long lastOverlayCheckMs;
@@ -230,11 +233,11 @@ public final class AccessibilityJpegStreamer {
                                     screenshot, outWidth, outHeight, true);
                             byte[] data;
                             try {
-                                ByteArrayOutputStream buffer = new ByteArrayOutputStream(98304);
+                                jpegBuffer.reset();
                                 boolean encoded = image.compress(
-                                        Bitmap.CompressFormat.JPEG, compressionQuality, buffer);
+                                        Bitmap.CompressFormat.JPEG, compressionQuality, jpegBuffer);
                                 if (!encoded) throw new IllegalStateException("jpeg_encode_failed");
-                                data = buffer.toByteArray();
+                                data = jpegBuffer.toByteArray();
                             } finally {
                                 if (image != screenshot) image.recycle();
                             }
