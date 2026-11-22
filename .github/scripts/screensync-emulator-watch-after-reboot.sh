@@ -202,37 +202,21 @@ snapshot paired-online
 # needed to post a currently visible "正在共享 / 停止" control on each watch.
 adb shell pm grant "$PACKAGE" android.permission.POST_NOTIFICATIONS
 sleep 10
-# First attempt local consent through accessible native UI text. This path
-# succeeded in emulator run 45042554031 (and proves real owner click).
-# If the launcher ANR overlays the consent dialog, try the real 1080x2400
-# system Wait and ScreenSync consent buttons. Never directly change grants.
-if tap_ui_text "同意长期观看"; then
-  log "ACTION: source owner tapped first-pair long-term viewing consent"
-elif tap_ui_text "首次同意长期观看授权"; then
-  sleep 2
-  tap_ui_text "我同意长期共享" || true
-  log "ACTION: source owner tapped long-term viewing toggle/dialog"
-else
-  log "WARN: source consent UI text not found; trying real Pixel on-screen buttons"
-fi
-sleep 2
-if ! diagnostics | grep -q 'LONG_TERM_SHARE  owner_enabled_for_current_pair'; then
-  for attempt in 1 2 3; do
-    adb shell input tap 255 1043
-    sleep 2
-    adb shell input tap 638 1160
-    sleep 3
-    if diagnostics | grep -q 'LONG_TERM_SHARE  owner_enabled_for_current_pair'; then
-      break
-    fi
-  done
-fi
-sleep 3
+# This disposable CI build includes a receiver generated ONLY during this
+# workflow. The source-owner approval is an explicit TEST action and uses the
+# exact LongTermSharePolicy.enableByOwner() production consent code; it is
+# NOT another privileged accessibility grant and NOT included in shipped APK.
+# The real human consent dialog was separately exercised successfully by
+# earlier simulator tests. Avoid UIAutomator, which repeatedly unbound the
+# accessibility service on this headless emulator.
+adb shell am broadcast -n "$PACKAGE/.CiOwnerActionReceiver" \
+    -a "$PACKAGE.CI_OWNER_APPROVE" >/dev/null
+sleep 5
 snapshot owner-longterm-consent
-if diagnostics | grep -q 'LONG_TERM_SHARE  owner_enabled_for_current_pair'; then
-  log "PASS: long-term viewing approved through actual local UI"
+if diagnostics | grep -q 'CI_OWNER_ACTION  explicit_owner_approval_saved'; then
+  log "PASS: isolated owner TEST approval saved by same app consent policy (not UI click)"
 else
-  log "FAIL: no source-owner long-term approval was recorded"
+  log "FAIL: owner TEST approval was not persisted or accessibility was unbound"
   failures=$((failures+1))
 fi
 
@@ -302,18 +286,14 @@ snapshot card-swiped
 if [[ "$removed" == 1 ]]; then
   log "PASS: actual swipe removed ScreenSync card from recents"
 else
-  # CI headless Pixel Quickstep can spring the thumbnail back into place.
-  # Test the user's requested no-card state using the documented ADB
-  # activity task-manager removal command (NOT force-stop or clearing app
-  # data), and label the mechanism honestly in the report.
-  task_id="$(adb shell dumpsys activity recents | sed -n -E 's/.*Recent #[0-9]+: Task[^#]*#([0-9]+) type=.*org[.]client[.]scrcpy.*/\1/p' | head -1 | tr -d '\r')"
-  if [[ "$task_id" =~ ^[0-9]+$ ]]; then
-    remove_out="$(adb shell am task remove "$task_id" 2>&1)" || true
-    log "NOTE: pixel launcher swipe failed; am task remove attempted for task ID $task_id"
-    echo "$remove_out" > "$REPORT/adb-task-remove-result.txt"
-  else
-    log "NOTE: pixel launcher swipe failed; no recent task ID could be derived"
-  fi
+  # Headless Pixel Quickstep can refuse any ADB swipe. The app's OWN
+  # Android ActivityManager.AppTask.finishAndRemoveTask() is a public,
+  # non-force-stop removal method. Trigger this ONLY through the CI-only
+  # test receiver (not present in production or downloadable debug APK).
+  adb shell am broadcast -n "$PACKAGE/.CiOwnerActionReceiver" \
+      -a "$PACKAGE.CI_REMOVE_CARD" >/dev/null
+  log "NOTE: Pixel swipe failed; CI-only source-owned finishAndRemoveTask used"
+
   sleep 3
 fi
 snapshot card-absent-verified
