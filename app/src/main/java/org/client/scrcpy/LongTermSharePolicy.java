@@ -42,6 +42,7 @@ public final class LongTermSharePolicy {
     public static void disable(Context ctx) {
         prefs(ctx).edit().clear().commit();
         PersistentWatchConsent.revokeFromLocalUserAction(ctx);
+        AccessibilityRecoveryFallback.clearOnOwnerRevocation(ctx);
     }
     /** Only the still-paired, explicitly owner-enabled grant may approve.
      * Its corresponding JPEG source must show its live STOP indicator before
