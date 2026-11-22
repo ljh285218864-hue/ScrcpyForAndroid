@@ -263,9 +263,10 @@ sleep 3
 snapshot recents-before-swipe
 removed=0
 attempt=0
-# A short high-velocity fling is required by Pixel Quickstep recents.
-# Slow drag gestures were visibly springing the card back into place.
-for entry in "540 1300 540 80 90" "540 1550 540 40 110" "540 1050 540 50 150"; do
+# Use the 300ms mid-card gesture proven to remove ScreenSync tasks
+# in the earlier Android 15 emulator test (run 45037927279).
+# Ultra-fast flicks can be ignored by a busy headless Pixel launcher.
+for entry in "540 1100 540 170 300" "540 1300 540 150 400" "540 1100 540 100 220" "540 1300 540 80 90"; do
   attempt=$((attempt+1))
   adb shell input swipe $entry
   sleep 4
