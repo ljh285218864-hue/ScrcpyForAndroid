@@ -58,6 +58,7 @@ public final class AccessibilityJpegStreamer {
     private int outWidth, outHeight;
     private int screenshotCount, sendCount, sendFailCount, captureFailCount;
     private int congestionSkips;
+    private int consecutiveCongestionSkips;
     private volatile int compressionQuality = JpegStreamTuning.JPEG_QUALITY;
     private final Runnable tick = this::capture;
 
@@ -191,9 +192,10 @@ public final class AccessibilityJpegStreamer {
         // would arrive late. Drop a frame rather than delay subsequent frames.
         if (socket.isSourceBackpressured()) {
             congestionSkips++;
+            consecutiveCongestionSkips++;
             // Retry is now shorter, so decrease quality no more than once
             // per ~1 second of sustained queue congestion.
-            if (congestionSkips % 9 == 0)
+            if (consecutiveCongestionSkips % 9 == 0)
                 compressionQuality = Math.max(58, compressionQuality - 2);
             if (congestionSkips == 1 || congestionSkips % 10 == 0)
                 ScreenSyncDiagnostics.record(app, "JPEG_BACKPRESSURE",
@@ -203,6 +205,8 @@ public final class AccessibilityJpegStreamer {
             main.postDelayed(tick, JpegStreamTuning.CONGESTION_RETRY_MS);
             return;
         }
+        // Occasional isolated queueing must not permanently lower quality.
+        consecutiveCongestionSkips = 0;
         long osWait = SCREENSHOT_PACER.delayUntilAllowed(now);
         if (osWait > 0) {
             main.postDelayed(tick, osWait);
