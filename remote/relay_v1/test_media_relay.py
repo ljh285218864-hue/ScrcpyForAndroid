@@ -528,6 +528,43 @@ class RelayMediaSocketTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.read(third))["type"], "watch_pending")
 
 
+    async def test_new_watch_replaces_disconnected_old_session_without_reusing_consent(self):
+        viewer_id, source_id = self.ids["a"]
+        viewer = await self.login(viewer_id)
+        source = await self.login(source_id)
+        old_sid = await self.open_session(viewer, source)
+        await source.send(json.dumps({"type": "watch_accept", "session_id": old_sid}))
+        self.assertEqual((await self.read(viewer))["type"], "watch_active")
+        self.assertEqual((await self.read(source))["type"], "stream_allowed")
+
+        await viewer.close()
+        self.assertEqual((await self.read(source))["type"], "session_interrupted")
+        replacement = await self.login(viewer_id)
+        await replacement.send(json.dumps({"type": "watch_request"}))
+        old_end_source = await self.read(source)
+        old_end_viewer = await self.read(replacement)
+        self.assertEqual(old_end_source["type"], "watch_end")
+        self.assertEqual(old_end_viewer["reason"], "stale_session_replaced")
+        self.assertEqual(old_end_source["session_id"], old_sid)
+
+        fresh_request = await self.read(source)
+        fresh_pending = await self.read(replacement)
+        self.assertEqual(fresh_request["type"], "watch_request")
+        self.assertEqual(fresh_pending["type"], "watch_pending")
+        new_sid = fresh_request["session_id"]
+        self.assertNotEqual(new_sid, old_sid)
+        self.assertEqual(fresh_pending["session_id"], new_sid)
+        self.assertNotIn(old_sid, self.relay.sessions)
+        self.assertFalse(self.relay.sessions[new_sid].approved)
+
+        # This fresh request must still require source approval.
+        await source.send(json.dumps({"type": "watch_accept", "session_id": new_sid}))
+        self.assertEqual((await self.read(replacement))["type"], "watch_active")
+        self.assertEqual((await self.read(source))["type"], "stream_allowed")
+        await source.send(json.dumps({"type": "watch_end", "session_id": new_sid}))
+        self.assertEqual((await self.read(replacement))["type"], "watch_end")
+        self.assertEqual((await self.read(source))["type"], "watch_end")
+
     async def test_jpeg_burst_drops_old_frames_without_ending_consent(self):
         viewer_id, source_id = self.ids["a"]
         viewer = await self.login(viewer_id)
