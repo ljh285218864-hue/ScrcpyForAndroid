@@ -25,6 +25,15 @@ public final class JpegStreamTuningTest {
         assertEquals(140L, JpegStreamTuning.captureGapMs(8));
     }
 
+    @Test public void screenshotWatchdogCannotStallViewerForSixSeconds() {
+        assertTrue(JpegStreamTuning.SCREENSHOT_CALLBACK_TIMEOUT_MS >= 1500L);
+        assertTrue(JpegStreamTuning.SCREENSHOT_CALLBACK_TIMEOUT_MS <= 2500L);
+        assertTrue(JpegStreamTuning.SCREENSHOT_TIMEOUT_RETRY_MS > 0);
+        assertTrue(JpegStreamTuning.SCREENSHOT_TIMEOUT_RETRY_MS <= 350L);
+        assertTrue(JpegStreamTuning.SCREENSHOT_CALLBACK_TIMEOUT_MS
+                + JpegStreamTuning.SCREENSHOT_TIMEOUT_RETRY_MS < 3000L);
+    }
+
     @Test public void profileKeepsBoundedQualityAndWebsocketQueue() {
         assertTrue(JpegStreamTuning.JPEG_QUALITY >= 65);
         assertTrue(JpegStreamTuning.JPEG_QUALITY <= 82);
