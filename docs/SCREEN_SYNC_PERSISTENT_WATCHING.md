@@ -1,105 +1,76 @@
-# Persistent one-time approval for remote viewing — integration contract
+# ScreenSync — persistent pairing consent and viewer-only Exit
 
-Scope of this change: two new, self-contained Java helpers. Existing files and
-behavior have **not** been changed. This document is written solely from the
-code excerpts supplied in the conversation; no repository source was read.
+## Implemented in this feature branch
 
-## Desired semantics
+- `PersistentWatchConsent` stores the local phone owner's explicit, revocable
+  permission for the authenticated paired peer. Android app backup is disabled.
+- `LongTermSharePolicy` now requires the matching explicit peer permission in
+  addition to its existing device/group-scoped background-enabled policy.
+- `RemoteSetupActivity` offers the consent choice once when a new pair is
+  confirmed (and also retains a settings toggle for later action). Approval
+  **does not** grant the underlying Android Accessibility permission.
+- `NoVpnMediaSocket` validates authenticated paired device identity before
+  owner-enabled persistent auto-approval.
+- `ScreenSyncMediaKeeper` uses `WatchSessionController` for persistent-source
+  JPEG session start/stop. The actual `AccessibilityJpegStreamer.start()` shows
+  and verifies the live STOP notification *before* any screenshot frame.
+- Viewer `Watch` starts a new session. Viewer `Exit` cancels only the
+  viewer's pending/active session and preserves paired identity, persistent
+  consent and authenticated WSS control transport.
+- Closing fullscreen viewer or pressing Back while viewing now exits viewing
+  instead of leaving the remote source capturing needlessly.
+- On owner revocation, the live local source is stopped and the stored
+  permission cleared. Unpairing still terminates the signaling connection.
+- Activity background/task swipe alone doesn't intentionally kill opted-in
+  WSS; OS can still terminate an app's process.
+- Existing WorkManager 15-minute presence repair, network monitoring and
+  boot restore remain. New `NoVpnStandbyAlarm` adds an **inexact**, opt-in
+  5-minute target signaling recovery check. It reschedules after each delivery
+  and is disabled with background maintenance. It never starts capture itself.
+- `NoVpnStandbyAlarmReceiver` is private and explicit in the manifest.
+- `.github/workflows/screensync-viewing-ci.yml` was added to compile/debug-test
+  this change without publishing a signed release.
 
-- Local device owner explicitly approves one authenticated paired device once.
-- Saved approval survives Activity recreation, network reconnect, and reboot.
-- Viewer **Watch** opens a new media session when platform capture permission
-  is currently available; no second app-specific confirmation is required.
-- Viewer **Exit** stops only that media session, not the persistent pairing,
-  permission, or communication channel.
-- Local **Stop / Revoke** stops capture immediately and removes long-lived
-  approval. A subsequent viewing session needs fresh local approval.
-- Only during the active capture session show the user a working
-  "being viewed" indicator and stop control. Do not capture while idle.
-- System accessibility/screen-capture permission cannot be granted by this
-  approval record; platform permission requirements still apply.
+## Consent and Android permission rules
 
-## Integrate into existing classes (not implemented in this commit)
+- Only the source phone's human owner can opt into persistent viewing.
+  Remote server commands, push messages, reboot or receiver tasks never
+  grant permission.
+- A paired, authenticated viewer can request media without a second app
+  confirmation *only* after the source phone opted in.
+- Background transport is not an Android system screenshot authorization.
+  Screenshot capability requires the user-enabled Accessibility service.
+- Actual screenshot transmission still requires a currently visible,
+  functional active-sharing STOP notification. Closing notification access
+  blocks capture; networking and pairing continue.
+- While no media session is active, no screenshot is taken and no "being
+  viewed" status notification is posted.
+- System/OEM battery restrictions, force-stop, Doze and reboot mean remote
+  wake is best-effort. Android may delay an inexact 5-minute alarm by more
+  than 5 minutes; this is not a guaranteed realtime delivery system.
+- FCM/remote push is **not** added in this branch; it requires a configured
+  push provider and device registration. The current server sends commands
+  over an already connected WSS channel, with periodic reconnection attempts.
 
-1. Local pairing approval UI, **after** the device owner explicitly accepts
-   an explanation of future remote viewing:
-   `PersistentWatchConsent.grantAfterExplicitLocalApproval(context, verifiedPeerId)`.
-   Never call this from a push notification, receiver, service restart, or
-   remote command. Ensure the method returns true before confirming success.
+## Test before shipping
 
-2. Construct one `WatchSessionController` in the capture-service owner.
-   Do **not** put it only in an Activity. Recreating a UI screen must not
-   recreate the active capture session.
+1. Pair A/B and verify both devices explicitly approve long-term viewing.
+2. With system Accessibility and active-sharing notification available,
+   request Watch from B, close fullscreen, check stream stops, then Watch again
+   with no second software approval dialog.
+3. Verify WSS/pairing stay alive after viewer Exit and Activity Back/Home.
+4. On A disable long-term grant; confirm active source stops and later remote
+   Watch cannot auto-approve.
+5. Swipe away A's Activity; watch if process survives, inspect diagnostics.
+6. Reboot A; verify saved pairing/permission, network reconnect on supported
+   devices, new Watch only when all live Android permissions are still valid.
+7. Turn off notifications or Accessibility; no screenshot capture should
+   proceed without visible STOP control and system capability.
+8. Test idle 5-minute alarm only as a best-effort transport wake; verify
+   cancelled when background maintenance is disabled.
+9. Validate network-loss, queued-pending viewer Exit, backpressure,
+   reconnection and multiple concurrent requests.
+10. Build APK, run tests and test on real paired Android phones.
 
-3. On authenticated `WATCH_START` request, call
-   `controller.requestWatch(context, authenticatedPeerId, bridge)`.
-   The server and client MUST authenticate the same paired peer ID, using
-   credentials that cannot be spoofed by changing the message payload.
-   Never grant consent as a consequence of a remote request.
-
-4. Implement `CaptureBridge` against existing capture/notification code:
-   - `hasSystemCaptureAccess()` checks the actual Android capability.
-   - `showWatchingStateAndStopControl()` presents a real, usable stop action.
-   - `isWatchingStateAndStopControlAvailable()` verifies it remains usable.
-   - `startCaptureForCurrentSession()` starts JPEG delivery only after checks.
-   - `stopCaptureForCurrentSession()` stops JPEG/media delivery.
-   - `hideWatchingStateAndStopControl()` removes the viewing-only indicator.
-   Do not implement visible-control checks as unconditional `true`.
-
-5. On authenticated viewer `WATCH_EXIT`, call `controller.exitWatch(bridge)`.
-   Leave the paired device registration and server command connection intact.
-
-6. On the viewed device's **Revoke shared access** action, call
-   `controller.revokeAndStop(context, bridge)`, then notify the server that
-   previously paired viewing credentials have been invalidated.
-
-7. During active capture, call `controller.checkVisibleStopOrEnd(bridge)`.
-   If the user-visible stop control disappears, capture must stop.
-   A disconnect or an OS capture error also ends this media session.
-
-8. Change existing `ensureVisibleStopControl()` only once a genuine
-   non-notification, user-visible stopping mechanism is connected. Deleting
-   the check or returning `true` is not an implementation of a stop control.
-
-9. Exclude `screensync_persistent_watch_consent_v1.xml` from Auto Backup and
-   device-to-device transfer. A reinstalled / restored app should not silently
-   inherit remote-viewing consent from a different installation.
-
-## Reboot and wakeup
-
-- Reboot may restore *saved approval*; it does NOT start screenshot capture
-  by itself. The system may revoke or disable capture capabilities.
-- Server messages / supported push notifications may wake an app for bounded
-  work, but cannot guarantee immediate execution on every Android device.
-- WorkManager periodic work has a 15-minute minimum interval. A five-minute
-  exact, always-running wakeup is not guaranteed under Doze / background
-  restrictions. Do not spin recurring alarms as a substitute for consent.
-- Restoring online presence, maintaining an authenticated control channel,
-  and starting an authorized screenshot session are separate operations.
-- An activity Exit / task removal should not automatically revoke saved
-  approval. A force-stop or OS kill can still end a running connection.
-
-## Known code excerpts supplied by the user
-
-- `AccessibilityJpegStreamer.ensureVisibleStopControl()`: currently
-  requires both `noticePosted` and `ShareNotificationPreference.mayPost(app)`.
-- `start()`: currently stops when the visible-stop check fails.
-- `capture()`: periodically repeats the visible-stop check and stops media.
-- `RemoteSetupActivity`: holds notification settings, but its lifetime must
-  not own the media session.
-
-No changes to those files are included in this branch because repository
-source access is explicitly disallowed.
-
-## Required verification before release
-
-- Local approval -> Watch -> Exit -> Watch again, with no second app dialog.
-- Reboot -> permission preserved; new request checks Android capability.
-- Device owner revokes -> active stream stops; subsequent requests are denied.
-- When no viewer is active, no JPEG capture runs and no "being viewed" badge
-  is displayed.
-- During capture, a visible state/stop action is available and functional.
-- Reject forged peer IDs, stale watch requests, and commands after revocation.
-- Background/task-swipe cases on target OEM Android versions.
-- Android permission turned off, process killed, and force-stop behavior.
-- Build APK and test on real paired phones; none of these tests have run yet.
+These are required verification steps, not claims of completed real-device
+testing. The branch has not been merged into the original feature branch.
