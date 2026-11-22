@@ -67,8 +67,9 @@ watch_frames() {
 tap_ui_text() {
   local needle="$1" xy attempt
   for attempt in 1 2 3 4; do
-    adb shell uiautomator dump /sdcard/screensync-ci-ui.xml >/dev/null 2>&1 || true
-    adb exec-out cat /sdcard/screensync-ci-ui.xml > /tmp/screensync-ci-ui.xml 2>/dev/null || true
+    # UIAutomator can hang indefinitely on some headless emulator builds.
+    timeout 15s adb shell uiautomator dump /sdcard/screensync-ci-ui.xml >/dev/null 2>&1 || true
+    timeout 8s adb exec-out cat /sdcard/screensync-ci-ui.xml > /tmp/screensync-ci-ui.xml 2>/dev/null || true
     xy="$(python3 - "$needle" <<'PY'
 import re, sys, xml.etree.ElementTree as ET
 try:
