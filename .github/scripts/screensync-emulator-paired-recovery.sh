@@ -113,6 +113,30 @@ log "PASS: app-A owner/peer-B QR join, six-digit verification, explicit pair app
 # Instrumentation processes can exit when tests complete. Explicitly launch
 # the app ONCE to establish its normal owner-enabled background WebSocket.
 adb shell am start -W -n "$ACTIVITY" >/dev/null
+# The Android instrumentation runner force-stops the target after each test
+# phase. This marks the enabled accessibility service as crashed, even if the
+# production APK itself is healthy. Repair that TEST-ONLY fixture state before
+# evaluating Home, screen-off or recent-tasks behavior. Never do this on a real
+# device and never treat it as an allowed production auto-grant.
+adb shell settings put secure enabled_accessibility_services ""
+sleep 2
+adb shell settings put secure enabled_accessibility_services "$SERVICE"
+adb shell settings put secure accessibility_enabled 1
+baseline_bound=0
+for i in $(seq 1 25); do
+  if adb shell dumpsys accessibility | grep -q 'Bound services:.*ScreenSync'; then
+    baseline_bound=1
+    break
+  fi
+  sleep 1
+done
+snapshot paired-bound-baseline
+if [[ "$baseline_bound" == 1 ]]; then
+  log "PASS: accessibility service re-bound after test-runner's forced shutdown"
+else
+  log "FAIL: clean bound-service baseline was not established; later lifecycle observations cannot be attributed"
+  exit 1
+fi
 if online 30; then
   log "PASS: after pairing, emulator app WSS is authenticated and visible to paired peer"
 else
