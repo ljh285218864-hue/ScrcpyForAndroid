@@ -5,6 +5,7 @@ on:
     branches:
       - feature/screensync-persistent-watch-consent-20261122
       - fix/screensync-steady-jpeg-cadence-20261123
+      - fix/screensync-background-watch-recovery-20261123
   pull_request:
     branches:
       - feature/screensync-accessibility-only
