@@ -377,12 +377,22 @@ public final class RemoteSetupActivity extends Activity {
 
     private void showDiagnostics() {
         boolean notificationOk = AccessibilityJpegStreamer.notificationAllowed(this);
-        ScreenSyncDiagnostics.record(this, "DIAGNOSTICS", "paired="
-                + "paired".equals(currentState)
+        // The Activity's cached currentState and mediaSocket can still be
+        // empty after reopening even while saved pairing and app-scoped WSS
+        // remain valid. Report these states separately.
+        boolean localPeerSaved = NoVpnApi.isRegistered(this)
+                && !NoVpnApi.peerId(this).isEmpty()
+                && !NoVpnApi.groupId(this).isEmpty();
+        boolean keeperSocket = ScreenSyncMediaKeeper.current() != null;
+        ScreenSyncDiagnostics.record(this, "DIAGNOSTICS",
+                "registered=" + NoVpnApi.isRegistered(this)
+                + " local_peer_saved=" + localPeerSaved
+                + " ui_pair_state=" + (currentState.isEmpty() ? "pending_refresh" : currentState)
                 + " accessibility=" + AccessibilityShotService.ready()
                 + " notification=" + notificationOk
-                + " media_socket=" + (mediaSocket != null)
-                + " sharing=" + (jpegStreamer != null)
+                + " ui_socket=" + (mediaSocket != null)
+                + " keeper_socket=" + keeperSocket
+                + " sharing=" + AccessibilityJpegStreamer.sharingActive()
                 + " received=" + receivedVideoFrames);
         TextView logText = new TextView(this);
         logText.setTextSize(12);
