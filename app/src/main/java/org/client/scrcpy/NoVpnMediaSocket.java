@@ -125,6 +125,11 @@ public final class NoVpnMediaSocket {
         return JpegStreamTuning.captureGapMs(jpegServerFps);
     }
 
+    /** Diagnostic only: an allocated WebSocket is not necessarily authenticated. */
+    public boolean isAuthenticatedConnection() {
+        return authenticated && !shutdown && socket != null;
+    }
+
     public boolean hasApprovedSourceSession() {
         return authenticated && !rejoinPending
                 && ScrcpyRelayWire.validSessionId(sourceSession);
