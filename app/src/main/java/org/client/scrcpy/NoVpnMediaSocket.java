@@ -456,8 +456,20 @@ public final class NoVpnMediaSocket {
                     // The explicit opt-in remains in the owner's app only.
                     // Before the first JPEG frame, source.start() must display
                     // one currently visible, immediate STOP control.
-                    if (LongTermSharePolicy.mayAutoApprove(context)
-                            && PersistentWatchConsent.permitsWatch(context, from)) {
+                    boolean granted = LongTermSharePolicy.enabled(context);
+                    boolean backgroundEnabled = NoVpnBackgroundSync.isEnabled(context);
+                    boolean accessibilityReady = AccessibilityShotService.ready();
+                    boolean stopControlAllowed = ShareNotificationPreference.mayPost(context);
+                    boolean autoEligible = LongTermSharePolicy.mayAutoApprove(context)
+                            && PersistentWatchConsent.permitsWatch(context, from);
+                    ScreenSyncDiagnostics.record(context, "WATCH_BACKGROUND_GATE",
+                            "ui_attached=" + (listener != null)
+                            + " owner_approved=" + granted
+                            + " background_enabled=" + backgroundEnabled
+                            + " accessibility_ready=" + accessibilityReady
+                            + " stop_control_allowed=" + stopControlAllowed
+                            + " auto_eligible=" + autoEligible);
+                    if (autoEligible) {
                         persistentApprovedRequest = sid;
                         if (acceptRequest(sid)) {
                             status("long_term_auto_approved_from_app_setting");
