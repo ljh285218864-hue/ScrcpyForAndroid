@@ -383,7 +383,10 @@ public final class RemoteSetupActivity extends Activity {
         boolean localPeerSaved = NoVpnApi.isRegistered(this)
                 && !NoVpnApi.peerId(this).isEmpty()
                 && !NoVpnApi.groupId(this).isEmpty();
-        boolean keeperSocket = ScreenSyncMediaKeeper.current() != null;
+        NoVpnMediaSocket keptTransport = ScreenSyncMediaKeeper.current();
+        boolean keeperSocket = keptTransport != null;
+        boolean keeperAuthenticated = keptTransport != null
+                && keptTransport.isAuthenticatedConnection();
         ScreenSyncDiagnostics.record(this, "DIAGNOSTICS",
                 "registered=" + NoVpnApi.isRegistered(this)
                 + " local_peer_saved=" + localPeerSaved
@@ -392,6 +395,7 @@ public final class RemoteSetupActivity extends Activity {
                 + " notification=" + notificationOk
                 + " ui_socket=" + (mediaSocket != null)
                 + " keeper_socket=" + keeperSocket
+                + " keeper_authenticated=" + keeperAuthenticated
                 + " sharing=" + AccessibilityJpegStreamer.sharingActive()
                 + " received=" + receivedVideoFrames);
         TextView logText = new TextView(this);
