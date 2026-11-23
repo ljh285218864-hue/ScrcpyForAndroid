@@ -18,8 +18,8 @@ android {
     defaultConfig {
         minSdk = 24
         targetSdk = 36
-        versionCode = 41
-        versionName = '1.8.3-jpeg-os-pacing'
+        versionCode = 42
+        versionName = '1.8.4-background-signal'
         buildConfigField 'String', 'SCREENSYNC_MEDIA_URL', '"' +
             (System.getenv('SCREENSYNC_MEDIA_URL') ?: 'wss://relay.invalid/media') + '"'
         buildConfigField 'String', 'SCREENSYNC_NOVPN_URL', '"' +
