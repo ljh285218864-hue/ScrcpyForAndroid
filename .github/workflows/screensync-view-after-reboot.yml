@@ -5,6 +5,7 @@ on:
     branches:
       - feature/screensync-persistent-watch-consent-20261122
       - fix/screensync-steady-jpeg-cadence-20261123
+      - fix/screensync-background-watch-recovery-20261123
     paths:
       - '.github/workflows/screensync-view-after-reboot.yml'
       - '.github/scripts/screensync-ci-pair-relay.py'
@@ -17,6 +18,7 @@ on:
       - 'app/src/main/java/org/client/scrcpy/JpegFrameRenderer.java'
       - 'app/src/main/java/org/client/scrcpy/ScrcpyRelayWire.java'
       - 'app/src/main/java/org/client/scrcpy/NoVpnMediaSocket.java'
+      - 'app/src/main/java/org/client/scrcpy/NoVpnPresenceWorker.java'
       - 'app/src/main/java/org/client/scrcpy/JpegCapturePacer.java'
       - 'app/src/main/java/org/client/scrcpy/JpegStreamTuning.java'
       - 'app/src/test/java/org/client/scrcpy/JpegCapturePacerTest.java'
